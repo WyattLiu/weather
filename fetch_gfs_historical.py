@@ -116,16 +116,21 @@ def main():
 
     # Parse command line arguments
     if len(sys.argv) > 1:
-        try:
-            days_back = int(sys.argv[1])
-            start_date = end_date - timedelta(days=days_back)
-        except ValueError:
-            # Try parsing as date range: YYYYMMDD YYYYMMDD
+        # Check if it looks like a date (8 digits)
+        if len(sys.argv[1]) == 8 and sys.argv[1].isdigit():
+            # Date range: YYYYMMDD YYYYMMDD
+            start_date = datetime.strptime(sys.argv[1], "%Y%m%d").date()
             if len(sys.argv) >= 3:
-                start_date = datetime.strptime(sys.argv[1], "%Y%m%d").date()
                 end_date = datetime.strptime(sys.argv[2], "%Y%m%d").date()
-            else:
-                start_date = datetime.strptime(sys.argv[1], "%Y%m%d").date()
+        else:
+            # Number of days back
+            try:
+                days_back = int(sys.argv[1])
+                start_date = end_date - timedelta(days=days_back)
+            except ValueError:
+                print(f"Invalid argument: {sys.argv[1]}")
+                print("Usage: fetch_gfs_historical.py [DAYS_BACK | START_DATE END_DATE]")
+                sys.exit(1)
 
     print(f"Date range: {start_date} to {end_date}")
     print(f"Days: {(end_date - start_date).days + 1}")
