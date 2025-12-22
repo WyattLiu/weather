@@ -1,0 +1,27 @@
+# Virtual environment
+venv/
+
+# Data files (large binary files)
+*.grib2
+*.grb
+
+# Cache and index files
+*.idx
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Output images (regenerated)
+*.png
+
+# CPC data
+cpc_*/
+
+# Temporary files
+*.tmp
+.skip_dates
+
+# CSV output (regenerated)
+*.csv
