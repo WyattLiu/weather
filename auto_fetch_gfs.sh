@@ -44,9 +44,8 @@ else
     log "ERROR: GFS fetch failed"
 fi
 
-# Cleanup old GFS files (keep last 7 days)
-log "Cleaning up old GFS files..."
-find "$SCRIPT_DIR" -name "gfs_*.grib2" -mtime +7 -delete 2>/dev/null
+# Keep all GFS files (no cleanup)
+log "Skipping cleanup - keeping all GFS files"
 
 log "GFS auto-fetch finished"
 log ""
