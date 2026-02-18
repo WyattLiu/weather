@@ -139,33 +139,38 @@ print(f"  Loaded {len(ng_hourly)} hourly NG price bars")
 
 print("Fetching TTF (EUR/MWh) and EUR/USD...")
 ttf_ticker = yf.Ticker("TTF=F")
-ttf_hourly = ttf_ticker.history(period="60d", interval="1h")
+# TTF: daily only (yfinance has no reliable intraday for this ticker)
+ttf_daily = ttf_ticker.history(period="90d", interval="1d")
 eurusd_ticker = yf.Ticker("EURUSD=X")
-eurusd_hourly = eurusd_ticker.history(period="60d", interval="1h")
-print(f"  Loaded {len(ttf_hourly)} TTF bars, {len(eurusd_hourly)} EUR/USD bars")
+# EUR/USD: hourly for intraday FX resolution
+eurusd_hourly = eurusd_ticker.history(period="90d", interval="1h")
+print(f"  Loaded {len(ttf_daily)} TTF daily bars, {len(eurusd_hourly)} EUR/USD hourly bars")
 
 # Convert TTF from EUR/MWh to USD/MMBtu
+# Synthesize hourly TTF by forward-filling daily TTF EUR price × hourly EUR/USD
 # 1 MWh = 3.412 MMBtu
 MWH_PER_MMBTU = 3.412
-if len(ttf_hourly) > 0 and len(eurusd_hourly) > 0:
-    ttf_times_raw = ttf_hourly.index.tz_localize(None) if ttf_hourly.index.tz else ttf_hourly.index
-    eurusd_times_raw = eurusd_hourly.index.tz_localize(None) if eurusd_hourly.index.tz else eurusd_hourly.index
+if len(ttf_daily) > 0 and len(eurusd_hourly) > 0:
+    ttf_daily_tz = ttf_daily.index.tz_localize(None) if ttf_daily.index.tz else ttf_daily.index
+    eurusd_hourly_tz = eurusd_hourly.index.tz_localize(None) if eurusd_hourly.index.tz else eurusd_hourly.index
 
-    # Align EUR/USD to TTF timestamps via nearest match
-    ttf_usd_mmbtu = []
-    ttf_times_aligned = []
-    for i, t in enumerate(ttf_times_raw):
-        diffs = abs(eurusd_times_raw - t)
-        nearest_idx = diffs.argmin()
-        if diffs[nearest_idx] < pd.Timedelta(hours=6):
-            eur_price = ttf_hourly['Close'].iloc[i]
-            fx_rate = eurusd_hourly['Close'].iloc[nearest_idx]
-            usd_mmbtu = eur_price * fx_rate / MWH_PER_MMBTU
-            ttf_usd_mmbtu.append(usd_mmbtu)
-            ttf_times_aligned.append(t)
+    # Build daily TTF series and forward-fill to hourly EUR/USD timestamps
+    ttf_daily_series = pd.Series(ttf_daily['Close'].values, index=ttf_daily_tz, name='ttf_eur')
+    eurusd_series = pd.Series(eurusd_hourly['Close'].values, index=eurusd_hourly_tz, name='eurusd')
 
-    ttf_usd_mmbtu = np.array(ttf_usd_mmbtu)
-    print(f"  TTF converted: {len(ttf_usd_mmbtu)} points, latest=${ttf_usd_mmbtu[-1]:.3f}/MMBtu")
+    # Reindex TTF to hourly timestamps using forward-fill
+    combined_idx = eurusd_series.index
+    ttf_hourly_eur = ttf_daily_series.reindex(combined_idx, method='ffill')
+
+    # Drop any NaN (hours before first TTF daily bar)
+    mask = ttf_hourly_eur.notna()
+    ttf_hourly_eur = ttf_hourly_eur[mask]
+    eurusd_matched = eurusd_series[mask]
+
+    ttf_usd_mmbtu = (ttf_hourly_eur.values * eurusd_matched.values) / MWH_PER_MMBTU
+    ttf_times_aligned = list(ttf_hourly_eur.index)
+
+    print(f"  TTF converted: {len(ttf_usd_mmbtu)} hourly points, latest=${ttf_usd_mmbtu[-1]:.3f}/MMBtu")
 else:
     ttf_usd_mmbtu = np.array([])
     ttf_times_aligned = []
