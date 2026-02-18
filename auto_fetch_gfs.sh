@@ -30,18 +30,17 @@ if [ $? -eq 0 ]; then
     # Run GFS HDD analysis
     log "Running GFS HDD analysis..."
     python3 gfs_hdd_analysis.py >> "$LOG_FILE" 2>&1
-
-    # Update combined ECMWF+GFS vs NG chart
-    log "Updating combined HDD vs NG chart..."
-    python3 hdd_ng_comparison.py >> "$LOG_FILE" 2>&1
-
-    if [ $? -eq 0 ]; then
-        log "Charts updated successfully"
-    else
-        log "WARNING: Chart update failed"
-    fi
 else
-    log "ERROR: GFS fetch failed"
+    log "WARNING: GFS fetch failed"
+fi
+
+# Always update combined chart (refreshes live NG + TTF prices from yfinance)
+log "Updating combined HDD vs NG/TTF chart..."
+python3 hdd_ng_comparison.py >> "$LOG_FILE" 2>&1
+if [ $? -eq 0 ]; then
+    log "Charts updated successfully"
+else
+    log "WARNING: Chart update failed"
 fi
 
 # Keep all GFS files (no cleanup)

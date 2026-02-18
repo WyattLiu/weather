@@ -80,11 +80,13 @@ else:
         log(f"Fetching {date_str} {item['run']}z...")
         
         try:
+            # Full 10-day forecast: 0-144h at 6-hourly, 150-240h at 6-hourly
+            steps = list(range(0, 145, 6)) + list(range(150, 241, 6))
             client.retrieve(
                 time=item['run'],
                 date=date_str,
                 type="fc",
-                step=[0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96],
+                step=steps,
                 param=["2t"],
                 target=item['filename']
             )
@@ -119,15 +121,18 @@ else:
 PYEOF
 
 # Update the comparison chart if we got any new data
-if grep -q "Successfully downloaded" $LOGFILE | tail -1; then
+if grep -q "Successfully downloaded" $LOGFILE; then
     echo "$(date): Updating comparison charts..." >> $LOGFILE
-    
+
     # Update HDD comparison chart
-    python hdd_comparison.py >> $LOGFILE 2>&1
+    python3 hdd_comparison.py >> $LOGFILE 2>&1
     echo "$(date): HDD chart updated" >> $LOGFILE
-    
-    # Fetch NG prices and create HDD vs NG chart
-    python fetch_ng_prices.py >> $LOGFILE 2>&1
-    python hdd_ng_comparison.py >> $LOGFILE 2>&1
-    echo "$(date): HDD vs NG chart updated" >> $LOGFILE
+
+    # Fetch NG prices
+    python3 fetch_ng_prices.py >> $LOGFILE 2>&1
 fi
+
+# Always update HDD vs NG/TTF chart (refreshes live prices from yfinance)
+echo "$(date): Updating HDD vs NG/TTF chart..." >> $LOGFILE
+python3 hdd_ng_comparison.py >> $LOGFILE 2>&1
+echo "$(date): HDD vs NG/TTF chart updated" >> $LOGFILE
