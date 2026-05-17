@@ -509,6 +509,7 @@ lng_exports = fetch_monthly(EIA_BASE + 'N9133US2m.xls', 'LNG Exports')
 pipeline_exports = fetch_monthly(EIA_BASE + 'N9132US2m.xls', 'Pipeline Exports')
 lng_imports = fetch_monthly(EIA_BASE + 'N9103US2m.xls', 'LNG Imports')
 pipeline_imports = fetch_monthly(EIA_BASE + 'N9102US2m.xls', 'Pipeline Imports')
+power_burn = fetch_monthly(EIA_BASE + 'N3045US2m.xls', 'Power Burn')
 
 print("\n--- Weekly Data ---")
 rig_count = fetch_rig_count()
@@ -912,6 +913,42 @@ if not indpro.empty:
 else:
     indpro_m = pd.DataFrame(columns=['date', 'indpro_yoy'])
 
+# Factor: Power Burn YoY (Natural Gas Deliveries to Electric Power Consumers)
+# Higher gas-for-power burn vs same month a year ago = bullish demand.
+# Uses Bcf/d normalization to handle different days-in-month, then 3mo trailing
+# average to smooth weather/outage noise before the YoY comparison.
+if not power_burn.empty:
+    pb = power_burn.copy()
+    pb['date'] = pb['date'].dt.to_period('M').dt.to_timestamp()
+    pb = pb.groupby('date')['value'].last().reset_index()
+    pb['bcfd'] = pb['value'] / pb['date'].dt.days_in_month / 1000
+    pb['bcfd_smooth'] = pb['bcfd'].rolling(3, min_periods=2).mean()
+    pb['power_burn_yoy'] = (pb['bcfd_smooth'] / pb['bcfd_smooth'].shift(12) - 1) * 100
+    power_burn_m = pb[['date', 'power_burn_yoy']].dropna()
+    print(f"  Power Burn YoY: {len(power_burn_m)} months "
+          f"(range {power_burn_m['power_burn_yoy'].min():.1f} to {power_burn_m['power_burn_yoy'].max():.1f}%)")
+
+    # Factor: Power Burn Anomaly (deseasonalized, summer-relevant)
+    # For each month, compare burn to the same calendar-month rolling 5-year mean.
+    # Captures heat-wave-driven demand spikes that pure YoY misses (e.g. when both
+    # this year and last year were hot, the YoY is flat but the anomaly stays high).
+    pb['cal_month'] = pb['date'].dt.month
+    # Rolling 5-year same-month stats: shift-then-rolling within each calendar-month group
+    def _same_month_anomaly(group):
+        # group is sorted by date; for each row, compare to mean of prior 5 same-month values
+        shifted = group['bcfd'].shift(1)  # exclude current month from baseline
+        roll_mean = shifted.rolling(5, min_periods=3).mean()
+        roll_std = shifted.rolling(5, min_periods=3).std()
+        return (group['bcfd'] - roll_mean) / roll_std
+    pb_sorted = pb.sort_values('date').reset_index(drop=True)
+    pb_sorted['power_burn_anomaly'] = pb_sorted.groupby('cal_month', group_keys=False).apply(_same_month_anomaly)
+    power_burn_anom_m = pb_sorted[['date', 'power_burn_anomaly']].dropna()
+    print(f"  Power Burn Anomaly: {len(power_burn_anom_m)} months "
+          f"(range {power_burn_anom_m['power_burn_anomaly'].min():.2f} to {power_burn_anom_m['power_burn_anomaly'].max():.2f} z)")
+else:
+    power_burn_m = pd.DataFrame(columns=['date', 'power_burn_yoy'])
+    power_burn_anom_m = pd.DataFrame(columns=['date', 'power_burn_anomaly'])
+
 # Factor 10: Term Structure Slope
 if not ts_slope_daily.empty:
     ts_slope_daily['month'] = ts_slope_daily['date'].dt.to_period('M').dt.to_timestamp()
@@ -1082,6 +1119,12 @@ factor_defs = [
     (pct_full_factor, 'pct_full', 'Working Gas Full %', -1, 0),
     (days_supply_factor, 'days_supply', 'Storage Days Supply', -1, 0),
     (trajectory, 'projected_peak_dev', 'Storage Trajectory', 1, 0),
+    # Power Burn YoY: structural electricity-generation demand for NG.
+    # Higher YoY burn = bullish (more demand). EIA monthly data has ~2mo pub lag.
+    (power_burn_m, 'power_burn_yoy', 'Power Burn YoY', 1, 2),
+    # Power Burn Anomaly: deseasonalized burn vs same-calendar-month 5yr mean.
+    # Captures heat-driven demand surges that YoY misses. Bullish when high.
+    (power_burn_anom_m, 'power_burn_anomaly', 'Power Burn Anomaly', 1, 2),
 ]
 
 factor_cols = []
@@ -1236,6 +1279,67 @@ fv_data['fv_lower'] = np.exp(fv_data['log_fv'] - fv_data['fv_std'])
 
 print(f"\n  Current NG:     ${current_price:.2f}")
 print(f"  Full-sample FV: ${fv_now:.2f} ({(fv_now/current_price - 1)*100:+.1f}%)")
+
+# Machine-readable lines for downstream parsers (UNG visualizer, etc.)
+# Bull/bear bands use the expanding-window residual std (1σ).
+_latest_with_fv = fv_data.dropna(subset=['fair_value']).iloc[-1] if fv_data['fair_value'].notna().any() else None
+if _latest_with_fv is not None:
+    _fv_base = float(_latest_with_fv['fair_value'])
+    _fv_upper = float(_latest_with_fv['fv_upper'])
+    _fv_lower = float(_latest_with_fv['fv_lower'])
+else:
+    _fv_base = float(fv_now)
+    # Fallback: use full-sample residual std
+    _resid = (fv_data['log_price'] - np.log(fv_data['fair_value'])).dropna() if fv_data['fair_value'].notna().any() else None
+    _sigma = float(_resid.std()) if _resid is not None and len(_resid) > 5 else 0.10
+    _fv_upper = float(np.exp(np.log(_fv_base) + _sigma))
+    _fv_lower = float(np.exp(np.log(_fv_base) - _sigma))
+
+print(f"PREDICTION_NG_CURRENT: ${current_price:.2f}")
+print(f"PREDICTION_NG_FV_BASE: ${_fv_base:.2f}")
+print(f"PREDICTION_NG_FV_BULL: ${_fv_upper:.2f}")
+print(f"PREDICTION_NG_FV_BEAR: ${_fv_lower:.2f}")
+
+# ============================================
+# Supply/Demand Regime Classifier
+# (cyclical axis B per CENTRAL_PHILOSOPHY.md)
+# ============================================
+# Uses storage deviation z-score + days_supply vs 5yr norm + production/consumption
+# balance to classify SURPLUS / BALANCED / SHORTAGE. Conservative thresholds:
+#   SURPLUS  : storage_dev_z > +1 AND (days_supply > 5yr median OR balance>0)
+#   SHORTAGE : storage_dev_z < -1 AND (days_supply < 5yr median OR balance<0)
+#   BALANCED : everything else.
+_supply_regime = 'BALANCED'
+_supply_regime_z = 0.0
+try:
+    # Use z-score of storage deviation from analysis frame (last available)
+    _stor_z_series = analysis['storage_dev_z'].dropna() if 'storage_dev_z' in analysis.columns else None
+    _days_supply_series = None
+    if not days_supply_weekly.empty:
+        _days_supply_series = days_supply_weekly['days_supply']
+    _stor_z = float(_stor_z_series.iloc[-1]) if _stor_z_series is not None and len(_stor_z_series) else 0.0
+    _supply_regime_z = round(_stor_z, 2)
+
+    _ds_above_med = False
+    _ds_below_med = False
+    if _days_supply_series is not None and len(_days_supply_series) > 60:
+        _ds_med = _days_supply_series.tail(260).median()  # ~5yr median (weekly)
+        _ds_now = _days_supply_series.iloc[-1]
+        _ds_above_med = _ds_now > _ds_med * 1.05
+        _ds_below_med = _ds_now < _ds_med * 0.95
+
+    if _stor_z > 1.0 and _ds_above_med:
+        _supply_regime = 'SURPLUS'
+    elif _stor_z < -1.0 and _ds_below_med:
+        _supply_regime = 'SHORTAGE'
+    else:
+        _supply_regime = 'BALANCED'
+except Exception as _e:
+    print(f"Supply regime classify failed: {_e}")
+    _supply_regime = 'BALANCED'
+
+print(f"PREDICTION_SUPPLY_REGIME: {_supply_regime}")
+print(f"PREDICTION_STORAGE_Z: {_supply_regime_z:+.2f}")
 
 # ============================================
 # Volatility Regime Detection
