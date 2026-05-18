@@ -1342,6 +1342,53 @@ print(f"PREDICTION_SUPPLY_REGIME: {_supply_regime}")
 print(f"PREDICTION_STORAGE_Z: {_supply_regime_z:+.2f}")
 
 # ============================================
+# Fundamental + YoY pillar scores (cycle 24)
+# (Tech/Fund/YoY decomposition per CENTRAL_PHILOSOPHY.md)
+# ============================================
+# Continuous scalars in [-1, +1]. Sign convention: + = bullish for NG.
+# These ADD to seasonal_drift × supply_regime_drift in ScenarioDistribution;
+# kept small (each pillar capped at ~0.00025/d via visualizer-side mapping).
+#
+# Fundamental: residual *within* the categorical supply_regime bucket.
+#   storage_z: high z = surplus = bearish for NG → negate
+#   days_supply deviation: high days_supply = surplus = bearish → negate
+#   Combine and clip; the categorical regime is the step function, this
+#   pillar tells us "how strongly within that bucket".
+_fund_score = 0.0
+try:
+    _fs_z_part = -_stor_z * 0.5  # storage_z = +2 → -1.0 contribution
+    _fs_ds_part = 0.0
+    if _ds_above_med or _ds_below_med:
+        # days_supply deviation as fraction of median, sign-flipped
+        _ds_now = _days_supply_series.iloc[-1]
+        _ds_med = _days_supply_series.tail(260).median()
+        if _ds_med > 0:
+            _fs_ds_part = -((_ds_now - _ds_med) / _ds_med) * 5.0  # 10% above → -0.5
+    _fund_score = max(-1.0, min(1.0, _fs_z_part + _fs_ds_part))
+except Exception:
+    _fund_score = 0.0
+
+# YoY: supply-vs-demand growth differential.
+#   Bullish: demand (power burn) growing > supply (production)
+#   Bearish: supply growing > demand
+#   Also: LNG exports growing tightens domestic balance → bullish (already
+#         captured via export_tightening = lng_yoy - prod_yoy)
+_yoy_score = 0.0
+try:
+    _pb_yoy = float(power_burn_m['power_burn_yoy'].iloc[-1]) if not power_burn_m.empty else 0.0
+    _exp_tight_now = float(exp_tight['export_tightening'].iloc[-1]) if not exp_tight.empty else 0.0
+    # power burn YoY: +5% → +0.5; export_tightening: +5% → +0.5; cap each at ±1
+    _yoy_pb_part = max(-1.0, min(1.0, _pb_yoy / 10.0))
+    _yoy_exp_part = max(-1.0, min(1.0, _exp_tight_now / 10.0))
+    # Average so a single noisy signal can't dominate
+    _yoy_score = max(-1.0, min(1.0, 0.5 * _yoy_pb_part + 0.5 * _yoy_exp_part))
+except Exception:
+    _yoy_score = 0.0
+
+print(f"PREDICTION_FUND_SCORE: {_fund_score:+.3f}")
+print(f"PREDICTION_YOY_SCORE: {_yoy_score:+.3f}")
+
+# ============================================
 # Volatility Regime Detection
 # ============================================
 print("\n--- Volatility Regime ---")
