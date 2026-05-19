@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import os
 import zipfile
+import json
 from io import BytesIO
 from datetime import datetime
 import yfinance as yf
@@ -3544,12 +3545,22 @@ try:
     # Print a freshness table so the user sees stale data without opening the PNG
     print("\n--- Factor freshness table ---")
     print(f"  {'Factor':<24s} {'Last date':<12s} {'Days ago':>10s} {'Last val':>10s}")
+    _freshness_payload = {}
     for col, label, sign, ts in plottable_factors:
         last_dt = ts['date'].iloc[-1]
         last_val = ts[col].iloc[-1]
-        age_days = (pd.Timestamp(datetime.now()) - last_dt).days
+        age_days = int((pd.Timestamp(datetime.now()) - last_dt).days)
         marker = '✓' if age_days <= 35 else '⚠' if age_days <= 95 else '✗'
         print(f"  {marker} {label:<22s} {last_dt:%Y-%m-%d}   {age_days:>7d}d   {last_val:>+10.3f}")
+        _freshness_payload[col] = {
+            'label': label,
+            'last_date': last_dt.strftime('%Y-%m-%d'),
+            'age_days': age_days,
+            'last_value': round(float(last_val), 4),
+        }
+    # Single-line emission for the visualizer's PREDICTION parser (cycle 49).
+    # Compact JSON keeps it on one line so refresh_model_zscore's regex sees it.
+    print(f"PREDICTION_FACTOR_FRESHNESS: {json.dumps(_freshness_payload)}")
 except Exception as _fc_err:
     print(f"  Factor curve grid build failed: {_fc_err}")
 
