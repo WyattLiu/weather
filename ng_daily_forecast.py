@@ -3561,6 +3561,28 @@ try:
     # Single-line emission for the visualizer's PREDICTION parser (cycle 49).
     # Compact JSON keeps it on one line so refresh_model_zscore's regex sees it.
     print(f"PREDICTION_FACTOR_FRESHNESS: {json.dumps(_freshness_payload)}")
+
+    # IC weights (cycle 50): per-factor Spearman correlation with 3m forward
+    # NG return. Higher = factor is more predictive of price moves. The
+    # composite uses these as the weighted average so this dict tells the
+    # user "which factors actually drive the model right now".
+    try:
+        _ic_payload = {}
+        for col, label in zip(factor_cols, factor_labels):
+            _ic_payload[col] = {
+                'label': label,
+                'ic_weight': round(float(ic_for_weights.get(col, 0.02)), 4),
+            }
+        # Sorted by ic_weight desc for log readability
+        print("\n--- IC weights (factor influence on composite) ---")
+        for col, label in sorted(zip(factor_cols, factor_labels),
+                                  key=lambda x: -ic_for_weights.get(x[0], 0)):
+            w = ic_for_weights.get(col, 0.02)
+            bar = '█' * int(w * 50)
+            print(f"  {label:<24s} {w:.4f}  {bar}")
+        print(f"PREDICTION_IC_WEIGHTS: {json.dumps(_ic_payload)}")
+    except Exception as _ic_err:
+        print(f"  IC weights emit failed: {_ic_err}")
 except Exception as _fc_err:
     print(f"  Factor curve grid build failed: {_fc_err}")
 
