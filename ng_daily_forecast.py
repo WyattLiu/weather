@@ -3470,4 +3470,87 @@ plt.savefig('/home/wyatt/weather/ng_probability_cone.png', dpi=150, bbox_inches=
             facecolor=C_BG)
 print("Probability cone chart saved to ng_probability_cone.png")
 
+# ============================================
+# Multi-factor curve plots (cycle 47)
+# ============================================
+# Time series of every factor used in the composite, plotted as a grid
+# so the user can see what's actually driving the model and check that
+# the underlying data is up to date. Saves to ng_factor_curves.png.
+print("\n--- Building factor curve grid ---")
+try:
+    # Filter to factors with at least 6 data points
+    plottable_factors = []
+    for col, label, sign in zip(factor_cols, factor_labels, factor_signs):
+        if col in analysis.columns:
+            ts = analysis[['date', col, f'{col}_z']].dropna(subset=[col]).copy()
+            if len(ts) >= 6:
+                plottable_factors.append((col, label, sign, ts))
+
+    n_factors = len(plottable_factors)
+    print(f"  Plotting {n_factors} factor curves...")
+    n_cols = 4
+    n_rows = (n_factors + n_cols - 1) // n_cols
+    fig_fc, axes_fc = plt.subplots(n_rows, n_cols,
+                                   figsize=(20, 3.2 * n_rows),
+                                   facecolor=C_BG)
+    axes_fc = np.atleast_2d(axes_fc).flatten()
+    # Cutoff: last 6 years for readability (longer history available but
+    # noisy on a small panel)
+    cutoff = pd.Timestamp(datetime.now()) - pd.DateOffset(years=6)
+    for i, (col, label, sign, ts) in enumerate(plottable_factors):
+        ax_fc = axes_fc[i]
+        ax_fc.set_facecolor(C_BG)
+        ts_recent = ts[ts['date'] >= cutoff]
+        if ts_recent.empty:
+            ts_recent = ts.tail(60)
+        # Raw value as a line
+        ax_fc.plot(ts_recent['date'], ts_recent[col],
+                   color='#58a6ff', linewidth=1.2, label='raw')
+        # Z-score on a twin axis (lighter)
+        if f'{col}_z' in ts_recent.columns:
+            ax_z = ax_fc.twinx()
+            ax_z.plot(ts_recent['date'], ts_recent[f'{col}_z'],
+                      color='#f0883e', linewidth=0.8, alpha=0.7, label='z')
+            ax_z.axhline(0, color='#666666', linewidth=0.5, alpha=0.5)
+            ax_z.axhline(1, color='#d2a8ff', linewidth=0.3, alpha=0.3, linestyle='--')
+            ax_z.axhline(-1, color='#d2a8ff', linewidth=0.3, alpha=0.3, linestyle='--')
+            ax_z.tick_params(axis='y', labelsize=7, colors='#f0883e')
+            ax_z.set_ylim(-3, 3)
+        # Last-value annotation: shows whether data is current
+        last_dt = ts['date'].iloc[-1]
+        last_val = ts[col].iloc[-1]
+        age_days = (pd.Timestamp(datetime.now()) - last_dt).days
+        fresh_color = '#3fb950' if age_days <= 35 else '#f0883e' if age_days <= 95 else '#f85149'
+        title_suffix = f"  ·  last: {last_val:+.2f} ({age_days}d ago)" if abs(last_val) < 1e6 else f"  ·  {age_days}d ago"
+        ax_fc.set_title(f'{label} (sign {sign:+d})' + title_suffix,
+                       color=fresh_color, fontsize=9)
+        ax_fc.tick_params(axis='y', labelsize=7, colors='#58a6ff')
+        ax_fc.tick_params(axis='x', labelsize=7, colors=C_TEXT, rotation=30)
+        ax_fc.grid(True, alpha=0.15, color=C_GRID)
+        for spine in ax_fc.spines.values():
+            spine.set_color('#444466')
+    # Hide unused axes
+    for j in range(n_factors, len(axes_fc)):
+        axes_fc[j].set_visible(False)
+
+    fig_fc.suptitle('NG Forecast — Factor Curves (raw=blue, z-score=orange)',
+                    color=C_TEXT, fontsize=14, fontweight='bold')
+    fig_fc.tight_layout(rect=(0, 0, 1, 0.985))
+    fig_fc.savefig('/home/wyatt/weather/ng_factor_curves.png', dpi=120,
+                  bbox_inches='tight', facecolor=C_BG)
+    plt.close(fig_fc)
+    print(f"  Factor curve grid saved to ng_factor_curves.png ({n_factors} factors)")
+
+    # Print a freshness table so the user sees stale data without opening the PNG
+    print("\n--- Factor freshness table ---")
+    print(f"  {'Factor':<24s} {'Last date':<12s} {'Days ago':>10s} {'Last val':>10s}")
+    for col, label, sign, ts in plottable_factors:
+        last_dt = ts['date'].iloc[-1]
+        last_val = ts[col].iloc[-1]
+        age_days = (pd.Timestamp(datetime.now()) - last_dt).days
+        marker = '✓' if age_days <= 35 else '⚠' if age_days <= 95 else '✗'
+        print(f"  {marker} {label:<22s} {last_dt:%Y-%m-%d}   {age_days:>7d}d   {last_val:>+10.3f}")
+except Exception as _fc_err:
+    print(f"  Factor curve grid build failed: {_fc_err}")
+
 print("Done.")
