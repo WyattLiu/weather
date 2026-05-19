@@ -3129,14 +3129,29 @@ if has_weather_data:
                 transform=ax.transAxes, fontsize=9, va='top', fontweight='bold', color=wd_color,
                 bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9))
 
-        # Also show weekly HDD from CPC if available
-        if not cpc_hdd.empty:
+        # "This week" annotation: HDD during heating season, CDD during
+        # cooling season (cycle 51). Previously always showed HDD which read
+        # "0 HDD" in summer and confused the user (HDD/CDD flip audit).
+        _this_month = datetime.now().month
+        _is_heating = _this_month in [10, 11, 12, 1, 2, 3]
+        if _is_heating and not cpc_hdd.empty:
             latest_hdd = cpc_hdd.iloc[-1]
             hdd_week_val = latest_hdd['hdd_week']
             hdd_dev_val = latest_hdd['hdd_dev_norm']
             ax.text(0.98, 0.98, f'This week: {hdd_week_val:.0f} HDD ({hdd_dev_val:+.0f} dev)',
                     transform=ax.transAxes, fontsize=8, va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='#F5F5F5', alpha=0.9))
+        elif not _is_heating and len(cpc_cdd_daily_raw) > 0:
+            # Cooling season: aggregate last 7 days of daily CDD into a
+            # "this week" total. No "dev" because the CPC weekly series we
+            # ingest is heating-only; an explicit CDD weekly equivalent
+            # isn't published the same way.
+            recent_cdd = cpc_cdd_daily_raw.sort_values('date').tail(7)
+            if len(recent_cdd) >= 3:
+                cdd_week_val = float(recent_cdd['dd_value'].sum())
+                ax.text(0.98, 0.98, f'Last 7d: {cdd_week_val:.0f} CDD',
+                        transform=ax.transAxes, fontsize=8, va='top', ha='right',
+                        bbox=dict(boxstyle='round', facecolor='#F5F5F5', alpha=0.9))
     else:
         ax.axis('off')
         ax.text(0.5, 0.5, 'No recent weather demand data', transform=ax.transAxes,
