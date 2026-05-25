@@ -467,7 +467,7 @@ def compute_technicals():
     ung = yf.Ticker('UNG')
     hist = ung.history(period='1y', interval='1d')
     if hasattr(hist.index, 'tz') and hist.index.tz is not None:
-        hist.index = hist.index.tz_localize(None)
+        hist.index = hist.index.tz_localize(None)  # type: ignore[union-attr]
 
     spot = float(hist['Close'].iloc[-1])
 
@@ -1047,7 +1047,7 @@ def compute_data(price, iv, excluded_indices):
         pnl_shares.append(round(s_pnl, 2))
         pnl_options.append(round(o_pnl, 2))
         pnl_total.append(round(s_pnl + o_pnl, 2))
-        delta_profile.append(round(SHARES + o_delta, 2))
+        delta_profile.append(round(float(SHARES + o_delta), 2))
 
     # Theta timeline by expiry bucket
     expiry_buckets = {}
@@ -1092,7 +1092,7 @@ def compute_data(price, iv, excluded_indices):
             'share_avg': SHARE_AVG,
             'share_pnl': round(share_pnl, 2),
             'total_options': sum(abs(o[3]) for i, o in enumerate(OPTIONS) if i not in excluded_indices),
-            'net_delta': round(net_delta, 2),
+            'net_delta': round(float(net_delta), 2),
             'total_gamma': round(total_opt_gamma, 2),
             'total_theta': round(total_opt_theta, 2),
             'total_vega': round(total_opt_vega, 2),
@@ -4151,8 +4151,82 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     except Exception:
         _friction_penalty = 0.0
 
+    # Cycle 183: margin efficiency penalty. User insight: "it eats away
+    # buying power so if UNG moves down, we 'could have' sell options then."
+    # Penalizes positions that consume margin disproportionately to premium
+    # captured. Premium/margin < 5% means you're locking buying power for
+    # pennies — buying power better reserved for post-move opportunities.
+    # This is a proxy for multi-scenario lookahead: the opportunity cost
+    # of margin consumption when the market might move in your favor.
+    # Cycle 183b: margin efficiency as a continuous cost, no threshold.
+    # Every dollar of margin consumed has an opportunity cost — it could
+    # earn the risk-free rate (BOXX ~5% APR) or deploy at better prices
+    # after a move. The penalty = margin consumed × opportunity rate,
+    # offset by premium captured. Net: positions that capture more premium
+    # than their opportunity cost are rewarded; positions that waste margin
+    # are penalized. No hardcoded threshold.
+    _margin_penalty = 0.0
+    try:
+        _OPPORTUNITY_RATE_WEEKLY = 0.05 / 52.0  # 5% APR → weekly
+        for _exp_s, _K, _right, _qty, _avg in _positions:
+            if _qty >= 0 or _right != 'P':
+                continue
+            _prem_per_share = _avg / 100 if _avg > 1 else _avg
+            _margin_per_contract = max(0, _K * 100 - _prem_per_share * 100)
+            _total_margin = abs(_qty) * _margin_per_contract
+            # Opportunity cost of locking this margin for the position's life
+            _exp_d = datetime.strptime(_exp_s, '%Y-%m-%d').date()
+            _dte = max(1, (_exp_d - date.today()).days)
+            _weeks = _dte / 7.0
+            _opp_cost = _total_margin * _OPPORTUNITY_RATE_WEEKLY * _weeks
+            _margin_penalty -= _opp_cost
+    except Exception:
+        _margin_penalty = 0.0
+
+    # Cycle 184: what-if lookahead. For each portfolio state, simulate
+    # UNG moving ±1σ over the evaluation horizon and estimate the EXPECTED
+    # VALUE of new opportunities available at those prices. This captures
+    # the opportunity cost of deploying margin now vs reserving it for
+    # post-move entries.
+    # Method: at spot ± daily_vol × sqrt(horizon), compute hypothetical
+    # ATM put premium. Compare to current ATM premium. If post-move
+    # premium is HIGHER (because spot dropped and puts are juicier),
+    # that's opportunity cost of being fully deployed now.
+    _whatif_value = 0.0
+    try:
+        _spot_wif = float(state.get('spot', 11.0) or 11.0)
+        _iv_wif = float(state.get('iv_est', 0.45) or 0.45)
+        _daily_vol_wif = _iv_wif / (252 ** 0.5)
+        _horizon_wif = 7  # 1-week lookahead
+        _move = _daily_vol_wif * (_horizon_wif ** 0.5) * _spot_wif
+        # Scenario: UNG drops 1σ
+        _down_spot = _spot_wif - _move
+        _down_atm_prem = abs(bs_price(_down_spot, round(_down_spot * 2) / 2,
+                                       30.0 / 365, 0.045, _iv_wif * 1.1, 'P'))
+        # Current ATM premium
+        _cur_atm_prem = abs(bs_price(_spot_wif, round(_spot_wif * 2) / 2,
+                                      30.0 / 365, 0.045, _iv_wif, 'P'))
+        # If post-drop premium > current: there's opportunity value in
+        # having margin available. Scale by probability of the drop.
+        _prem_uplift = max(0, _down_atm_prem - _cur_atm_prem)
+        # How many new contracts could we sell with AVAILABLE margin?
+        _total_used_margin = sum(
+            max(0, _K * abs(_qty) * 100 - (_avg / 100 if _avg > 1 else _avg) * abs(_qty) * 100)
+            for _exp_s, _K, _right, _qty, _avg in _positions
+            if _qty < 0 and _right == 'P'
+        )
+        _capital = float(state.get('capital_base', 112000) or 112000)
+        _free_margin = max(0, _capital - _total_used_margin)
+        _contracts_deployable = int(_free_margin / max(1, _down_spot * 100))
+        # Expected opportunity = P(drop) × contracts × premium uplift
+        _p_drop = 0.32  # ~1σ probability
+        _whatif_value = _p_drop * min(_contracts_deployable, 10) * _prem_uplift * 100
+    except Exception:
+        _whatif_value = 0.0
+
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
-             + tail_hedge_penalty + pillar_bonus + _friction_penalty)
+             + tail_hedge_penalty + pillar_bonus + _friction_penalty
+             + _margin_penalty + _whatif_value)
 
     return {
         'total': round(total, 1),
@@ -4165,6 +4239,8 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
             'tail_hedge': round(tail_hedge_penalty, 1),
             'pillar_drift': round(pillar_bonus, 1),
             'friction': round(_friction_penalty, 1),
+            'margin_eff': round(_margin_penalty, 1),
+            'whatif': round(_whatif_value, 1),
         },
         'dd_diagnostics': {
             'cvar_drop': round(cvar_drop, 3),
@@ -4719,7 +4795,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 c_copy['_components_delta'] = {
                     k: round(_new_comps.get(k, 0) - _path_prev_components.get(k, 0), 0)
                     for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction')
+                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
                 }
             except Exception:
                 c_copy['_components_delta'] = {}
@@ -4790,7 +4866,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 _winner_components = _p_comp
             _comp_delta = {}
             for _k in ('income_gap', 'dd_penalty', 'delta_gap',
-                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction'):
+                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif'):
                 _comp_delta[_k] = round(_p_comp.get(_k, 0.0)
                                         - _initial_components.get(_k, 0.0), 1)
             _losing_dim = None
@@ -4992,7 +5068,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -5037,7 +5113,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
