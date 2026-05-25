@@ -1941,6 +1941,15 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 continue
             p_bid = put_liq.get('bid', 0)
             p_ask = put_liq.get('ask', 0)
+            # Cycle 181: minimum premium economics gate. User: "sell 12 puts
+            # but only collect $100 premium and you call it a good choice?"
+            # Skip candidates with zero bid or premium < $0.05/share ($5/contract).
+            if p_bid < 0.05:
+                continue
+            # Cycle 181: size by premium economics, not just capacity.
+            _mid = (p_bid + p_ask) / 2
+            _max_by_premium = max(1, int(50.0 / max(0.01, _mid * 100)))
+            open_qty = min(open_qty, _max_by_premium)
             spread_note = f"${p_bid:.2f}/${p_ask:.2f}" if p_bid > 0 else "n/a"
             otm_pct = max(0.0, (spot - K_p) / spot) * 100
             otm_tag = f" {otm_pct:.0f}%OTM" if otm_pct >= 1.5 else ""
