@@ -1260,7 +1260,11 @@ def compute_portfolio_state(positions, spot, iv, today):
 
     # Smoothness from active weeks
     max_wk = max(weekly_theta.values(), default=0)
-    active = [v for v in weekly_theta.values() if v > max_wk * 0.05]
+    # Cycle 186: removed 5% threshold — use ALL positive weeks for smoothness.
+    # The threshold created cliff artifacts (smoothness +234 phantom when
+    # late-week buckets crossed in/out of "active"). Same class of bug as
+    # the income metric cliff fixed in cycle 173.
+    active = [v for v in weekly_theta.values() if v > 0]
     if len(active) > 2 and np.mean(active) > 0:
         smoothness = max(0, 1 - np.std(active) / np.mean(active))
     else:
@@ -5985,7 +5989,7 @@ def compute_timeline(price, iv, excluded_indices, thesis_tilt=0.0):
     # Smoothness: only measure weeks with meaningful theta (> 10% of max week)
     thetas_list = list(weekly_theta.values())
     max_theta = max(thetas_list) if thetas_list else 0
-    active_thetas = [t for t in thetas_list if t > max_theta * 0.05]
+    active_thetas = [t for t in thetas_list if t > 0]  # cycle 186: no threshold
     if len(active_thetas) > 2 and np.mean(active_thetas) > 0:
         smoothness = 1 - (float(np.std(active_thetas)) / float(np.mean(active_thetas)))
         smoothness = max(0.0, min(1.0, smoothness))
