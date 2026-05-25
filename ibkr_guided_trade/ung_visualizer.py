@@ -4183,11 +4183,23 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     except Exception:
         _margin_penalty = 0.0
 
-    # Cycle 184: what-if lookahead. For each portfolio state, simulate
-    # UNG moving ±1σ over the evaluation horizon and estimate the EXPECTED
-    # VALUE of new opportunities available at those prices. This captures
-    # the opportunity cost of deploying margin now vs reserving it for
-    # post-move entries.
+    # Cycle 185: read MCTS what-if cache from background refiner.
+    # whatif_refiner.py runs Monte Carlo simulations continuously (AlphaGo
+    # pondering). Its output: opportunity_value = expected premium after
+    # spot move - current premium. Positive = value in waiting.
+    _whatif_cache_value = 0.0
+    try:
+        import os as _os_wif
+        _wif_path = _os_wif.path.join(_os_wif.path.dirname(_os_wif.path.abspath(__file__)), 'whatif_cache.json')
+        if _os_wif.path.exists(_wif_path):
+            _wif = json.loads(open(_wif_path).read())
+            _cache_age = (datetime.now() - datetime.fromisoformat(_wif.get('timestamp', '2000-01-01'))).total_seconds()
+            if _cache_age < 600:
+                _whatif_cache_value = float(_wif.get('opportunity_value', 0))
+    except Exception:
+        pass
+
+    # Cycle 184: inline what-if (fallback when cache not available). Simulate
     # Method: at spot ± daily_vol × sqrt(horizon), compute hypothetical
     # ATM put premium. Compare to current ATM premium. If post-move
     # premium is HIGHER (because spot dropped and puts are juicier),
@@ -4226,7 +4238,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
 
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
              + tail_hedge_penalty + pillar_bonus + _friction_penalty
-             + _margin_penalty + _whatif_value)
+             + _margin_penalty + _whatif_value + _whatif_cache_value)
 
     return {
         'total': round(total, 1),

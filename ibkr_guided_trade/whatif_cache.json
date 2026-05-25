@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-05-25T00:47:22.507469",
+  "spot": 10.98,
+  "iv": 0.45,
+  "free_margin": 84955.0,
+  "n_simulations": 50,
+  "horizon_days": 7,
+  "current_best_premium": 554.0,
+  "expected_future_premium": 554.0,
+  "opportunity_value": -0.0,
+  "scenarios": {
+    "down": {
+      "count": 22,
+      "avg_premium": 525.0,
+      "avg_spot": 10.19
+    },
+    "flat": {
+      "count": 14,
+      "avg_premium": 544.0
+    },
+    "up": {
+      "count": 14,
+      "avg_premium": 607.0,
+      "avg_spot": 12.02
+    }
+  },
+  "recommendation": "NEUTRAL"
+}
