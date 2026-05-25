@@ -1,0 +1,75 @@
+{
+  "activityFeedItems": {
+    "edges": [
+      {
+        "node": {
+          "accountId": "non-registered-crypto-UCLFqN_t7Q",
+          "type": "CRYPTO_BUY",
+          "subType": "RECURRING_ORDER_UPCOMING",
+          "unifiedStatus": "PENDING",
+          "externalCanonicalId": "order-crypto-recurring-1",
+          "canonicalId": "order-crypto-recurring-1",
+          "assetSymbol": "BTC",
+          "assetQuantity": "0.01",
+          "amount": "400.00"
+        }
+      },
+      {
+        "node": {
+          "accountId": "non-registered-crypto-UCLFqN_t7Q",
+          "type": "CRYPTO_BUY",
+          "subType": "LIMIT_ORDER",
+          "unifiedStatus": "PENDING",
+          "externalCanonicalId": "order-crypto-2",
+          "canonicalId": "order-crypto-2",
+          "assetSymbol": "ETH",
+          "assetQuantity": "0.5",
+          "amount": "1200.00"
+        }
+      },
+      {
+        "node": {
+          "accountId": "non-registered-BpgPfFs0QA",
+          "type": "DIY_BUY",
+          "subType": "LIMIT_ORDER",
+          "unifiedStatus": "PENDING",
+          "externalCanonicalId": "order-diy-1",
+          "canonicalId": "order-diy-1",
+          "assetSymbol": "UNG",
+          "assetQuantity": "100",
+          "amount": "1250.00"
+        }
+      },
+      {
+        "node": {
+          "accountId": "non-registered-BpgPfFs0QA",
+          "type": "OPTIONS_SELL",
+          "subType": "LIMIT_ORDER",
+          "unifiedStatus": "PENDING",
+          "externalCanonicalId": "order-opt-1",
+          "canonicalId": "order-opt-1",
+          "assetSymbol": "UNG",
+          "assetQuantity": "1",
+          "amount": "100.00",
+          "strikePrice": "13.00",
+          "contractType": "CALL",
+          "expiryDate": "2026-05-15"
+        }
+      },
+      {
+        "node": {
+          "accountId": "non-registered-BpgPfFs0QA",
+          "type": "MANAGED_BUY",
+          "subType": "RECURRING_ORDER",
+          "unifiedStatus": "PENDING",
+          "externalCanonicalId": "order-managed-1",
+          "canonicalId": "order-managed-1",
+          "assetSymbol": "VEQT",
+          "assetQuantity": "5",
+          "amount": "200.00"
+        }
+      }
+    ],
+    "pageInfo": {"hasNextPage": false, "endCursor": null}
+  }
+}

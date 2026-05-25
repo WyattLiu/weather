@@ -1,0 +1,20 @@
+{
+  "soOrdersExtendedOrder": {
+    "averageFilledPrice": "1.7050",
+    "filledQuantity": "1.0000",
+    "firstFilledAtUtc": "2026-04-07T14:12:10.000Z",
+    "lastFilledAtUtc": "2026-04-07T14:12:10.000Z",
+    "limitPrice": "1.7000",
+    "openClose": "OPEN",
+    "orderType": "SELL_QUANTITY",
+    "rejectionCause": null,
+    "rejectionCode": null,
+    "securityId": "sec-o-example001",
+    "status": "working",
+    "submittedAtUtc": "2026-04-07T14:11:45.895Z",
+    "submittedQuantity": "3.0000",
+    "timeInForce": "DAY",
+    "canonicalAccountId": "non-registered-BpgPfFs0QA",
+    "externalId": "order-test-partial"
+  }
+}

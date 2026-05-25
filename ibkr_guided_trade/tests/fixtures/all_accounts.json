@@ -1,0 +1,57 @@
+{
+  "identity": {
+    "id": "identity-q66PAdo311jC6DeU9ZVvqusk6QS",
+    "accounts": {
+      "edges": [
+        {
+          "node": {
+            "id": "ca-cash-msb-HuMPL9AHng",
+            "type": "CA_CASH",
+            "unifiedAccountType": "CA_CASH",
+            "nickname": "Cash",
+            "branch": "WS",
+            "currency": "CAD",
+            "status": "OPEN"
+          }
+        },
+        {
+          "node": {
+            "id": "non-registered-BpgPfFs0QA",
+            "type": "NON_REGISTERED",
+            "unifiedAccountType": "NON_REGISTERED",
+            "nickname": "Wyatt - Personal",
+            "branch": "TR",
+            "currency": "USD",
+            "status": "OPEN"
+          }
+        },
+        {
+          "node": {
+            "id": "non-registered-crypto-UCLFqN_t7Q",
+            "type": "NON_REGISTERED_CRYPTO",
+            "unifiedAccountType": "CRYPTO",
+            "nickname": "Crypto",
+            "branch": "CR",
+            "currency": "CAD",
+            "status": "OPEN"
+          }
+        },
+        {
+          "node": {
+            "id": "ca-credit-card-BiRdg7XZTQ",
+            "type": "CA_CREDIT_CARD",
+            "unifiedAccountType": "CA_CREDIT_CARD",
+            "nickname": "Card",
+            "branch": "CC",
+            "currency": "CAD",
+            "status": "OPEN"
+          }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+      }
+    }
+  }
+}

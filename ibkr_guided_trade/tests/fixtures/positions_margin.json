@@ -1,0 +1,117 @@
+{
+  "identity": {
+    "id": "identity-q66PAdo311jC6DeU9ZVvqusk6QS",
+    "financials": {
+      "current": {
+        "id": "current-1",
+        "positions": {
+          "edges": [
+            {
+              "node": {
+                "id": "pos-1",
+                "quantity": "500",
+                "positionDirection": "LONG",
+                "security": {
+                  "id": "sec-s-32f0b46791214cbcbee9486e40232ea4",
+                  "securityType": "EXCHANGE_TRADED_FUND",
+                  "stock": {
+                    "symbol": "UNG",
+                    "name": "United States Natural Gas Fund"
+                  }
+                },
+                "marketAveragePrice": {
+                  "amount": "12.0500",
+                  "currency": "USD"
+                },
+                "totalValue": {
+                  "amount": "6500.00",
+                  "currency": "USD"
+                },
+                "marketBookValue": {
+                  "amount": "6025.00",
+                  "currency": "USD"
+                },
+                "marketUnrealizedReturns": {
+                  "amount": "475.00",
+                  "currency": "USD"
+                },
+                "accounts": [
+                  {"id": "non-registered-BpgPfFs0QA"}
+                ]
+              }
+            },
+            {
+              "node": {
+                "id": "pos-2",
+                "quantity": "-2",
+                "positionDirection": "SHORT",
+                "security": {
+                  "id": "sec-o-ung-call-13",
+                  "securityType": "OPTION",
+                  "optionDetails": {
+                    "strikePrice": "13.00",
+                    "optionType": "CALL",
+                    "expiryDate": "2026-05-15",
+                    "underlyingSecurity": {
+                      "id": "sec-s-32f0b46791214cbcbee9486e40232ea4",
+                      "stock": {"symbol": "UNG"}
+                    }
+                  }
+                },
+                "marketAveragePrice": {
+                  "amount": "0.55",
+                  "currency": "USD"
+                },
+                "totalValue": {
+                  "amount": "-120.00",
+                  "currency": "USD"
+                },
+                "marketBookValue": {
+                  "amount": "-110.00",
+                  "currency": "USD"
+                },
+                "marketUnrealizedReturns": {
+                  "amount": "-10.00",
+                  "currency": "USD"
+                },
+                "accounts": [
+                  {"id": "non-registered-BpgPfFs0QA"}
+                ]
+              }
+            },
+            {
+              "node": {
+                "id": "pos-3",
+                "quantity": "-1",
+                "positionDirection": "SHORT",
+                "security": {
+                  "id": "sec-o-ung-put-11",
+                  "securityType": "OPTION",
+                  "optionDetails": {
+                    "strikePrice": "11.00",
+                    "optionType": "PUT",
+                    "expiryDate": "2026-05-15",
+                    "underlyingSecurity": {
+                      "id": "sec-s-32f0b46791214cbcbee9486e40232ea4",
+                      "stock": {"symbol": "UNG"}
+                    }
+                  }
+                },
+                "marketAveragePrice": {
+                  "amount": "0.32",
+                  "currency": "USD"
+                },
+                "totalValue": {"amount": "-35.00", "currency": "USD"},
+                "marketBookValue": {"amount": "-32.00", "currency": "USD"},
+                "marketUnrealizedReturns": {"amount": "-3.00", "currency": "USD"},
+                "accounts": [{"id": "non-registered-BpgPfFs0QA"}]
+              }
+            }
+          ],
+          "pageInfo": {"hasNextPage": false, "endCursor": null},
+          "totalCount": 3
+        }
+      }
+    }
+  }
+}

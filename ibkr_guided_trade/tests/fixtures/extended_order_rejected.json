@@ -1,0 +1,18 @@
+{
+  "soOrdersExtendedOrder": {
+    "averageFilledPrice": null,
+    "filledQuantity": "0.0000",
+    "limitPrice": "2.50",
+    "openClose": "OPEN",
+    "orderType": "BUY_QUANTITY",
+    "rejectionCause": "INSUFFICIENT_BUYING_POWER",
+    "rejectionCode": "BP_REJECT",
+    "securityId": "sec-o-example001",
+    "status": "rejected",
+    "submittedAtUtc": "2026-04-07T14:11:45.895Z",
+    "submittedQuantity": "1.0000",
+    "timeInForce": "DAY",
+    "canonicalAccountId": "non-registered-BpgPfFs0QA",
+    "externalId": "order-test-rejected"
+  }
+}

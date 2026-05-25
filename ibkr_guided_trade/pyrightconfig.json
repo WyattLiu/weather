@@ -1,0 +1,34 @@
+{
+  "include": [
+    "ung_visualizer.py",
+    "param_sweep.py",
+    "lint_check.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "venv",
+    "scan_data",
+    "spy_data",
+    "data",
+    "dump"
+  ],
+  "extraPaths": [
+    ".",
+    "modules"
+  ],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+
+  "reportMissingImports": "none",
+
+  "reportAttributeAccessIssue": "none",
+  "reportCallIssue": "none",
+  "reportArgumentType": "none",
+  "reportOperatorIssue": "none",
+
+  "reportPossiblyUnboundVariable": "error",
+  "reportUndefinedVariable": "error",
+  "reportInvalidTypeForm": "error",
+  "reportMissingTypeStubs": "none",
+  "reportUnusedVariable": "none"
+}

@@ -1,0 +1,29 @@
+{
+  "soOrdersExtendedOrder": {
+    "averageFilledPrice": null,
+    "filledQuantity": "0.0000",
+    "filledCommissionFee": "0.00",
+    "filledTotalFee": "0.00",
+    "firstFilledAtUtc": null,
+    "lastFilledAtUtc": null,
+    "limitPrice": "2.50",
+    "openClose": "OPEN",
+    "orderType": "SELL_QUANTITY",
+    "optionMultiplier": "100",
+    "rejectionCause": null,
+    "rejectionCode": null,
+    "securityCurrency": "USD",
+    "securityId": "sec-o-example001",
+    "status": "pending",
+    "submittedAtUtc": "2026-04-07T14:11:45.895Z",
+    "submittedQuantity": "1.0000",
+    "submittedTotalFee": "0.00",
+    "timeInForce": "DAY",
+    "accountId": "non-registered-BpgPfFs0QA",
+    "canonicalAccountId": "non-registered-BpgPfFs0QA",
+    "cancellationCutoff": null,
+    "tradingSession": "ALL",
+    "expiredAtUtc": null,
+    "externalId": "order-test-pending"
+  }
+}
