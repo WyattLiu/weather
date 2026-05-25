@@ -1,0 +1,1 @@
+let cookies = {}; document.cookie.split(';').forEach(c => { let [k,v] = c.trim().split('='); if(k) cookies[k]=v; }); console.log(JSON.stringify(cookies, null, 2));

@@ -40,6 +40,10 @@ def _eval_candidate(p_state, c, spot, iv, today, initial_quality):
     try:
         new_state = apply_trade_to_state(dict(p_state), c, spot, iv, today)
         new_q_dict = evaluate_portfolio_quality(new_state)
+        # Cycle 180: hard DD veto — if adding this trade pushes the raw
+        # 5%-CVaR tail loss past -15% of capital, return -inf (trade blocked).
+        if new_q_dict.get('hard_dd_veto', False):
+            return (-float('inf'), None, new_q_dict, c)
         new_q_total = new_q_dict.get('total', 0.0)
         return (new_q_total - initial_quality, new_state, new_q_dict, c)
     except Exception:
@@ -1802,7 +1806,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 call_oi = call_liq.get('oi', 0)
                 _existing_same_slot = held_by_expiry.get(target_exp_str, {}).get(
                     (K_c, 'C'), 0)
-                if call_oi < 30 or _existing_same_slot >= 5:
+                if call_oi < 30:
                     continue
                 per_contract_delta = abs(bs_delta(spot, K_c, T_add, r, iv, 'C')) * 100
                 ideal_qty = max(1, min(calls_available, max(1, call_oi // 5)))
@@ -1810,7 +1814,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     delta_driven = max(1, int(abs(delta_gap) / 2 / max(1, per_contract_delta)))
                     ideal_qty = min(ideal_qty, delta_driven)
                 # Don't exceed remaining slot capacity
-                ideal_qty = min(ideal_qty, 5 - _existing_same_slot)
+                # No per-strike cap — sized by shares available + delta
                 if ideal_qty <= 0:
                     continue
                 open_qty = min(ideal_qty, calls_available)
@@ -1881,7 +1885,13 @@ def generate_candidates(portfolio_state, spot, iv, today):
             # Per-strike dedupe — don't pile more onto a slot already 5+ deep
             _existing_same_slot = held_by_expiry.get(target_exp_str, {}).get(
                 (K_p, 'P'), 0)
-            if put_oi < 30 or _existing_same_slot >= 5:
+            # Cycle 179b: no hard cap per strike. User: "we assume good fill
+            # and such small size market maker can jump in." Evaluator's qΔ
+            # handles concentration via dd_penalty + friction + smoothness.
+            # Only gate: OI >= 30 (minimum liquidity) and don't re-propose
+            # at a strike that already has positions (beam dedupes via
+            # used_targets). Existing positions are visible to the evaluator.
+            if put_oi < 30:
                 continue
             per_put_delta = abs(bs_delta(spot, K_p, T_add, r, iv, 'P')) * 100
             # Waterfall target + per-strike incremental sizing
@@ -1908,17 +1918,14 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     portfolio_state.get('target_weekly_income', 1500) * 0.6
                 )
                 if _income_mode and _put_contracts_here < 15:
-                    # Cycle 162: bumped income-mode cap 3 → 5. Each
-                    # 5x OPEN at $0.30 mid = $150 credit vs $90 at 3x —
-                    # 67% more income per trade. Kelly util at 27% has
-                    # huge margin headroom. Bound by per-strike dedupe
-                    # (5 - existing_same_slot) which limits trades at
-                    # already-populated strikes.
-                    incremental_qty = min(5 - _existing_same_slot, 5)
+                    # Cycle 179: OI-based sizing, not hardcoded cap.
+                    # Max at 20% of OI minus existing. Evaluator handles
+                    # concentration via qΔ components.
+                    incremental_qty = max(1, 50 - _existing_same_slot)  # no hard cap, evaluator gates
                 # Delta-driven override: long-delta portfolio + room at strike
                 elif delta_gap < -300 and _put_contracts_here < 15:
                     delta_driven = max(1, int(abs(delta_gap) / 2 / max(1, per_put_delta)))
-                    incremental_qty = min(5 - _existing_same_slot, delta_driven)
+                    incremental_qty = min(50 - _existing_same_slot, delta_driven)
                 if incremental_qty <= 0:
                     continue
             if delta_gap < 0:
@@ -2046,37 +2053,10 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     'why': f"Adds theta to fill waterfall gap. OI={put_oi}.",
                 })
 
-        # STRANGLE with real OTM strikes — check both legs' liquidity
-        otm_put = find_nearest_strike(spot * 0.95, put_strikes)
-        otm_call = find_nearest_strike(spot * 1.05, call_strikes)
-        if otm_put is not None and otm_call is not None:
-            put_liq_s = liq.get((otm_put, 'P'), {})
-            call_liq_s = liq.get((otm_call, 'C'), {})
-            p_oi = put_liq_s.get('oi', 0)
-            c_oi = call_liq_s.get('oi', 0)
-            if p_oi >= 5 and c_oi >= 5:
-                str_theta = (abs(bs_theta(spot, otm_put, T_add, r, iv, 'P')) + abs(bs_theta(spot, otm_call, T_add, r, iv, 'C'))) * 100
-                str_delta = (-bs_delta(spot, otm_put, T_add, r, iv, 'P') - bs_delta(spot, otm_call, T_add, r, iv, 'C')) * 100
-                str_gamma = (-bs_gamma(spot, otm_put, T_add, r, iv) - bs_gamma(spot, otm_call, T_add, r, iv)) * 100
-                str_vega = (-bs_vega(spot, otm_put, T_add, r, iv) - bs_vega(spot, otm_call, T_add, r, iv)) * 100
-                put_ext_s = abs(bs_price(spot, otm_put, T_add, r, iv, 'P')) - max(0, otm_put - spot)
-                call_ext_s = abs(bs_price(spot, otm_call, T_add, r, iv, 'C')) - max(0, spot - otm_call)
-
-                candidates.append({
-                    'type': 'STRANGLE',
-                    'action': f"Sell 1x {target_exp_str} ${otm_put}P/${otm_call}C ({actual_dte} DTE)",
-                    'target_exp': target_exp_str,
-                    'target_put_strike': otm_put,
-                    'target_call_strike': otm_call,
-                    'theta_change': str_theta,
-                    'delta_change': str_delta,
-                    'gamma_change': str_gamma,
-                    'vega_change': str_vega,
-                    'new_extrinsic_total': (put_ext_s + call_ext_s) * 100,
-                    'n_legs': 2,
-                    'detail': f"P: ${put_ext_s:.2f} + C: ${call_ext_s:.2f} | +${str_theta:.1f}/d θ | OI: P={p_oi} C={c_oi}",
-                    'why': f"Premium from both sides. OI: P={p_oi} C={c_oi}.",
-                })
+        # STRANGLE REMOVED (cycle 180, codex P0 audit). The call leg was
+        # sold without checking share coverage — naked short call risk.
+        # Wheel strategy handles puts (OPEN) and calls (COVERED CALL)
+        # separately; strangles are not wheel-aligned.
 
     # ── BUY/SELL shares (once, outside expiry loop) ──
     # Only for large gaps. Qty = match the gap exactly, not overshoot.
@@ -2118,28 +2098,35 @@ def generate_candidates(portfolio_state, spot, iv, today):
     # that ADD new short exposure or roll for credit. Keep only defensive
     # trades: close winners, let OTM expire, take assignment, strike-down rolls.
     mode = portfolio_state.get('deployment_mode', 'ACTIVE')
-    if mode == 'WAITING':
-        DEFENSIVE_TYPES = {'CLOSE', 'LET EXPIRE', 'TAKE PROFIT', 'ASSIGNMENT', 'SELL SHARES'}
+    # Cycle 180 P1 fix: TRANSITION mode now also enforces reduced aggression
+    # per CENTRAL_PHILOSOPHY: "scale-down position size, no new aggressive
+    # entries." Previously only WAITING pruned candidates; TRANSITION was
+    # treated identically to ACTIVE.
+    if mode in ('WAITING', 'TRANSITION'):
+        DEFENSIVE_TYPES = {'CLOSE', 'LET EXPIRE', 'TAKE PROFIT', 'ASSIGNMENT', 'SELL SHARES', 'BUY PUT'}
         pruned = []
         for c in candidates:
             t = c.get('type')
             if t in DEFENSIVE_TYPES:
                 pruned.append(c)
             elif t == 'ROLL':
-                # Allow only strike-down (defensive) rolls — same-strike or
-                # strike-up rolls are credit-grabs that re-arm exposure.
                 old_k = c.get('source_strike', 0)
                 new_k = c.get('target_strike', 0)
                 right = c.get('source_right', 'P')
-                # For puts: strike DOWN reduces collateral / lowers ITM risk
-                # For calls: strike UP reduces ITM cap on shares
                 is_defensive_roll = (
                     (right == 'P' and new_k < old_k) or
                     (right == 'C' and new_k > old_k)
                 )
                 if is_defensive_roll:
                     pruned.append(c)
-            # ADD_TYPES are dropped entirely
+            elif mode == 'TRANSITION' and t in ('OPEN', 'COVERED CALL'):
+                # TRANSITION allows EXISTING position maintenance but
+                # scales down new entries: only single-contract OPENs
+                # (no aggressive multi-contract fills).
+                qty = abs(c.get('add_qty', c.get('qty', 1)))
+                if qty <= 1:
+                    pruned.append(c)
+            # WAITING: ADD_TYPES dropped entirely
         candidates = pruned
 
     # Marginal sizing curves: for ROLL/OPEN/ADD/COVERED CALL with qty > 2,
@@ -2201,6 +2188,78 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 rung['liquidity'] = liq
             laddered.append(rung)
     candidates = laddered
+
+    # Cycle 176: BUY LEAPS PUT candidates — replaces the hardcoded tail
+    # hedge static check. Scans the FULL option chain (not just valid_expiries)
+    # for puts with DTE ≥ 180. Generates concrete BUY PUT candidates with
+    # real pricing so the beam evaluates them via qΔ like any other trade.
+    # The tail_hedge component in evaluate_portfolio_quality gives -$1000
+    # per missing LEAPS (floor=2), so these candidates get massive qΔ.
+    _LEAPS_MIN_DTE = 180
+    _tail_qty = int(portfolio_state.get('tail_hedge_qty', 0) or 0)
+    _tail_floor = int(portfolio_state.get('tail_hedge_floor', 2) or 2)
+    if _tail_qty < _tail_floor:
+        _available = get_available_options()
+        for _lp_exp_str in sorted(_available.keys()):
+            try:
+                _lp_exp = datetime.strptime(_lp_exp_str, '%Y-%m-%d').date()
+                _lp_dte = (_lp_exp - today).days
+            except Exception:
+                continue
+            if _lp_dte < _LEAPS_MIN_DTE:
+                continue
+            _lp_chain = _available[_lp_exp_str]
+            _lp_liq = _lp_chain.get('liquidity', {})
+            _lp_puts = sorted({k for (k, rt) in _lp_liq if rt == 'P'})
+            # ATM and 1 OTM strike
+            _lp_atm = find_nearest_strike(spot, _lp_puts) if _lp_puts else None
+            _lp_otm = find_nearest_strike(spot * 0.90, _lp_puts) if _lp_puts else None
+            for _lp_K in set(filter(None, [_lp_atm, _lp_otm])):
+                _lp_l = _lp_liq.get((_lp_K, 'P'), {})
+                _lp_oi = _lp_l.get('oi', 0)
+                _lp_bid = _lp_l.get('bid', 0)
+                _lp_ask = _lp_l.get('ask', 0)
+                if _lp_oi < 10 or _lp_bid <= 0:
+                    continue
+                _lp_mid = (_lp_bid + _lp_ask) / 2
+                _lp_T = _lp_dte / 365.0
+                _lp_iv = get_contract_iv(_lp_exp_str, _lp_K, 'P') or iv
+                _need = _tail_floor - _tail_qty
+                for _lp_qty in sorted(set([1, _need])):
+                    if _lp_qty <= 0:
+                        continue
+                    _lp_cost = _lp_mid * _lp_qty * 100
+                    _lp_delta = _lp_qty * bs_delta(spot, _lp_K, _lp_T, r, _lp_iv, 'P') * 100
+                    _lp_gamma = _lp_qty * bs_gamma(spot, _lp_K, _lp_T, r, _lp_iv) * 100
+                    _lp_theta = -abs(bs_theta(spot, _lp_K, _lp_T, r, _lp_iv, 'P')) * _lp_qty * 100
+                    _lp_vega = _lp_qty * bs_vega(spot, _lp_K, _lp_T, r, _lp_iv) * 100
+                    _otm_pct = max(0, (spot - _lp_K) / spot) * 100
+                    _otm_tag = f" {_otm_pct:.0f}%OTM" if _otm_pct >= 1.5 else ""
+                    candidates.append({
+                        'type': 'BUY PUT',
+                        'action': f"Buy {_lp_qty}x {_lp_exp_str} ${_lp_K}P LEAPS ({_lp_dte} DTE{_otm_tag})",
+                        'target_exp': _lp_exp_str,
+                        'target_strike': _lp_K,
+                        'add_qty': _lp_qty,
+                        'theta_change': _lp_theta,
+                        'delta_change': _lp_delta,
+                        'gamma_change': _lp_gamma,
+                        'vega_change': _lp_vega,
+                        'new_extrinsic_total': _lp_mid * _lp_qty * 100,
+                        'n_legs': 1,
+                        'liquidity': {
+                            'oi': _lp_oi,
+                            'bid': round(_lp_bid, 2),
+                            'ask': round(_lp_ask, 2),
+                            'spread_pct': round((_lp_ask - _lp_bid) / ((_lp_ask + _lp_bid) / 2) * 100, 1) if (_lp_bid + _lp_ask) > 0 else 0,
+                            'oi_usage_pct': round(_lp_qty / _lp_oi * 100, 1) if _lp_oi > 0 else 100,
+                            'notional': round(_lp_cost),
+                            'credit_debit': -round(_lp_cost),
+                            'friction_est': round((_lp_ask - _lp_bid) / 2 * _lp_qty * 100) if (_lp_bid + _lp_ask) > 0 else 0,
+                        },
+                        'detail': f"LEAPS hedge | cost ${_lp_cost:.0f} | Δ{_lp_delta:+.0f} | Γ{_lp_gamma:+.0f} | OI={_lp_oi} | ${_lp_bid:.2f}/${_lp_ask:.2f}",
+                        'why': f"Tail-hedge floor requires {_tail_floor} LEAPS puts, have {_tail_qty}. This is catastrophe protection per CENTRAL_PHILOSOPHY.",
+                    })
 
     return candidates
 
@@ -2487,17 +2546,7 @@ def compute_target_delta(spot):
     return _compute_target_delta_cached(spot, z, _margin_capital_usd)
 
 
-def compute_delta_at_price(positions, test_price, iv, today):
-    """Compute portfolio delta at a hypothetical price."""
-    r = 0.04
-    total_delta = float(SHARES)  # shares always delta=1
-    for exp_str, strike, right, qty, avg_cost in positions:
-        expiry = datetime.strptime(exp_str, '%Y-%m-%d').date()
-        dte = max((expiry - today).days, 0)
-        T = dte / 365.0
-        d = bs_delta(test_price, strike, T, r, iv, right)
-        total_delta += qty * d * 100
-    return total_delta
+    # compute_delta_at_price REMOVED — dead code (codex audit, never called)
 
 
 def short_put_collateral(positions):
@@ -2530,7 +2579,13 @@ def compute_kelly(trade, portfolio_state):
     import math as _m
 
     trade_type = trade.get('type', '')
-    if trade_type in ('LET EXPIRE', 'ASSIGNMENT', 'SELL SHARES', 'BUY SHARES', 'CLOSE', 'TAKE PROFIT'):
+    # Cycle 180: added BUY PUT to exclusions. The Kelly formula below assumes
+    # you SELL premium (win = credit kept when OTM). For BUY PUT the economics
+    # are inverted (win when ITM, lose premium when OTM). Scoring BUY PUT
+    # with the short-premium formula gives materially wrong EV/Kelly. The
+    # tail_hedge quality component handles LEAPS ranking via CVaR-based
+    # crash benefit instead.
+    if trade_type in ('LET EXPIRE', 'ASSIGNMENT', 'SELL SHARES', 'BUY SHARES', 'CLOSE', 'TAKE PROFIT', 'BUY PUT'):
         return None
 
     spot = portfolio_state.get('spot', UNG_PRICE)
@@ -3675,11 +3730,14 @@ def apply_trade_to_state(state, trade, spot, iv, today):
         new_positions.append((target_exp, target_strike, right, -add_qty, 0))
 
     elif trade['type'] == 'SELL SHARES':
-        # Reduce share count
-        pass  # greeks already applied via delta_change above
+        # Cycle 180 P1 fix: update modeled share count so downstream
+        # covered-call capacity checks reflect shares already "sold."
+        _sell_qty = abs(trade.get('qty', trade.get('add_qty', 0)))
+        new_state['shares'] = max(0, new_state.get('shares', SHARES) - _sell_qty)
 
     elif trade['type'] == 'BUY SHARES':
-        pass  # greeks already applied
+        _buy_qty = abs(trade.get('qty', trade.get('add_qty', 0)))
+        new_state['shares'] = new_state.get('shares', SHARES) + _buy_qty
 
     elif trade['type'] == 'COVERED CALL':
         target_exp = trade.get('target_exp')
@@ -3920,8 +3978,23 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     total_gamma = float(state.get('total_gamma', 0.0) or 0.0)
     total_theta = float(state.get('total_theta', 0.0) or 0.0)
     smoothness = float(state.get('smoothness', 0.0) or 0.0)
-    tail_qty = int(state.get('tail_hedge_qty', 0) or 0)
+    # Cycle 176: derive tail_hedge_qty from ACTUAL positions in state,
+    # not from a stale state field. This makes evaluate_portfolio_quality
+    # self-consistent after apply_trade_to_state adds/removes LEAPS.
+    # Previously tail_hedge_qty was set once in compute_recommendations
+    # and never updated when the beam applied BUY PUT trades.
     tail_floor = int(state.get('tail_hedge_floor', 2) or 2)
+    _TAIL_MIN_DTE = 180
+    _positions = state.get('positions', []) or []
+    try:
+        _today = date.today()
+        tail_qty = sum(
+            abs(qty) for exp_s, strike, right, qty, _ in _positions
+            if right == 'P' and qty > 0
+            and (datetime.strptime(exp_s, '%Y-%m-%d').date() - _today).days >= _TAIL_MIN_DTE
+        )
+    except Exception:
+        tail_qty = int(state.get('tail_hedge_qty', 0) or 0)
     pillar_scores = state.get('pillar_scores', {}) or {}
     pillar_sum = float((pillar_scores.get('tech') or 0)
                        + (pillar_scores.get('fund') or 0)
@@ -3977,9 +4050,14 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
         dd_penalty = (expected_dd_frac + 0.10) * capital
     else:
         dd_penalty = 0.0
-    # Keep dd_frac (the legacy display number) in dd_diagnostics for context,
-    # but the new active number is expected_dd_frac.
+    # Cycle 180: HARD DD VETO — the soft dd_penalty above is a gradient
+    # for ranking; this is a TRUE block. CENTRAL_PHILOSOPHY says "max -10%
+    # monthly drawdown." If the RAW 7-day 5%-CVaR tail loss exceeds -15%
+    # of capital (stricter than expected-value × α), the trade is vetoed.
+    # The 15% threshold on a 7-day horizon roughly maps to -10% monthly
+    # (accounting for theta offset over 30 days).
     dd_frac = tail_pnl_worst / capital if capital > 0 else 0.0
+    _hard_dd_veto = dd_frac < -0.15
     theta_30d = theta_horizon * (30.0 / HORIZON_D)  # legacy field for diag display
 
     # Delta gap (quadratic, mild)
@@ -3991,16 +4069,95 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     smoothness_bonus = smoothness * 500.0
 
     # Tail-hedge floor
-    tail_hedge_penalty = -2000.0 if tail_qty < tail_floor else 0.0
+    # Cycle 177: risk-derived tail-hedge penalty. No hardcoded $ values.
+    # Computes the expected crash-scenario benefit PER LEAPS put using the
+    # same CVaR model as dd_penalty, then penalizes missing hedges by the
+    # probability-weighted loss they would have prevented.
+    #
+    # Methodology:
+    #   1. Compute 7-day 5%-CVaR drop (same as dd_penalty)
+    #   2. Estimate per-LEAPS-put benefit in a crash: a 200-DTE ATM put
+    #      has delta ~-0.45 and gamma ~0.02 per share. In a CVaR crash:
+    #      benefit = (-leaps_delta × cvar_drop + 0.5 × leaps_gamma × cvar²) × 100
+    #   3. Penalty per missing LEAPS = α × benefit (probability-weighted)
+    #   4. Scale by portfolio leverage (more short exposure = more valuable hedge)
+    #
+    # This makes the penalty DYNAMIC: high-IV / extended markets → bigger
+    # CVaR → bigger penalty for missing hedges. Calm markets → smaller.
+    _missing = max(0, tail_floor - tail_qty)
+    if _missing > 0:
+        try:
+            _ALPHA = 0.05
+            _HORIZON = 7
+            # CVaR from ScenarioDistribution if available, else estimate
+            # from IV (annualized vol → 7-day 5%-CVaR ≈ iv × sqrt(7/252) × 2.06)
+            _spot = float(state.get('spot', 11.0) or 11.0)
+            _leaps_iv = float(state.get('iv_est', 0.45) or 0.45)
+            # CVaR as a PRICE DROP (not fraction) — matches dd_penalty units
+            if sd is not None:
+                _cvar_price = float(sd.cvar_loss(_HORIZON, alpha=_ALPHA))
+            else:
+                _daily_vol = _leaps_iv / (252 ** 0.5)
+                _cvar_frac = _daily_vol * (_HORIZON ** 0.5) * 2.06
+                _cvar_price = _cvar_frac * _spot
+
+            # LEAPS put Greeks (200-DTE ATM, per contract = 100 shares)
+            _leaps_T = 200.0 / 365.0
+            _leaps_delta = bs_delta(_spot, _spot, _leaps_T, 0.045, _leaps_iv, 'P') * 100
+            _leaps_gamma = bs_gamma(_spot, _spot, _leaps_T, 0.045, _leaps_iv) * 100
+            # In a crash, LEAPS gain: delta offset + gamma convexity
+            _benefit_per = max(0,
+                -_leaps_delta * _cvar_price
+                + 0.5 * _leaps_gamma * _cvar_price ** 2
+            )
+            # Probability-weighted
+            _expected_benefit = _ALPHA * _benefit_per
+            # Scale by short gamma exposure (more shorts = hedge more urgent)
+            _short_gamma = abs(min(0, total_gamma))
+            _exposure_mult = max(1.0, _short_gamma / 500.0)
+            tail_hedge_penalty = -_expected_benefit * _missing * _exposure_mult
+        except Exception:
+            tail_hedge_penalty = -500.0 * _missing
+    else:
+        tail_hedge_penalty = 0.0
 
     # Pillar drift bonus (mildly bullish/bearish cyclical alignment)
     pillar_bonus = pillar_sum * 300.0
 
+    # Cycle 178: annualized roll friction penalty. Shorter DTE positions
+    # require more frequent rolls → higher cumulative friction. The
+    # evaluator should penalize portfolios with high annualized friction
+    # drag, naturally favoring longer DTE (fewer rolls/year, less friction).
+    # User insight: "higher premium from longer DTE gives room — when it
+    # moves hard the penalty is less."
+    # Computation: for each short option, estimate annual rolls × spread cost.
+    # Sum across portfolio → weekly friction drag → subtract from quality.
+    _friction_penalty = 0.0
+    try:
+        _today_f = date.today()
+        for _exp_s, _K, _right, _qty, _avg in _positions:
+            if _qty >= 0:
+                continue  # only short positions have roll friction
+            _exp_d = datetime.strptime(_exp_s, '%Y-%m-%d').date()
+            _dte = max(1, (_exp_d - _today_f).days)
+            if _dte > 180:
+                continue  # LEAPS don't roll frequently
+            _annual_rolls = 365.0 / _dte
+            # Friction per roll ≈ half spread × 100 × contracts.
+            # Approximate spread at $0.03/share for liquid UNG options.
+            _friction_per_roll = 0.03 * abs(_qty) * 100
+            _annual_friction = _annual_rolls * _friction_per_roll
+            _weekly_friction = _annual_friction / 52.0
+            _friction_penalty -= _weekly_friction
+    except Exception:
+        _friction_penalty = 0.0
+
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
-             + tail_hedge_penalty + pillar_bonus)
+             + tail_hedge_penalty + pillar_bonus + _friction_penalty)
 
     return {
         'total': round(total, 1),
+        'hard_dd_veto': _hard_dd_veto,
         'components': {
             'income_gap': round(income_gap, 1),
             'dd_penalty': round(dd_penalty, 1),
@@ -4008,6 +4165,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
             'smoothness': round(smoothness_bonus, 1),
             'tail_hedge': round(tail_hedge_penalty, 1),
             'pillar_drift': round(pillar_bonus, 1),
+            'friction': round(_friction_penalty, 1),
         },
         'dd_diagnostics': {
             'cvar_drop': round(cvar_drop, 3),
@@ -4339,16 +4497,14 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                     state.get('target_weekly_income', 1500) * 0.6
                 )
                 if _income_mode_filter and _t_typ in ('OPEN', 'COVERED CALL'):
-                    # Block exact (exp, strike) reuse always
+                    # Cycle 179: removed per-expiry strike cap (was 2). User:
+                    # "we should not limit strike per expiry." The evaluator's
+                    # qΔ (dd_penalty, friction, smoothness) naturally limits
+                    # how many strikes at one expiry are worth adding.
+                    # Still block exact (exp, strike, type) reuse — can't sell
+                    # the same contract twice in one beam path.
                     _used_key = f"{_t_exp}|{_t_strike}|{_t_typ}"
                     if _used_key in used_targets:
-                        continue
-                    # Block if already 2 strikes used at this expiry
-                    _exp_count = sum(
-                        1 for _k in used_targets
-                        if isinstance(_k, str) and _k.startswith(f"{_t_exp}|") and _k.endswith(f"|{_t_typ}")
-                    )
-                    if _exp_count >= 2:
                         continue
                 elif _t_exp in used_targets:
                     continue
@@ -4564,7 +4720,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 c_copy['_components_delta'] = {
                     k: round(_new_comps.get(k, 0) - _path_prev_components.get(k, 0), 0)
                     for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                              'smoothness', 'tail_hedge', 'pillar_drift')
+                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction')
                 }
             except Exception:
                 c_copy['_components_delta'] = {}
@@ -4635,7 +4791,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 _winner_components = _p_comp
             _comp_delta = {}
             for _k in ('income_gap', 'dd_penalty', 'delta_gap',
-                       'smoothness', 'tail_hedge', 'pillar_drift'):
+                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction'):
                 _comp_delta[_k] = round(_p_comp.get(_k, 0.0)
                                         - _initial_components.get(_k, 0.0), 1)
             _losing_dim = None
@@ -4837,7 +4993,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift')
+                                      'tail_hedge', 'pillar_drift', 'friction')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -4882,7 +5038,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift')
+                                      'tail_hedge', 'pillar_drift', 'friction')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -5029,39 +5185,21 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                     'qty': c.get('roll_qty', 1),
                 })
 
-    # Tail-hedge maintenance check (CENTRAL_PHILOSOPHY: always maintain ≥2
-    # long-dated puts as catastrophe protection). Walk positions, count long
-    # puts with DTE ≥ 180. If below the floor, surface a high-urgency alert
-    # regardless of score.
-    from datetime import datetime as _dt
+    # Cycle 176: removed hardcoded tail-hedge static check. LEAPS BUY PUT
+    # candidates are now generated in generate_candidates() and evaluated
+    # by the beam like any other trade. The tail_hedge component in
+    # evaluate_portfolio_quality (-$1000 per missing LEAPS) drives their
+    # qΔ. State fields still set for display purposes.
     TAIL_HEDGE_MIN_DTE = 180
     TAIL_HEDGE_FLOOR = 2
-    leaps_long_puts = []
-    for exp_str, strike, right, qty, _avg in flat_positions:
-        if right != 'P' or qty <= 0:
-            continue
-        try:
-            _dte = (_dt.strptime(exp_str, '%Y-%m-%d').date() - today).days
-        except Exception:
-            continue
-        if _dte >= TAIL_HEDGE_MIN_DTE:
-            leaps_long_puts.append((exp_str, strike, qty, _dte))
-    tail_hedge_qty = sum(q for _, _, q, _ in leaps_long_puts)
-    initial_state['tail_hedge_qty'] = tail_hedge_qty
+    from datetime import datetime as _dt
+    _leaps_qty = sum(
+        abs(qty) for exp_str, strike, right, qty, _ in flat_positions
+        if right == 'P' and qty > 0
+        and (_dt.strptime(exp_str, '%Y-%m-%d').date() - today).days >= TAIL_HEDGE_MIN_DTE
+    )
+    initial_state['tail_hedge_qty'] = _leaps_qty
     initial_state['tail_hedge_floor'] = TAIL_HEDGE_FLOOR
-    if tail_hedge_qty < TAIL_HEDGE_FLOOR:
-        _short = TAIL_HEDGE_FLOOR - tail_hedge_qty
-        recommendations.append({
-            'type': 'TAIL HEDGE',
-            'score': 0,
-            'urgency': 'high',
-            'action': f"Tail-hedge shortfall: {tail_hedge_qty} long LEAPS puts (floor: {TAIL_HEDGE_FLOOR})",
-            'detail': (f"Need {_short} more long-dated put(s) (DTE ≥ {TAIL_HEDGE_MIN_DTE}d) "
-                       f"as catastrophe protection per CENTRAL_PHILOSOPHY."),
-            'why': "Wheel sells premium against directional risk; LEAPS provide the floor.",
-            'theta_impact': 0, 'delta_impact': 0, 'gamma_impact': 0, 'vega_impact': 0,
-            'qty': _short,
-        })
 
     # If no trades scored high enough, add HOLD
     if not recommendations:
