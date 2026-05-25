@@ -84,26 +84,69 @@ def simulate_spot_paths(spot, iv, horizon_days, n_paths):
 
 
 def evaluate_opportunities_at_spot(sim_spot, iv, capital_available):
-    """At a given spot, what's the best ATM put premium available?"""
-    # Simulate selling an ATM 30-DTE put at the new spot
-    K = round(sim_spot * 2) / 2  # nearest $0.50 strike
-    T = 30.0 / 365
-    # IV tends to rise when spot drops (vol smile)
+    """At a given spot, evaluate the BEST trade across multiple strikes/DTEs.
+
+    Scans ATM, 5%OTM, 10%OTM puts AND ATM covered calls at 14/30/45 DTE.
+    Returns the single best trade by premium/margin efficiency — this is
+    what the operator WOULD do at this simulated spot.
+    """
     iv_adj = iv * (1.0 + max(0, (11.0 - sim_spot) / 11.0) * 0.3)
-    premium = abs(bs_price(sim_spot, K, T, 0.045, iv_adj, 'P'))
+    best = None
 
-    # How many contracts can we sell with available capital?
-    margin_per = max(1, K * 100 - premium * 100)  # WS: strike - premium
-    n_contracts = min(10, int(capital_available / margin_per)) if margin_per > 0 else 0
+    for dte in [14, 30, 45]:
+        T = dte / 365.0
+        for otm_pct in [0.0, 0.05, 0.10]:
+            K = round((sim_spot * (1 - otm_pct)) * 2) / 2
+            if K <= 0:
+                continue
+            prem = abs(bs_price(sim_spot, K, T, 0.045, iv_adj, 'P'))
+            if prem < 0.05:
+                continue
+            margin_per = max(1, K * 100 - prem * 100)
+            n = min(10, int(capital_available / margin_per)) if margin_per > 0 else 0
+            if n <= 0:
+                continue
+            total = prem * n * 100
+            efficiency = total / (margin_per * n) if margin_per * n > 0 else 0
+            entry = {
+                'spot': round(sim_spot, 2),
+                'strike': K,
+                'dte': dte,
+                'otm_pct': round(otm_pct * 100, 0),
+                'premium_per_share': round(prem, 3),
+                'contracts': n,
+                'total_premium': round(total, 0),
+                'efficiency': round(efficiency * 100, 1),
+                'iv_adj': round(iv_adj, 3),
+            }
+            if best is None or total > best['total_premium']:
+                best = entry
 
-    total_premium = premium * n_contracts * 100
-    return {
-        'spot': round(sim_spot, 2),
-        'strike': K,
-        'premium_per_share': round(premium, 3),
-        'contracts': n_contracts,
-        'total_premium': round(total_premium, 0),
-        'iv_adj': round(iv_adj, 3),
+        # Also check covered calls (ATM + 5%OTM)
+        for otm_pct in [0.0, 0.05]:
+            K_c = round((sim_spot * (1 + otm_pct)) * 2) / 2
+            prem_c = abs(bs_price(sim_spot, K_c, T, 0.045, iv_adj, 'C'))
+            if prem_c < 0.05:
+                continue
+            total_c = prem_c * 5 * 100  # assume 5 covered calls
+            entry_c = {
+                'spot': round(sim_spot, 2),
+                'strike': K_c,
+                'dte': dte,
+                'type': 'CC',
+                'otm_pct': round(otm_pct * 100, 0),
+                'premium_per_share': round(prem_c, 3),
+                'contracts': 5,
+                'total_premium': round(total_c, 0),
+                'efficiency': 99.9,  # covered calls use shares, no margin
+                'iv_adj': round(iv_adj, 3),
+            }
+            if best is None or total_c > best['total_premium']:
+                best = entry_c
+
+    return best or {
+        'spot': round(sim_spot, 2), 'strike': 0, 'premium_per_share': 0,
+        'contracts': 0, 'total_premium': 0, 'iv_adj': round(iv_adj, 3),
     }
 
 
