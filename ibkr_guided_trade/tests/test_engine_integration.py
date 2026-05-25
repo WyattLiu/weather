@@ -61,18 +61,21 @@ class TestTailHedgeTracking:
         assert q_after['components']['tail_hedge'] > q_before['components']['tail_hedge'], \
             "Adding 1 LEAPS should improve tail_hedge component"
 
-    def test_add_two_leaps_clears_penalty(self, base_state):
+    def test_add_two_leaps_reduces_penalty_further(self, base_state):
+        """More LEAPS = more hedged = less penalty (proportional, no floor)."""
         ps, spot, iv, today = base_state
         leaps_exp = (today + timedelta(days=200)).strftime('%Y-%m-%d')
-        new_positions = list(ps['positions']) + [
-            (leaps_exp, 11.0, 'P', 2, 2.50)  # 2 LONG puts
-        ]
-        ps_after = dict(ps)
-        ps_after['positions'] = new_positions
 
-        q_after = evaluate_portfolio_quality(ps_after)
-        assert q_after['components']['tail_hedge'] >= 0, \
-            "2 LEAPS should fully clear the tail_hedge penalty (>= 0)"
+        ps1 = dict(ps)
+        ps1['positions'] = list(ps['positions']) + [(leaps_exp, 11.0, 'P', 1, 2.50)]
+        q1 = evaluate_portfolio_quality(ps1)
+
+        ps2 = dict(ps)
+        ps2['positions'] = list(ps['positions']) + [(leaps_exp, 11.0, 'P', 2, 2.50)]
+        q2 = evaluate_portfolio_quality(ps2)
+
+        assert q2['components']['tail_hedge'] > q1['components']['tail_hedge'], \
+            "2 LEAPS should have less penalty than 1 (proportional reduction)"
 
     def test_short_dte_put_not_counted_as_leaps(self, base_state):
         ps, spot, iv, today = base_state
@@ -159,7 +162,8 @@ class TestCandidateGeneration:
         assert len(leaps_buys) > 0, \
             "Should generate BUY LEAPS PUT candidates when below tail-hedge floor"
 
-    def test_leaps_buy_candidates_gone_when_at_floor(self, base_state):
+    def test_leaps_candidates_always_generated(self, base_state):
+        """LEAPS candidates always generated — beam decides via qΔ, no floor."""
         ps, spot, iv, today = base_state
         leaps_exp = (today + timedelta(days=200)).strftime('%Y-%m-%d')
         ps['positions'] = list(ps['positions']) + [
@@ -169,8 +173,8 @@ class TestCandidateGeneration:
         cands = generate_candidates(ps, spot, iv, today)
         leaps_buys = [c for c in cands
                       if c['type'] == 'BUY PUT' and 'LEAPS' in c.get('action', '')]
-        assert len(leaps_buys) == 0, \
-            "Should NOT generate LEAPS candidates when at/above floor"
+        assert len(leaps_buys) > 0, \
+            "LEAPS candidates should always be generated (beam evaluates qΔ)"
 
     def test_open_candidates_have_required_fields(self, base_state):
         ps, spot, iv, today = base_state

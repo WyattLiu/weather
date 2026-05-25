@@ -1946,10 +1946,11 @@ def generate_candidates(portfolio_state, spot, iv, today):
             # Skip candidates with zero bid or premium < $0.05/share ($5/contract).
             if p_bid < 0.05:
                 continue
-            # Cycle 181: size by premium economics, not just capacity.
-            _mid = (p_bid + p_ask) / 2
-            _max_by_premium = max(1, int(50.0 / max(0.01, _mid * 100)))
-            open_qty = min(open_qty, _max_by_premium)
+            # Cycle 182: removed premium-based qty cap. It was backwards —
+            # capped ATM options ($80/contract) to qty=1 while the intent
+            # was to prevent penny-premium garbage. The bid >= $0.05 filter
+            # above handles penny prevention. Let the evaluator's qΔ
+            # (dd_penalty, friction, gamma) handle sizing naturally.
             spread_note = f"${p_bid:.2f}/${p_ask:.2f}" if p_bid > 0 else "n/a"
             otm_pct = max(0.0, (spot - K_p) / spot) * 100
             otm_tag = f" {otm_pct:.0f}%OTM" if otm_pct >= 1.5 else ""
@@ -2204,10 +2205,14 @@ def generate_candidates(portfolio_state, spot, iv, today):
     # real pricing so the beam evaluates them via qΔ like any other trade.
     # The tail_hedge component in evaluate_portfolio_quality gives -$1000
     # per missing LEAPS (floor=2), so these candidates get massive qΔ.
+    # Cycle 182: LEAPS candidates always generated (no floor gate).
+    # The evaluator's tail_hedge component (unhedged exposure penalty)
+    # determines whether buying more LEAPS has positive qΔ. If existing
+    # LEAPS already offset enough tail risk, the penalty is near zero
+    # and BUY LEAPS candidates score negatively (cost > benefit).
     _LEAPS_MIN_DTE = 180
     _tail_qty = int(portfolio_state.get('tail_hedge_qty', 0) or 0)
-    _tail_floor = int(portfolio_state.get('tail_hedge_floor', 2) or 2)
-    if _tail_qty < _tail_floor:
+    if True:  # always generate — let beam decide
         _available = get_available_options()
         for _lp_exp_str in sorted(_available.keys()):
             try:
@@ -2233,8 +2238,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 _lp_mid = (_lp_bid + _lp_ask) / 2
                 _lp_T = _lp_dte / 365.0
                 _lp_iv = get_contract_iv(_lp_exp_str, _lp_K, 'P') or iv
-                _need = _tail_floor - _tail_qty
-                for _lp_qty in sorted(set([1, _need])):
+                for _lp_qty in [1, 2]:
                     if _lp_qty <= 0:
                         continue
                     _lp_cost = _lp_mid * _lp_qty * 100
@@ -2267,7 +2271,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
                             'friction_est': round((_lp_ask - _lp_bid) / 2 * _lp_qty * 100) if (_lp_bid + _lp_ask) > 0 else 0,
                         },
                         'detail': f"LEAPS hedge | cost ${_lp_cost:.0f} | Δ{_lp_delta:+.0f} | Γ{_lp_gamma:+.0f} | OI={_lp_oi} | ${_lp_bid:.2f}/${_lp_ask:.2f}",
-                        'why': f"Tail-hedge floor requires {_tail_floor} LEAPS puts, have {_tail_qty}. This is catastrophe protection per CENTRAL_PHILOSOPHY.",
+                        'why': f"LEAPS hedge: {_tail_qty} existing. Reduces unhedged CVaR tail exposure. Beam evaluates whether premium cost is justified by risk reduction.",
                     })
 
     return candidates
@@ -4081,41 +4085,39 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     #
     # This makes the penalty DYNAMIC: high-IV / extended markets → bigger
     # CVaR → bigger penalty for missing hedges. Calm markets → smaller.
-    _missing = max(0, tail_floor - tail_qty)
-    if _missing > 0:
-        try:
-            _ALPHA = 0.05
-            _HORIZON = 7
-            # CVaR from ScenarioDistribution if available, else estimate
-            # from IV (annualized vol → 7-day 5%-CVaR ≈ iv × sqrt(7/252) × 2.06)
-            _spot = float(state.get('spot', 11.0) or 11.0)
-            _leaps_iv = float(state.get('iv_est', 0.45) or 0.45)
-            # CVaR as a PRICE DROP (not fraction) — matches dd_penalty units
-            if sd is not None:
-                _cvar_price = float(sd.cvar_loss(_HORIZON, alpha=_ALPHA))
-            else:
-                _daily_vol = _leaps_iv / (252 ** 0.5)
-                _cvar_frac = _daily_vol * (_HORIZON ** 0.5) * 2.06
-                _cvar_price = _cvar_frac * _spot
-
-            # LEAPS put Greeks (200-DTE ATM, per contract = 100 shares)
-            _leaps_T = 200.0 / 365.0
-            _leaps_delta = bs_delta(_spot, _spot, _leaps_T, 0.045, _leaps_iv, 'P') * 100
-            _leaps_gamma = bs_gamma(_spot, _spot, _leaps_T, 0.045, _leaps_iv) * 100
-            # In a crash, LEAPS gain: delta offset + gamma convexity
-            _benefit_per = max(0,
-                -_leaps_delta * _cvar_price
-                + 0.5 * _leaps_gamma * _cvar_price ** 2
-            )
-            # Probability-weighted
-            _expected_benefit = _ALPHA * _benefit_per
-            # Scale by short gamma exposure (more shorts = hedge more urgent)
-            _short_gamma = abs(min(0, total_gamma))
-            _exposure_mult = max(1.0, _short_gamma / 500.0)
-            tail_hedge_penalty = -_expected_benefit * _missing * _exposure_mult
-        except Exception:
-            tail_hedge_penalty = -500.0 * _missing
-    else:
+    # Cycle 182: removed hardcoded floor. User: "2 LEAPS does nothing
+    # but a few hundred bucks in a crash." The math confirms: 2 LEAPS
+    # covers 1.5% of a 20% crash. Theater, not protection.
+    # Now: penalty is purely the UNHEDGED portion of portfolio tail risk.
+    # Each existing LEAPS reduces the penalty proportionally. The beam
+    # decides whether buying LEAPS is worth the premium cost — no floor
+    # forcing a recommendation.
+    try:
+        _ALPHA = 0.05
+        _HORIZON = 7
+        _spot = float(state.get('spot', 11.0) or 11.0)
+        _leaps_iv = float(state.get('iv_est', 0.45) or 0.45)
+        if sd is not None:
+            _cvar_price = float(sd.cvar_loss(_HORIZON, alpha=_ALPHA))
+        else:
+            _daily_vol = _leaps_iv / (252 ** 0.5)
+            _cvar_frac = _daily_vol * (_HORIZON ** 0.5) * 2.06
+            _cvar_price = _cvar_frac * _spot
+        # Total portfolio tail loss (from delta + gamma)
+        _tail_loss = abs(-total_delta * _cvar_price + 0.5 * total_gamma * _cvar_price ** 2)
+        # How much do existing LEAPS offset?
+        _leaps_T = 200.0 / 365.0
+        _leaps_delta = bs_delta(_spot, _spot, _leaps_T, 0.045, _leaps_iv, 'P') * 100
+        _leaps_gamma = bs_gamma(_spot, _spot, _leaps_T, 0.045, _leaps_iv) * 100
+        _benefit_per = max(0,
+            -_leaps_delta * _cvar_price
+            + 0.5 * _leaps_gamma * _cvar_price ** 2
+        )
+        _hedged = tail_qty * _benefit_per
+        _unhedged = max(0, _tail_loss - _hedged)
+        # Penalty = probability-weighted unhedged exposure
+        tail_hedge_penalty = -_ALPHA * _unhedged * 0.1  # 10% of expected unhedged loss
+    except Exception:
         tail_hedge_penalty = 0.0
 
     # Pillar drift bonus (mildly bullish/bearish cyclical alignment)
