@@ -385,22 +385,47 @@ def fetch_available_options():
                 s = float(row['strike'])
                 if 5 <= s <= 25:
                     _iv = _safe_float(row.get('impliedVolatility', 0))
+                    # Cycle 187b: use lastPrice as fallback when bid/ask are 0
+                    # (after hours / weekends / holidays). Enables simulation
+                    # with most recent trade data.
+                    _bid = _safe_float(row.get('bid', 0))
+                    _ask = _safe_float(row.get('ask', 0))
+                    _last = _safe_float(row.get('lastPrice', 0))
+                    _using_last = False
+                    if _bid == 0 and _ask == 0 and _last > 0:
+                        _bid = _last * 0.9
+                        _ask = _last * 1.1
+                        _using_last = True
+                    _oi = _safe_int(row.get('openInterest', 0))
+                    if _oi == 0 and _using_last:
+                        _oi = 100  # assume liquid when using lastPrice
                     liquidity[(s, 'P')] = {
-                        'oi': _safe_int(row.get('openInterest', 0)),
+                        'oi': _oi,
                         'vol': _safe_int(row.get('volume', 0)),
-                        'bid': _safe_float(row.get('bid', 0)),
-                        'ask': _safe_float(row.get('ask', 0)),
+                        'bid': _bid,
+                        'ask': _ask,
                         'iv': _iv if 0.05 < _iv < 3.0 else 0.0,
                     }
             for _, row in chain.calls.iterrows():
                 s = float(row['strike'])
                 if 5 <= s <= 25:
                     _iv = _safe_float(row.get('impliedVolatility', 0))
+                    _bid = _safe_float(row.get('bid', 0))
+                    _ask = _safe_float(row.get('ask', 0))
+                    _last = _safe_float(row.get('lastPrice', 0))
+                    _using_last = False
+                    if _bid == 0 and _ask == 0 and _last > 0:
+                        _bid = _last * 0.9
+                        _ask = _last * 1.1
+                        _using_last = True
+                    _oi = _safe_int(row.get('openInterest', 0))
+                    if _oi == 0 and _using_last:
+                        _oi = 100
                     liquidity[(s, 'C')] = {
-                        'oi': _safe_int(row.get('openInterest', 0)),
+                        'oi': _oi,
                         'vol': _safe_int(row.get('volume', 0)),
-                        'bid': _safe_float(row.get('bid', 0)),
-                        'ask': _safe_float(row.get('ask', 0)),
+                        'bid': _bid,
+                        'ask': _ask,
                         'iv': _iv if 0.05 < _iv < 3.0 else 0.0,
                     }
 
@@ -1264,7 +1289,12 @@ def compute_portfolio_state(positions, spot, iv, today):
     # The threshold created cliff artifacts (smoothness +234 phantom when
     # late-week buckets crossed in/out of "active"). Same class of bug as
     # the income metric cliff fixed in cycle 173.
-    active = [v for v in weekly_theta.values() if v > 0]
+    # Cycle 188b: use first 4 weeks for smoothness (practical wheel horizon).
+    # Full 12-week window gives 0% because far-future empty weeks ($5) drag
+    # CV > 1. The wheel refills those weeks — measuring them now is pointless.
+    # 4 weeks ≈ 1 monthly cycle of the wheel.
+    _all_wt = list(weekly_theta.values())
+    active = [v for v in _all_wt[:4] if v > 0]
     if len(active) > 2 and np.mean(active) > 0:
         smoothness = max(0, 1 - np.std(active) / np.mean(active))
     else:
@@ -4770,18 +4800,32 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
             # total candidates). Top-15 by cheap_score covers all
             # strike/qty variations that matter; the remainder are
             # lower-scored duplicates. Cap CCs at 5.
-            _open_added = 0
+            # Cycle 188: include BOTH partial (1x) AND full-qty for each
+            # (exp, strike). Cheap_score favors 1x (less concentration)
+            # but qΔ favors full-qty (3-5x). Without both, the beam only
+            # sees 1x and picks tiny positions. Group by (exp, strike),
+            # include max-qty AND min-qty for each.
+            _open_by_key = {}  # {(exp, strike): [(score, cand), ...]}
             for s, c in cheap_scored:
                 if c.get('type') == 'OPEN' and id(c) not in _top_sigs:
-                    if _open_added >= 15:
-                        break
-                    top.append((s, c))
-                    _top_sigs.add(id(c))
-                    _open_added += 1
+                    _k = (c.get('target_exp', ''), c.get('target_strike', 0))
+                    _open_by_key.setdefault(_k, []).append((s, c))
+            _open_added = 0
+            for _k, _variants in sorted(_open_by_key.items(), key=lambda x: -x[1][0][0]):
+                if _open_added >= 20:
+                    break
+                # Add smallest AND largest qty variant
+                _variants.sort(key=lambda x: x[1].get('add_qty', 1))
+                for _v in [_variants[0], _variants[-1]]:  # min qty, max qty
+                    s, c = _v
+                    if id(c) not in _top_sigs:
+                        top.append((s, c))
+                        _top_sigs.add(id(c))
+                        _open_added += 1
             _cc_added = 0
             for s, c in cheap_scored:
                 if c.get('type') == 'COVERED CALL' and id(c) not in _top_sigs:
-                    if _cc_added >= 5:
+                    if _cc_added >= 8:
                         break
                     top.append((s, c))
                     _top_sigs.add(id(c))
