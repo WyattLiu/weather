@@ -2560,23 +2560,26 @@ def refresh_model_zscore():
     threading.Thread(target=_run, daemon=True).start()
 
 
-@_functools.lru_cache(maxsize=128)
 def _compute_target_delta_cached(spot, z, capital_base):
-    """Inner cached body — args are explicit so cache invalidates naturally
-    when z or capital changes across requests. Cycle 81."""
-    if z >= 1.0:
-        leverage = 1.5
-    elif z >= 0.5:
-        leverage = 0.8 + (z - 0.5) / 0.5 * 0.7
-    elif z >= 0:
-        leverage = 0.6 + z / 0.5 * 0.2
-    elif z >= -0.5:
-        leverage = 0.4 + (z + 0.5) / 0.5 * 0.2
-    else:
-        leverage = 0.3
-    target_dollar = capital_base * leverage
-    target = target_dollar / spot if spot > 0 else 7000
-    target = round(target / 100) * 100
+    """Delta target = current share count. Dynamic (updates when assignments
+    add/remove shares), not z-score-leveraged.
+
+    Cycle 187: decoupled delta target from z-score. The old formula set
+    target = capital × leverage(z), which at z=+0.53 demanded 8,600 delta
+    (84% of portfolio in UNG). This permanently blocked covered calls
+    because selling ANY call reduced delta away from an unreachable target.
+
+    The z-score still drives:
+      - Deployment mode (ACTIVE/TRANSITION/WAITING)
+      - Income mode aggression
+      - Pillar scores in quality evaluator
+    But NOT the delta target. For a wheel strategy, delta target =
+    "maintain current share position" — which is SHARES. This makes
+    covered calls delta-NEUTRAL (selling against shares you own doesn't
+    change the target gap) and lets the beam pick both puts AND calls.
+    """
+    target = float(SHARES)
+    # Regime label still from z for display/diagnostics
     if z > 1.0:
         regime = 'EXTREME CHEAP'
     elif z > 0.5:
