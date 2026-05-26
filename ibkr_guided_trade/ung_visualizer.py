@@ -1294,7 +1294,7 @@ def compute_portfolio_state(positions, spot, iv, today):
     # CV > 1. The wheel refills those weeks — measuring them now is pointless.
     # 4 weeks ≈ 1 monthly cycle of the wheel.
     _all_wt = list(weekly_theta.values())
-    active = [v for v in _all_wt[:4] if v > 0]
+    active = [v for v in _all_wt[:6] if v > 0]
     if len(active) > 2 and np.mean(active) > 0:
         smoothness = max(0, 1 - np.std(active) / np.mean(active))
     else:
@@ -6110,7 +6110,7 @@ def compute_timeline(price, iv, excluded_indices, thesis_tilt=0.0):
     # Smoothness: first 4 weeks (cycle 188b). Matches compute_portfolio_state.
     thetas_list = list(weekly_theta.values())
     max_theta = max(thetas_list) if thetas_list else 0
-    active_thetas = [t for t in thetas_list[:4] if t > 0]
+    active_thetas = [t for t in thetas_list[:6] if t > 0]
     if len(active_thetas) > 2 and np.mean(active_thetas) > 0:
         smoothness = 1 - (float(np.std(active_thetas)) / float(np.mean(active_thetas)))
         smoothness = max(0.0, min(1.0, smoothness))
