@@ -4164,8 +4164,24 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     delta_gap_shares = total_delta - target_delta
     delta_gap = -(delta_gap_shares ** 2) * 0.0001  # 1000-share gap = -$100
 
-    # Smoothness bonus
-    smoothness_bonus = smoothness * 500.0
+    # Smoothness bonus — enhanced with forward projection stability when available.
+    # Forward projection (forward_cache.json) provides projected_income_stability
+    # which captures the TRAJECTORY of income over 6 weeks including expiry cliffs.
+    # This naturally drives DTE diversification without hacks.
+    _fwd_stability = None
+    try:
+        import os as _os_fwd
+        _fwd_path = _os_fwd.path.join(_os_fwd.path.dirname(_os_fwd.path.abspath(__file__)), 'forward_cache.json')
+        if _os_fwd.path.exists(_fwd_path):
+            _fwd = json.loads(open(_fwd_path).read())
+            _fwd_age = (datetime.now() - datetime.fromisoformat(_fwd.get('timestamp', '2000-01-01'))).total_seconds()
+            if _fwd_age < 600:  # fresh within 10 min
+                _fwd_stability = float(_fwd.get('projected_income_stability', 0))
+    except Exception:
+        pass
+    # Use forward stability if available (better metric), else fall back to smoothness
+    _effective_smoothness = _fwd_stability if _fwd_stability is not None else smoothness
+    smoothness_bonus = _effective_smoothness * 500.0
 
     # Cycle 189: expiry concentration penalty. User: "why all 33 contracts
     # at 6/18? in 3 weeks I have a massive rollover — that's not smooth."

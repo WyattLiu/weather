@@ -1,0 +1,199 @@
+{
+  "timestamp": "2026-05-26T10:06:27.810115",
+  "spot": 11.1369,
+  "iv": 0.45,
+  "shares": 7600,
+  "n_weeks": 6,
+  "n_paths": 30,
+  "weeks": [
+    {
+      "week": 1,
+      "date": "2026-06-02",
+      "label": "Jun 02",
+      "expired_contracts": 8,
+      "expired_theta_wk": 186.0,
+      "surviving_contracts": 99,
+      "surviving_theta_wk": 1094.0,
+      "income_drop_pct": 10.0,
+      "scenarios": {
+        "down": {
+          "count": 12,
+          "avg_theta": 811.0,
+          "avg_opportunity": 454.0,
+          "avg_total": 924.0
+        },
+        "flat": {
+          "count": 7,
+          "avg_theta": 1127.0,
+          "avg_opportunity": 485.0,
+          "avg_total": 1249.0
+        },
+        "up": {
+          "count": 11,
+          "avg_theta": 1103.0,
+          "avg_opportunity": 430.0,
+          "avg_total": 1210.0
+        }
+      },
+      "rollover_urgency": "HIGH"
+    },
+    {
+      "week": 2,
+      "date": "2026-06-09",
+      "label": "Jun 09",
+      "expired_contracts": 17,
+      "expired_theta_wk": 214.0,
+      "surviving_contracts": 82,
+      "surviving_theta_wk": 1163.0,
+      "income_drop_pct": -13.0,
+      "scenarios": {
+        "down": {
+          "count": 13,
+          "avg_theta": 533.0,
+          "avg_opportunity": 538.0,
+          "avg_total": 667.0
+        },
+        "flat": {
+          "count": 5,
+          "avg_theta": 1156.0,
+          "avg_opportunity": 594.0,
+          "avg_total": 1304.0
+        },
+        "up": {
+          "count": 12,
+          "avg_theta": 670.0,
+          "avg_opportunity": 681.0,
+          "avg_total": 841.0
+        }
+      },
+      "rollover_urgency": "CRITICAL"
+    },
+    {
+      "week": 3,
+      "date": "2026-06-16",
+      "label": "Jun 16",
+      "expired_contracts": 17,
+      "expired_theta_wk": 190.0,
+      "surviving_contracts": 65,
+      "surviving_theta_wk": 1190.0,
+      "income_drop_pct": -47.0,
+      "scenarios": {
+        "down": {
+          "count": 12,
+          "avg_theta": 298.0,
+          "avg_opportunity": 535.0,
+          "avg_total": 432.0
+        },
+        "flat": {
+          "count": 5,
+          "avg_theta": 1112.0,
+          "avg_opportunity": 601.0,
+          "avg_total": 1262.0
+        },
+        "up": {
+          "count": 13,
+          "avg_theta": 497.0,
+          "avg_opportunity": 698.0,
+          "avg_total": 672.0
+        }
+      },
+      "rollover_urgency": "CRITICAL"
+    },
+    {
+      "week": 4,
+      "date": "2026-06-23",
+      "label": "Jun 23",
+      "expired_contracts": 37,
+      "expired_theta_wk": 390.0,
+      "surviving_contracts": 28,
+      "surviving_theta_wk": 497.0,
+      "income_drop_pct": 20.0,
+      "scenarios": {
+        "down": {
+          "count": 9,
+          "avg_theta": 78.0,
+          "avg_opportunity": 509.0,
+          "avg_total": 205.0
+        },
+        "flat": {
+          "count": 5,
+          "avg_theta": 459.0,
+          "avg_opportunity": 594.0,
+          "avg_total": 607.0
+        },
+        "up": {
+          "count": 16,
+          "avg_theta": 216.0,
+          "avg_opportunity": 689.0,
+          "avg_total": 388.0
+        }
+      },
+      "rollover_urgency": "CRITICAL"
+    },
+    {
+      "week": 5,
+      "date": "2026-06-30",
+      "label": "Jun 30",
+      "expired_contracts": 18,
+      "expired_theta_wk": 176.0,
+      "surviving_contracts": 10,
+      "surviving_theta_wk": 92.0,
+      "income_drop_pct": 60.0,
+      "scenarios": {
+        "down": {
+          "count": 12,
+          "avg_theta": 60.0,
+          "avg_opportunity": 529.0,
+          "avg_total": 193.0
+        },
+        "flat": {
+          "count": 6,
+          "avg_theta": 92.0,
+          "avg_opportunity": 598.0,
+          "avg_total": 241.0
+        },
+        "up": {
+          "count": 12,
+          "avg_theta": 35.0,
+          "avg_opportunity": 726.0,
+          "avg_total": 216.0
+        }
+      },
+      "rollover_urgency": "CRITICAL"
+    },
+    {
+      "week": 6,
+      "date": "2026-07-07",
+      "label": "Jul 07",
+      "expired_contracts": 0,
+      "expired_theta_wk": 0.0,
+      "surviving_contracts": 10,
+      "surviving_theta_wk": 113.0,
+      "income_drop_pct": -101.0,
+      "scenarios": {
+        "down": {
+          "count": 17,
+          "avg_theta": 52.0,
+          "avg_opportunity": 0.0,
+          "avg_total": 52.0
+        },
+        "flat": {
+          "count": 3,
+          "avg_theta": 111.0,
+          "avg_opportunity": 0.0,
+          "avg_total": 111.0
+        },
+        "up": {
+          "count": 10,
+          "avg_theta": 39.0,
+          "avg_opportunity": 0.0,
+          "avg_total": 39.0
+        }
+      },
+      "rollover_urgency": "LOW"
+    }
+  ],
+  "projected_income_stability": 0.31,
+  "worst_cliff_week": 4,
+  "worst_cliff_contracts": 37
+}
