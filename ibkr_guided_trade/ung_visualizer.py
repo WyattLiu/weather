@@ -1474,6 +1474,14 @@ def generate_candidates(portfolio_state, spot, iv, today):
         # is already generated as LET EXPIRE / ASSIGNMENT above.
         if dte <= 0:
             continue  # let_expire (OTM) or assignment (ITM) handles it
+        # Cycle 192: near-term OTM → let expire, don't roll. User: "near term
+        # OTM roll should be just open a new covered call as the 'to' target."
+        # Rolling a near-expiry OTM option pays spread to close something
+        # nearly worthless. Better: let expire (free) + sell fresh (one spread).
+        # The LET EXPIRE + COVERED CALL candidates already exist independently;
+        # the beam chains them without a roll.
+        if dte <= 7 and extrinsic < 0.10:
+            continue  # remaining value < $10/contract — not worth roll friction
 
         # Finer ladder so optimizer can pick partial sizes per position,
         # not just half-or-full. Subsequent greedy iterations refine further.
