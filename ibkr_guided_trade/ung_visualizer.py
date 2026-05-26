@@ -1861,6 +1861,8 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     continue
                 c_bid = call_liq.get('bid', 0)
                 c_ask = call_liq.get('ask', 0)
+                if c_bid < 0.05:
+                    continue  # same penny filter as puts
                 spread_note = f"${c_bid:.2f}/${c_ask:.2f}" if c_bid > 0 else "n/a"
                 otm_pct = max(0.0, (K_c - spot) / spot) * 100
                 otm_tag = f" {otm_pct:.0f}%OTM" if otm_pct >= 1.5 else ""
