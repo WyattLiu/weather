@@ -1869,8 +1869,11 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     continue
                 c_bid = call_liq.get('bid', 0)
                 c_ask = call_liq.get('ask', 0)
+                # Cycle 192b: premium must beat BOXX risk-free on margin consumed.
+                # CCs use shares not margin, but still have opportunity cost
+                # (shares could be sold → cash → BOXX). Use a simpler $0.05 floor.
                 if c_bid < 0.05:
-                    continue  # same penny filter as puts
+                    continue
                 spread_note = f"${c_bid:.2f}/${c_ask:.2f}" if c_bid > 0 else "n/a"
                 otm_pct = max(0.0, (K_c - spot) / spot) * 100
                 otm_tag = f" {otm_pct:.0f}%OTM" if otm_pct >= 1.5 else ""
@@ -1988,7 +1991,14 @@ def generate_candidates(portfolio_state, spot, iv, today):
             # Cycle 181: minimum premium economics gate. User: "sell 12 puts
             # but only collect $100 premium and you call it a good choice?"
             # Skip candidates with zero bid or premium < $0.05/share ($5/contract).
-            if p_bid < 0.05:
+            # Cycle 192b: minimum premium must beat BOXX risk-free alternative.
+            # Margin = strike × 100 - premium. BOXX earns ~4% APR on that margin.
+            # If premium < BOXX return over the DTE period, the trade DESTROYS
+            # value vs parking the margin in risk-free.
+            _ws_margin_per = max(1, K_p * 100 - p_bid * 100)
+            _boxx_return = _ws_margin_per * 0.04 / 365 * actual_dte
+            if p_bid * 100 < _boxx_return:
+                continue  # premium doesn't beat risk-free — skip
                 continue
             # Cycle 182: removed premium-based qty cap. It was backwards —
             # capped ATM options ($80/contract) to qty=1 while the intent
