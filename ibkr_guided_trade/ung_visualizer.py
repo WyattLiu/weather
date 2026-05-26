@@ -2067,10 +2067,61 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     'why': f"Adds theta to fill waterfall gap. OI={put_oi}.",
                 })
 
-        # STRANGLE REMOVED (cycle 180, codex P0 audit). The call leg was
-        # sold without checking share coverage — naked short call risk.
-        # Wheel strategy handles puts (OPEN) and calls (COVERED CALL)
-        # separately; strangles are not wheel-aligned.
+        # Cycle 186b: COVERED STRANGLE — sell put + sell covered call as ONE
+        # trade. Fixed the old STRANGLE's P0 bug (naked call) by requiring
+        # share coverage for the call leg. The beam evaluates COMBINED
+        # Greeks — the delta nearly cancels (put +47, call -40 = net +7),
+        # so delta_gap doesn't penalize the pair like it does the CC alone.
+        # This is the natural wheel trade: collect premium from both sides,
+        # delta-neutral, call covered by shares.
+        if calls_available > 0 and atm_put is not None:
+            # ATM put + 1-strike-OTM call
+            K_strangle_put = atm_put
+            K_strangle_call = find_nearest_strike(spot * 1.05, call_strikes) if call_strikes else None
+            if K_strangle_call is not None:
+                _s_put_liq = liq.get((K_strangle_put, 'P'), {})
+                _s_call_liq = liq.get((K_strangle_call, 'C'), {})
+                _s_p_oi = _s_put_liq.get('oi', 0)
+                _s_c_oi = _s_call_liq.get('oi', 0)
+                _s_p_bid = _s_put_liq.get('bid', 0)
+                _s_c_bid = _s_call_liq.get('bid', 0)
+                if _s_p_oi >= 30 and _s_c_oi >= 30 and _s_p_bid >= 0.05 and _s_c_bid >= 0.05:
+                    _s_qty = min(3, calls_available)  # conservative sizing
+                    _s_p_theta = abs(bs_theta(spot, K_strangle_put, T_add, r, iv, 'P')) * _s_qty * 100
+                    _s_c_theta = abs(bs_theta(spot, K_strangle_call, T_add, r, iv, 'C')) * _s_qty * 100
+                    _s_p_delta = -_s_qty * bs_delta(spot, K_strangle_put, T_add, r, iv, 'P') * 100
+                    _s_c_delta = -_s_qty * bs_delta(spot, K_strangle_call, T_add, r, iv, 'C') * 100
+                    _s_p_gamma = -_s_qty * bs_gamma(spot, K_strangle_put, T_add, r, iv) * 100
+                    _s_c_gamma = -_s_qty * bs_gamma(spot, K_strangle_call, T_add, r, iv) * 100
+                    _s_p_prem = abs(bs_price(spot, K_strangle_put, T_add, r, iv, 'P'))
+                    _s_c_prem = abs(bs_price(spot, K_strangle_call, T_add, r, iv, 'C'))
+                    _s_mid_p = (_s_put_liq.get('bid', 0) + _s_put_liq.get('ask', 0)) / 2
+                    _s_mid_c = (_s_call_liq.get('bid', 0) + _s_call_liq.get('ask', 0)) / 2
+                    candidates.append({
+                        'type': 'OPEN',
+                        'action': f"Covered strangle {_s_qty}x {target_exp_str} ${K_strangle_put}P/${K_strangle_call}C ({actual_dte} DTE)",
+                        'target_exp': target_exp_str,
+                        'target_strike': K_strangle_put,
+                        'add_qty': _s_qty,
+                        'theta_change': _s_p_theta + _s_c_theta,
+                        'delta_change': _s_p_delta + _s_c_delta,  # nearly cancels!
+                        'gamma_change': _s_p_gamma + _s_c_gamma,
+                        'vega_change': 0,
+                        'new_extrinsic_total': (_s_p_prem + _s_c_prem) * _s_qty * 100,
+                        'n_legs': 2,
+                        'liquidity': {
+                            'oi': min(_s_p_oi, _s_c_oi),
+                            'bid': round(_s_mid_p + _s_mid_c, 2),
+                            'ask': round(_s_mid_p + _s_mid_c, 2),
+                            'spread_pct': 0,
+                            'oi_usage_pct': 0,
+                            'notional': round((_s_p_prem + _s_c_prem) * _s_qty * 100),
+                            'credit_debit': round((_s_p_prem + _s_c_prem) * _s_qty * 100),
+                            'friction_est': 0,
+                        },
+                        'detail': f"Covered strangle: P ${_s_p_prem:.2f} + C ${_s_c_prem:.2f} | θ ${_s_p_theta + _s_c_theta:.1f}/d | netΔ {_s_p_delta + _s_c_delta:+.0f}",
+                        'why': f"Put + covered call as one trade. Delta nearly cancels ({_s_p_delta:+.0f} + {_s_c_delta:+.0f} = {_s_p_delta + _s_c_delta:+.0f}). Double theta, single margin.",
+                    })
 
     # ── BUY/SELL shares (once, outside expiry loop) ──
     # Only for large gaps. Qty = match the gap exactly, not overshoot.
@@ -3055,7 +3106,7 @@ def score_trade(trade, portfolio_state, skip_waterfall=False):
                             return max(0.0, K - s)
                         e_intr = float(sd_sim.expected(target_dte_val, _intr_p))
                     _sd_cache[_ik] = e_intr
-                expected_move_past = (e_intr / p_itm) if (p_itm or 0) > 0.001 else 0.0
+                expected_move_past = (float(e_intr) / float(p_itm)) if (p_itm or 0) > 0.001 else 0.0
             except Exception:
                 expected_spot = None
                 expected_move_past = None
@@ -3073,13 +3124,13 @@ def score_trade(trade, portfolio_state, skip_waterfall=False):
             # above the strike. Worse in bullish regime.
             expected_upside = max(0, expected_spot - target_strike_val)
             # Total expected cost: P(ITM) × (expected move past + regime upside)
-            expected_assignment_cost = float(p_itm) * (expected_move_past + expected_upside) * trade_qty * 100
+            expected_assignment_cost = float(p_itm) * (float(expected_move_past) + float(expected_upside)) * trade_qty * 100
             # Scale: $100 expected cost = 1 point penalty
             assignment_score = delta_sim_score - expected_assignment_cost / 100
         elif target_right == 'P':
             # Short put assignment = gain shares.
             # In bullish regime: buying shares cheap is GOOD (expected recovery)
-            expected_assignment_benefit = float(p_itm) * max(0, expected_spot - target_strike_val + expected_move_past) * trade_qty * 100
+            expected_assignment_benefit = float(p_itm) * max(0.0, float(expected_spot or 0) - target_strike_val + float(expected_move_past or 0)) * trade_qty * 100
             # Reward: shares acquired below expected future price
             assignment_score = delta_sim_score + expected_assignment_benefit / 100
         else:
@@ -3730,9 +3781,19 @@ def apply_trade_to_state(state, trade, spot, iv, today):
         target_exp = trade.get('target_exp')
         target_strike = trade.get('target_strike')
         add_qty = trade.get('add_qty', 3)
-        # Determine right from action string
-        right = 'C' if 'C ' in trade.get('action', '') or trade.get('action', '').endswith('C') else 'P'
-        new_positions.append((target_exp, target_strike, right, -add_qty, 0))
+        action = trade.get('action', '')
+        if 'strangle' in action.lower():
+            # Cycle 186b: covered strangle — add BOTH legs
+            import re as _re_strangle
+            _strikes = _re_strangle.findall(r'\$(\d+\.?\d*)', action)
+            if len(_strikes) >= 2:
+                new_positions.append((target_exp, float(_strikes[0]), 'P', -add_qty, 0))
+                new_positions.append((target_exp, float(_strikes[1]), 'C', -add_qty, 0))
+            else:
+                new_positions.append((target_exp, target_strike, 'P', -add_qty, 0))
+        else:
+            right = 'C' if 'C ' in action or action.endswith('C') else 'P'
+            new_positions.append((target_exp, target_strike, right, -add_qty, 0))
 
     elif trade['type'] == 'SELL SHARES':
         # Cycle 180 P1 fix: update modeled share count so downstream
