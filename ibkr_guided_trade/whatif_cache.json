@@ -1,27 +1,27 @@
 {
-  "timestamp": "2026-05-26T08:01:17.260539",
+  "timestamp": "2026-05-26T09:41:19.505005",
   "spot": 10.98,
   "iv": 0.45,
   "free_margin": 84955.0,
   "n_simulations": 50,
   "horizon_days": 7,
   "current_best_premium": 670.0,
-  "expected_future_premium": 681.0,
-  "opportunity_value": 11.0,
+  "expected_future_premium": 675.0,
+  "opportunity_value": 5.0,
   "scenarios": {
     "down": {
-      "count": 11,
-      "avg_premium": 628.0,
-      "avg_spot": 10.03
+      "count": 18,
+      "avg_premium": 619.0,
+      "avg_spot": 10.09
     },
     "flat": {
-      "count": 23,
-      "avg_premium": 667.0
+      "count": 13,
+      "avg_premium": 664.0
     },
     "up": {
-      "count": 16,
-      "avg_premium": 738.0,
-      "avg_spot": 11.72
+      "count": 19,
+      "avg_premium": 736.0,
+      "avg_spot": 11.97
     }
   },
   "recommendation": "NEUTRAL"
