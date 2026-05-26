@@ -4644,7 +4644,8 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
     # Cycle 175: reduced 8 → 6. Each beam step adds ~1.5s; 6 steps saves
     # ~3s vs 8. The 7th-8th trades are marginal (qΔ < $30 typically) and
     # often cliff-dominated (cycle 164 outlier was trade #7).
-    MAX_RECS = 6
+    # Cycle 189b: raised 6→10 so beam covers all DTEs (was filling with tiny rolls)
+    MAX_RECS = 10
     BEAM_WIDTH = 3  # explore top 3 paths at each step
 
     def _filter_candidates(candidates, state, used_sources, used_source_qty, used_targets, synthetic_positions):
