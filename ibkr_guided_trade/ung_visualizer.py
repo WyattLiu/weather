@@ -4185,6 +4185,47 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     _effective_smoothness = _fwd_stability if _fwd_stability is not None else smoothness
     smoothness_bonus = _effective_smoothness * 500.0
 
+    # Cycle 191: per-position forward coverage bonus. Each position gets a
+    # bonus proportional to how much of the 6-week projection horizon it
+    # covers. A 17d put covers 40% of the horizon (expires at week 2.4).
+    # A 37d put covers 88%. A 52d put covers 100%. This naturally makes
+    # longer-DTE positions score higher because they contribute income
+    # across MORE future weeks — solving DTE diversification without hacks.
+    # Also: detect put+call pairs at same expiry (strangle evaluation).
+    _FORWARD_HORIZON_DAYS = 42  # 6 weeks
+    _forward_bonus = 0.0
+    _strangle_bonus = 0.0
+    try:
+        _today_fc = date.today()
+        _put_by_exp = {}  # {expiry: total_qty}
+        _call_by_exp = {}
+        for _exp_s, _K, _right, _qty, _avg in _positions:
+            if _qty >= 0:
+                continue  # only short positions
+            _exp_d = datetime.strptime(_exp_s, '%Y-%m-%d').date()
+            _dte = max(0, (_exp_d - _today_fc).days)
+            # Forward coverage: fraction of 6-week horizon this position lives
+            _coverage = min(1.0, _dte / _FORWARD_HORIZON_DAYS)
+            # Bonus: more coverage = more stable income contribution
+            # Scale by daily theta × coverage
+            _th = abs(bs_theta(spot, _K, max(1, _dte) / 365.0, 0.045,
+                               float(state.get('iv_est', 0.45) or 0.45), _right)) * abs(_qty) * 100
+            _forward_bonus += _th * _coverage * 7  # weekly theta × coverage fraction
+            # Track for strangle detection
+            if _right == 'P':
+                _put_by_exp[_exp_s] = _put_by_exp.get(_exp_s, 0) + abs(_qty)
+            elif _right == 'C':
+                _call_by_exp[_exp_s] = _call_by_exp.get(_exp_s, 0) + abs(_qty)
+        # Strangle bonus: reward expiries that have BOTH puts and calls
+        # (delta partially cancels, double premium, natural wheel)
+        for _exp_s in _put_by_exp:
+            if _exp_s in _call_by_exp:
+                _paired = min(_put_by_exp[_exp_s], _call_by_exp[_exp_s])
+                _strangle_bonus += _paired * 5.0  # $5 per paired contract
+    except Exception:
+        _forward_bonus = 0.0
+        _strangle_bonus = 0.0
+
     # Cycle 189: expiry concentration penalty. User: "why all 33 contracts
     # at 6/18? in 3 weeks I have a massive rollover — that's not smooth."
     # The smoothness metric measures THETA distribution over weeks, but NOT
@@ -4365,7 +4406,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
              + tail_hedge_penalty + pillar_bonus + _friction_penalty
              + _margin_penalty + _whatif_value + _whatif_cache_value
-             + _conc_penalty)
+             + _conc_penalty + _forward_bonus + _strangle_bonus)
 
     return {
         'total': round(total, 1),
@@ -4380,6 +4421,8 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
             'friction': round(_friction_penalty, 1),
             'margin_eff': round(_margin_penalty, 1),
             'concentration': round(_conc_penalty, 1),
+            'forward_cov': round(_forward_bonus, 1),
+            'strangle': round(_strangle_bonus, 1),
             'whatif': round(_whatif_value, 1),
         },
         'dd_diagnostics': {
@@ -4950,7 +4993,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 c_copy['_components_delta'] = {
                     k: round(_new_comps.get(k, 0) - _path_prev_components.get(k, 0), 0)
                     for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
+                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
                 }
             except Exception:
                 c_copy['_components_delta'] = {}
@@ -5021,7 +5064,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 _winner_components = _p_comp
             _comp_delta = {}
             for _k in ('income_gap', 'dd_penalty', 'delta_gap',
-                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration'):
+                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle'):
                 _comp_delta[_k] = round(_p_comp.get(_k, 0.0)
                                         - _initial_components.get(_k, 0.0), 1)
             _losing_dim = None
@@ -5223,7 +5266,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -5268,7 +5311,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
