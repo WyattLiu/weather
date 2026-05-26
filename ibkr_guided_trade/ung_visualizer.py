@@ -4167,6 +4167,16 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     # Smoothness bonus
     smoothness_bonus = smoothness * 500.0
 
+    # Cycle 189: expiry concentration penalty. User: "why all 33 contracts
+    # at 6/18? in 3 weeks I have a massive rollover — that's not smooth."
+    # The smoothness metric measures THETA distribution over weeks, but NOT
+    # position concentration per expiry. A portfolio with all contracts at
+    # one date creates operational rollover risk.
+    # Penalty = proportional to max_concentration². Concentration > 40%
+    # at one expiry is risky; > 60% is very bad.
+    _max_conc = float(state.get('max_concentration', 0) or 0)
+    _conc_penalty = -(_max_conc ** 2) * 1000.0 if _max_conc > 0.3 else 0.0
+
     # Tail-hedge floor
     # Cycle 177: risk-derived tail-hedge penalty. No hardcoded $ values.
     # Computes the expected crash-scenario benefit PER LEAPS put using the
@@ -4336,7 +4346,8 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
 
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
              + tail_hedge_penalty + pillar_bonus + _friction_penalty
-             + _margin_penalty + _whatif_value + _whatif_cache_value)
+             + _margin_penalty + _whatif_value + _whatif_cache_value
+             + _conc_penalty)
 
     return {
         'total': round(total, 1),
@@ -4350,6 +4361,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
             'pillar_drift': round(pillar_bonus, 1),
             'friction': round(_friction_penalty, 1),
             'margin_eff': round(_margin_penalty, 1),
+            'concentration': round(_conc_penalty, 1),
             'whatif': round(_whatif_value, 1),
         },
         'dd_diagnostics': {
@@ -4919,7 +4931,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 c_copy['_components_delta'] = {
                     k: round(_new_comps.get(k, 0) - _path_prev_components.get(k, 0), 0)
                     for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
+                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
                 }
             except Exception:
                 c_copy['_components_delta'] = {}
@@ -4990,7 +5002,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 _winner_components = _p_comp
             _comp_delta = {}
             for _k in ('income_gap', 'dd_penalty', 'delta_gap',
-                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif'):
+                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration'):
                 _comp_delta[_k] = round(_p_comp.get(_k, 0.0)
                                         - _initial_components.get(_k, 0.0), 1)
             _losing_dim = None
@@ -5192,7 +5204,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -5237,7 +5249,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
