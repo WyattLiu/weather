@@ -7410,16 +7410,50 @@ function updateDeltaChart(data) {
     const p = data.profile;
     const currentPrice = data.summary.price;
 
-    const traces = [{
-        x: p.prices,
-        y: p.delta_profile,
-        type: 'scatter',
-        mode: 'lines',
-        fill: 'tozeroy',
-        fillcolor: 'rgba(88,166,255,0.1)',
-        line: { color: '#58a6ff', width: 2 },
-        name: 'Net Delta',
-    }];
+    // Compute dollar delta: for each price point, how many $/$ spot move
+    // Dollar delta = share_delta × price (converts shares to $)
+    const dollarDelta = p.delta_profile.map((d, i) => d * p.prices[i]);
+
+    // Also compute $/1% move at each price for intuitive reading
+    const dollarPerPct = p.delta_profile.map((d, i) => d * p.prices[i] * 0.01);
+
+    const traces = [
+        {
+            x: p.prices,
+            y: p.delta_profile,
+            type: 'scatter',
+            mode: 'lines',
+            fill: 'tozeroy',
+            fillcolor: 'rgba(88,166,255,0.08)',
+            line: { color: '#58a6ff', width: 2 },
+            name: 'Share Delta',
+            yaxis: 'y',
+        },
+        {
+            x: p.prices,
+            y: dollarDelta,
+            type: 'scatter',
+            mode: 'lines',
+            line: { color: '#f0883e', width: 2, dash: 'dot' },
+            name: '$ Delta ($/$ move)',
+            yaxis: 'y2',
+        },
+        {
+            x: p.prices,
+            y: dollarPerPct,
+            type: 'scatter',
+            mode: 'lines',
+            line: { color: '#d2a8ff', width: 1.5 },
+            name: '$/1% move',
+            yaxis: 'y3',
+            visible: 'legendonly',
+        },
+    ];
+
+    // Annotate the asymmetry
+    const curIdx = p.prices.findIndex(pr => pr >= currentPrice) || 0;
+    const downIdx = Math.max(0, curIdx - 5);
+    const upIdx = Math.min(p.prices.length - 1, curIdx + 5);
 
     const layout = {
         ...plotlyLayout,
@@ -7427,9 +7461,23 @@ function updateDeltaChart(data) {
             { type: 'line', x0: currentPrice, x1: currentPrice, y0: 0, y1: 1, yref: 'paper',
               line: { color: '#d29922', width: 1.5, dash: 'dash' } },
         ],
+        annotations: [
+            { x: p.prices[downIdx], y: dollarDelta[downIdx], text: '$' + Math.round(dollarDelta[downIdx]).toLocaleString() + '/$ ↓',
+              showarrow: true, arrowcolor: '#f85149', font: { color: '#f85149', size: 10 }, ax: -30, ay: -20 },
+            { x: currentPrice, y: dollarDelta[curIdx], text: '$' + Math.round(dollarDelta[curIdx]).toLocaleString() + '/$ now',
+              showarrow: true, arrowcolor: '#d29922', font: { color: '#d29922', size: 10 }, ax: 0, ay: -25 },
+            { x: p.prices[upIdx], y: dollarDelta[upIdx], text: '$' + Math.round(dollarDelta[upIdx]).toLocaleString() + '/$ ↑',
+              showarrow: true, arrowcolor: '#3fb950', font: { color: '#3fb950', size: 10 }, ax: 30, ay: -20 },
+        ],
         xaxis: { ...plotlyLayout.xaxis, title: 'UNG Price' },
-        yaxis: { ...plotlyLayout.yaxis, title: 'Net Delta (shares)' },
-        showlegend: false,
+        yaxis: { ...plotlyLayout.yaxis, title: 'Share Delta', side: 'left',
+                 titlefont: { color: '#58a6ff' }, tickfont: { color: '#58a6ff' } },
+        yaxis2: { title: '$ Delta', overlaying: 'y', side: 'right',
+                  titlefont: { color: '#f0883e' }, tickfont: { color: '#f0883e' },
+                  tickformat: '$,.0f', showgrid: false },
+        yaxis3: { overlaying: 'y', side: 'right', visible: false },
+        legend: { x: 0.02, y: 0.98, bgcolor: 'rgba(0,0,0,0)', font: { size: 10 } },
+        showlegend: true,
     };
 
     Plotly.react('deltaChart', traces, layout, { responsive: true, displayModeBar: false });
