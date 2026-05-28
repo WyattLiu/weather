@@ -4254,6 +4254,33 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     _max_conc = float(state.get('max_concentration', 0) or 0)
     _conc_penalty = -(_max_conc ** 2) * 1000.0 if _max_conc > 0.3 else 0.0
 
+    # Cycle 194: gamma load penalty for share-heavy portfolios.
+    # User: "we have actual shares vs more pure option positions, the
+    # optimizer should have a preference for gamma control."
+    # Shares have ZERO gamma — pure linear delta. Short options have
+    # NEGATIVE gamma — convex loss. As short gamma grows, each $1 spot
+    # drop costs proportionally MORE than the previous $1 (the orange
+    # dollar-delta curve we showed: $8,470/$ down vs $4,435/$ up).
+    # Penalty proportional to short gamma squared (convex), scaled by
+    # share count (more shares = more existing linear delta = more
+    # important to control the option convexity).
+    _shares_in_state = float(state.get('shares', SHARES) or SHARES)
+    _short_gamma_abs = abs(min(0, total_gamma))
+    # Penalty: $1 per $100 of CVaR-weighted gamma exposure, scaled by
+    # share-to-option ratio. High shares + high short gamma = worst.
+    _gamma_load_penalty = 0.0
+    try:
+        _spot_g = float(state.get('spot', 11.0) or 11.0)
+        _iv_g = float(state.get('iv_est', 0.45) or 0.45)
+        _cvar_move = _iv_g / (252 ** 0.5) * (7 ** 0.5) * 2.06 * _spot_g
+        # P&L from gamma in a CVaR move: 0.5 × gamma × move²
+        _gamma_pnl_cvar = 0.5 * _short_gamma_abs * (_cvar_move ** 2)
+        # Probability-weighted (5% tail) × share-heaviness multiplier
+        _share_ratio = min(2.0, _shares_in_state / 5000.0)  # cap at 2x
+        _gamma_load_penalty = -0.05 * _gamma_pnl_cvar * _share_ratio
+    except Exception:
+        _gamma_load_penalty = 0.0
+
     # Tail-hedge floor
     # Cycle 177: risk-derived tail-hedge penalty. No hardcoded $ values.
     # Computes the expected crash-scenario benefit PER LEAPS put using the
@@ -4424,7 +4451,8 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     total = (income_gap + dd_penalty + delta_gap + smoothness_bonus
              + tail_hedge_penalty + pillar_bonus + _friction_penalty
              + _margin_penalty + _whatif_value + _whatif_cache_value
-             + _conc_penalty + _forward_bonus + _strangle_bonus)
+             + _conc_penalty + _forward_bonus + _strangle_bonus
+             + _gamma_load_penalty)
 
     return {
         'total': round(total, 1),
@@ -4441,6 +4469,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
             'concentration': round(_conc_penalty, 1),
             'forward_cov': round(_forward_bonus, 1),
             'strangle': round(_strangle_bonus, 1),
+            'gamma_load': round(_gamma_load_penalty, 1),
             'whatif': round(_whatif_value, 1),
         },
         'dd_diagnostics': {
@@ -5011,7 +5040,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 c_copy['_components_delta'] = {
                     k: round(_new_comps.get(k, 0) - _path_prev_components.get(k, 0), 0)
                     for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
+                              'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle', 'gamma_load')
                 }
             except Exception:
                 c_copy['_components_delta'] = {}
@@ -5082,7 +5111,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                 _winner_components = _p_comp
             _comp_delta = {}
             for _k in ('income_gap', 'dd_penalty', 'delta_gap',
-                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle'):
+                       'smoothness', 'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle', 'gamma_load'):
                 _comp_delta[_k] = round(_p_comp.get(_k, 0.0)
                                         - _initial_components.get(_k, 0.0), 1)
             _losing_dim = None
@@ -5284,7 +5313,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle', 'gamma_load')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
@@ -5329,7 +5358,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                         _comp_deltas = {
                             k: round(_comp_after.get(k, 0) - _initial_components.get(k, 0), 0)
                             for k in ('income_gap', 'dd_penalty', 'delta_gap',
-                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle')
+                                      'tail_hedge', 'pillar_drift', 'friction', 'margin_eff', 'whatif', 'concentration', 'forward_cov', 'strangle', 'gamma_load')
                         }
                         _best = (_qd, _c, _comp_deltas)
                 except Exception:
