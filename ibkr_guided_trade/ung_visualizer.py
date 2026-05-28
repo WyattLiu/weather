@@ -2174,23 +2174,41 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     })
 
     # ── BUY/SELL shares (once, outside expiry loop) ──
-    # Only for large gaps. Qty = match the gap exactly, not overshoot.
-    if delta_gap > 500:
-        share_qty = min(SHARES, max(100, int(round(delta_gap / 100) * 100)))
-        loss_per_share = SHARE_AVG - spot  # realized loss if selling below avg cost
-        candidates.append({
-            'type': 'SELL SHARES',
-            'action': f"Sell {share_qty} UNG shares",
-            'add_qty': share_qty,
-            'theta_change': 0,
-            'delta_change': -share_qty,
-            'gamma_change': 0,
-            'vega_change': 0,
-            'new_extrinsic_total': 0,
-            'n_legs': 1,
-            'detail': f"Δ-{share_qty} | realized {'loss' if loss_per_share > 0 else 'gain'}: ${abs(loss_per_share)*share_qty:,.0f} | ~${share_qty * 0.01:.0f} friction",
-            'why': f"Delta emergency. Selling at ${spot:.2f} vs avg ${SHARE_AVG:.2f}.",
-        })
+    # Cycle 195: generate SELL SHARES at multiple sizes always. Let the
+    # evaluator decide via principled comparison (delta target, gamma load,
+    # margin freed for puts, CC collateral remaining). User: "the share
+    # drag should not be the fact, it should be after the fact... the
+    # decision should be more pure."
+    _current_shares = int(portfolio_state.get('shares', SHARES) or SHARES)
+    _short_calls = sum(abs(qty) for _exp, _K, rt, qty, _avg in positions
+                       if rt == 'C' and qty < 0)
+    _cc_collateral_needed = _short_calls * 100  # 100 shares per CC
+    _max_sellable = max(0, _current_shares - _cc_collateral_needed)
+    if _max_sellable >= 100:
+        # Ladder: 25%, 50%, 75%, 100% of sellable, rounded to 100
+        for _frac in [0.25, 0.5, 0.75, 1.0]:
+            share_qty = max(100, int(round(_max_sellable * _frac / 100) * 100))
+            if share_qty > _max_sellable:
+                share_qty = _max_sellable
+            loss_per_share = SHARE_AVG - spot
+            pct_label = f"{int(_frac*100)}%"
+            candidates.append({
+                'type': 'SELL SHARES',
+                'action': f"Sell {share_qty} UNG shares ({pct_label} of sellable)",
+                'add_qty': share_qty,
+                'theta_change': 0,
+                'delta_change': -share_qty,
+                'gamma_change': 0,
+                'vega_change': 0,
+                'new_extrinsic_total': 0,
+                'n_legs': 1,
+                'detail': f"Δ-{share_qty} | proceeds ${share_qty*spot:,.0f} | freed margin for puts/BOXX 4%",
+                'why': f"Convert {share_qty} shares to cash at ${spot:.2f}. Cash earns BOXX risk-free + enables more cash-secured puts. Keeps {_current_shares - share_qty} shares for CC collateral.",
+            })
+        # Sanity check: don't dedup identical entries (already filtered by 100-share rounding)
+
+    if delta_gap > 500:  # legacy emergency trigger preserved
+        pass
 
     if delta_gap < -500:
         share_qty = min(max(100, int(round(abs(delta_gap) / 100) * 100)), int(abs(delta_gap) * 1.2))
@@ -2610,7 +2628,7 @@ def refresh_model_zscore():
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _compute_target_delta_cached(spot, z, capital_base):
+def _compute_target_delta_cached(spot, z, capital_base, current_shares=None):
     """Delta target = current share count. Dynamic (updates when assignments
     add/remove shares), not z-score-leveraged.
 
@@ -2628,7 +2646,10 @@ def _compute_target_delta_cached(spot, z, capital_base):
     covered calls delta-NEUTRAL (selling against shares you own doesn't
     change the target gap) and lets the beam pick both puts AND calls.
     """
-    target = float(SHARES)
+    # Target tracks CURRENT shares (from state when provided, else module global
+    # as fallback). When the beam evaluates SELL SHARES, the new state has
+    # fewer shares → target updates → delta_gap stays fair. No hardcoded count.
+    target = float(current_shares) if current_shares is not None else float(SHARES)
     # Regime label still from z for display/diagnostics
     if z > 1.0:
         regime = 'EXTREME CHEAP'
@@ -2647,7 +2668,7 @@ def _compute_target_delta_cached(spot, z, capital_base):
     return target, regime, z
 
 
-def compute_target_delta(spot):
+def compute_target_delta(spot, current_shares=None):
     """Dynamic delta target using the NG multi-factor model z-score.
 
     Backtested: z-score regime targeting with aggressive dynamic delta wins.
@@ -2664,7 +2685,7 @@ def compute_target_delta(spot):
         z = get_model_zscore()
     except Exception:
         z = 0.0
-    return _compute_target_delta_cached(spot, z, _margin_capital_usd)
+    return _compute_target_delta_cached(spot, z, _margin_capital_usd, current_shares)
 
 
     # compute_delta_at_price REMOVED — dead code (codex audit, never called)
@@ -4180,7 +4201,10 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     theta_30d = theta_horizon * (30.0 / HORIZON_D)  # legacy field for diag display
 
     # Delta gap (quadratic, mild)
-    target_delta, _, _ = compute_target_delta(spot) if spot > 0 else (total_delta, '', 0.0)
+    # Cycle 195: target_delta tracks state's current shares (not module global)
+    # so SELL SHARES candidates get a fair comparison — target updates with shares.
+    _shares_for_target = state.get('shares')
+    target_delta, _, _ = compute_target_delta(spot, _shares_for_target) if spot > 0 else (total_delta, '', 0.0)
     delta_gap_shares = total_delta - target_delta
     delta_gap = -(delta_gap_shares ** 2) * 0.0001  # 1000-share gap = -$100
 
