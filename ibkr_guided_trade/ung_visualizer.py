@@ -4473,18 +4473,33 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     # important to control the option convexity).
     _shares_in_state = float(state.get('shares', SHARES) or SHARES)
     _short_gamma_abs = abs(min(0, total_gamma))
-    # Penalty: $1 per $100 of CVaR-weighted gamma exposure, scaled by
-    # share-to-option ratio. High shares + high short gamma = worst.
+    # Cycle 202: use FULL expected gamma loss derived from variance, not
+    # just 5%-tail. User: "use the tail and mean-reverse risk." The
+    # statistically correct expected dollar loss from gamma over horizon T is:
+    #   E[-0.5 × |Γ| × ΔS²] = -0.5 × |Γ| × Var(ΔS)
+    # Where Var(ΔS) = (σ·S)² × T  (log-normal approximation for short T).
+    # Plus mean-reversion uplift: after a sharp move, P(reversal) > 50%,
+    # so variance is HIGHER than random-walk would predict. Apply 1.5x
+    # uplift when |z-score| > 0.5 (signal of stretched move).
     _gamma_load_penalty = 0.0
     try:
         _spot_g = float(state.get('spot', 11.0) or 11.0)
         _iv_g = float(state.get('iv_est', 0.45) or 0.45)
-        _cvar_move = _iv_g / (252 ** 0.5) * (7 ** 0.5) * 2.06 * _spot_g
-        # P&L from gamma in a CVaR move: 0.5 × gamma × move²
-        _gamma_pnl_cvar = 0.5 * _short_gamma_abs * (_cvar_move ** 2)
-        # Probability-weighted (5% tail) × share-heaviness multiplier
-        _share_ratio = min(2.0, _shares_in_state / 5000.0)  # cap at 2x
-        _gamma_load_penalty = -0.05 * _gamma_pnl_cvar * _share_ratio
+        _T = 7.0 / 252.0  # weekly horizon
+        # Random-walk variance over T (one-week)
+        _var_spot = (_iv_g * _spot_g) ** 2 * _T
+        # Full expected gamma loss per week — NO arbitrary multiplier
+        _gamma_loss_weekly = 0.5 * _short_gamma_abs * _var_spot
+        # Mean-reversion uplift: when market has moved significantly (high |z|)
+        # the variance is asymmetrically larger toward reversal direction.
+        try:
+            _z_now = float(_model_zscore or 0)
+        except Exception:
+            _z_now = 0.0
+        _mr_uplift = 1.5 if abs(_z_now) > 0.5 else 1.0
+        # Share-heavy multiplier (linear delta + short gamma = compound hurt)
+        _share_ratio = min(2.0, _shares_in_state / 5000.0)
+        _gamma_load_penalty = -_gamma_loss_weekly * _mr_uplift * _share_ratio
     except Exception:
         _gamma_load_penalty = 0.0
 
