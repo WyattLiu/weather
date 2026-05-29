@@ -749,6 +749,10 @@ def compute_gamma_regime(spot):
 # ── WealthSimple Live Position Fetch ─────────────────────────────────────────
 _margin_capital_usd = 109433  # fetched from WS: $113k NLV - $3.6k cushion. Updated by fetch_ws_positions().
 _OTHER_HOLDINGS = {}  # cycle 142: non-UNG stock holdings (BOXX, ADA, etc.) captured by fetch_ws_positions
+# Cycle 201: cash and position value separately tracked.
+# Cash = NLV - Σ(positions). User: "never in negative cash to avoid pay interest."
+_ws_cash_usd = 0.0
+_ws_position_value_usd = 0.0
 
 
 def fetch_ws_positions():
@@ -791,7 +795,11 @@ def fetch_ws_positions():
         except Exception as _ce:
             print(f"Capital fetch failed: {_ce}")
 
-        data = graphql_query(session, "FetchIdentityPositions", QUERY_FETCH_POSITIONS, {
+        # Cycle 201: filter to margin account only — user has DBA and ADA in
+        # other accounts (crypto, cash savings) that shouldn't pollute the
+        # engine's view. _mid was computed above; if missing, fall back to
+        # all accounts (with warning).
+        _query_args = {
             "identityId": identity_id,
             "currency": "CAD",
             "first": 50,
@@ -801,18 +809,21 @@ def fetch_ws_positions():
             "includeSecurity": True,
             "includeAccountData": True,
             "includeOneDayReturnsBaseline": True,
-        })
+        }
+        if _mid:
+            _query_args["accountIds"] = [_mid]
+        data = graphql_query(session, "FetchIdentityPositions", QUERY_FETCH_POSITIONS, _query_args)
 
         shares = 0
         share_avg = 0.0
         options = []
         ung_price = None
-        # Cycle 142: also capture cash-park holdings (BOXX, ADA, etc.) so
-        # the idle-cash math accounts for what's already deployed in
-        # cash-equivalents. Previously the visualizer was UNG-only and
-        # the "park in BOXX" suggestion ignored existing BOXX positions.
-        global _OTHER_HOLDINGS
+        global _OTHER_HOLDINGS, _ws_cash_usd, _ws_position_value_usd
         _OTHER_HOLDINGS = {}  # symbol -> {qty, market_value}
+        # Cycle 201: track total position value separately so we can derive cash
+        # Cash = NLV - Σ(position market values). User: "cash and margin are
+        # different things... never in negative cash to avoid pay interest."
+        _total_position_value = 0.0
 
         identity = data.get('identity', {})
         positions = (identity.get('financials', {})
@@ -846,6 +857,7 @@ def fetch_ws_positions():
                 market_value = float(market.get('amount', 0))
                 if qty != 0:
                     ung_price = abs(market_value / qty)
+                _total_position_value += market_value
             elif underlying == 'UNG' and option_details:
                 # UNG option position
                 opt_type = option_details.get('optionType', '')
@@ -857,6 +869,9 @@ def fetch_ws_positions():
 
                 # avg_cost from WS is per-contract cost (matching hardcoded format)
                 options.append((expiry_str, strike, right, int(qty), avg_cost))
+                # Add this option's market value to position total
+                _opt_market = pos.get('totalValue', {})
+                _total_position_value += float(_opt_market.get('amount', 0))
             elif symbol and not option_details and symbol != 'UNG':
                 # Cycle 142: capture non-UNG stock positions (BOXX, ADA, etc.)
                 # so cash_park_suggestion sees what's already in cash-equivalents.
@@ -867,10 +882,21 @@ def fetch_ws_positions():
                     'market_value': mv,
                     'avg_cost': avg_cost,
                 }
+                _total_position_value += mv
 
         if ung_price is None:
             # Fallback: get spot from yfinance
             ung_price = float(yf.Ticker('UNG').history(period='1d')['Close'].iloc[-1])
+
+        # Cycle 201: derive Cash and Position Value from WS data
+        # NLV ≈ Cash + Σ(position market values)
+        # So Cash = NLV - Σ(positions). This is the true "settled" cash
+        # that earns/pays interest. User: "never in negative cash."
+        _ws_position_value_usd = _total_position_value
+        # NLV was captured into _margin_capital_usd (= NLV - cushion); add cushion back
+        _nlv_estimate = _margin_capital_usd + 3600
+        _ws_cash_usd = _nlv_estimate - _total_position_value
+        print(f"Cash: ${_ws_cash_usd:,.0f} | Position value: ${_total_position_value:,.0f} | NLV est: ${_nlv_estimate:,.0f}")
 
         return shares, share_avg, options, ung_price
 
