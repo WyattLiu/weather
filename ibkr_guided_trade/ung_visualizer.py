@@ -1728,12 +1728,47 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 'new_extrinsic_total': 0,
                 'n_legs': 1,
                 'detail': f"${_close_total_ext:.0f} extrinsic left | frees ${abs(qty) * strike * 100:,.0f} share collateral for BOXX/puts",
-                'why': (f"Deep ITM short call: extrinsic ${extrinsic:.2f}/sh vs frees {abs(qty)*100} shares. "
-                        f"Selling shares + parking in BOXX earns ~${abs(qty) * strike * 100 * 0.04 / 365 * dte:.0f} over {dte}d "
-                        f"or write fresh puts at lower strikes."
-                        if _is_deep_itm_short_call else
-                        "Theta exhausted. Free up margin."),
+                'why': (
+                    f"Deep ITM short call mean-reversion hedge: extrinsic ${extrinsic:.2f}/sh is tiny vs "
+                    f"variance risk. If UNG mean-reverts back, capped upside ($0.30/sh max) won't offset "
+                    f"share losses. Close + sell {abs(qty)*100} shares locks ${spot:.2f} and converts to "
+                    f"cash for BOXX (~${abs(qty) * strike * 100 * 0.04 / 365 * dte:.0f} over {dte}d) or "
+                    f"fresh OTM puts."
+                    if _is_deep_itm_short_call else
+                    "Theta exhausted. Free up margin."),
             })
+
+            # Cycle 198: Synthetic early-assignment candidate. Combines CLOSE
+            # short call + SELL shares into ONE trade = lock in market price
+            # NOW, avoid mean-reversion variance on shares. Net cash = strike
+            # × 100 × qty + extrinsic captured. Same outcome as natural
+            # assignment but at TODAY's price, not at expiry.
+            if _is_deep_itm_short_call:
+                _portfolio_shares = int(portfolio_state.get('shares', SHARES) or SHARES)
+                _share_qty_to_sell = min(_portfolio_shares, abs(qty) * 100)
+                if _share_qty_to_sell >= 100:
+                    _close_cost = price * abs(qty) * 100  # buy back the call
+                    _share_proceeds = spot * _share_qty_to_sell
+                    _net_cash = _share_proceeds - _close_cost
+                    # Mean reversion variance: 1σ adverse move over remaining DTE
+                    _adverse_move = iv * (dte / 365.0) ** 0.5 * spot
+                    _adverse_share_loss = _adverse_move * _share_qty_to_sell * 0.5  # half a sigma
+                    candidates.append({
+                        'type': 'CLOSE',
+                        'action': f"Close {abs(qty)}x ${strike}{right} + Sell {_share_qty_to_sell} shares (lock ${spot:.2f})",
+                        'source_exp': exp_str_pos,
+                        'source_strike': strike,
+                        'source_right': right,
+                        'theta_change': -close_theta,
+                        'delta_change': -close_delta - _share_qty_to_sell,
+                        'gamma_change': -close_gamma,
+                        'vega_change': -close_vega,
+                        'new_extrinsic_total': 0,
+                        'n_legs': 2,
+                        'shares_sold': _share_qty_to_sell,
+                        'detail': f"Synthetic early assign at ${spot:.2f} | net cash ${_net_cash:,.0f} | avoids 1σ share variance ±${_adverse_share_loss:,.0f}",
+                        'why': f"Mean-reversion hedge: lock in rally gain TODAY. Synthetic early assignment captures ${spot - strike:.2f}/sh above strike that natural assignment would forfeit at expiry.",
+                    })
 
     # TAKE PROFIT: positions where we've captured a meaningful fraction
     # of premium AND keeping them open is hurting (theta nearly exhausted).
