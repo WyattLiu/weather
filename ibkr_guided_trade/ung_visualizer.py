@@ -45,7 +45,22 @@ def _eval_candidate(p_state, c, spot, iv, today, initial_quality):
         if new_q_dict.get('hard_dd_veto', False):
             return (-float('inf'), None, new_q_dict, c)
         new_q_total = new_q_dict.get('total', 0.0)
-        return (new_q_total - initial_quality, new_state, new_q_dict, c)
+        qd = new_q_total - initial_quality
+
+        # Cycle 199: synthetic early-assignment locked-gain bonus.
+        # When closing a deep ITM short call AND selling the covering shares
+        # at spot above strike, the (spot - strike) × shares gain is realized
+        # cash that the standard quality evaluator misses (it only sees lost
+        # theta + lost delta). Add the locked gain as a one-time bonus so the
+        # beam can compare apples-to-apples vs letting nature take its course.
+        if c.get('type') == 'CLOSE' and c.get('source_right') == 'C':
+            _shares_sold = c.get('shares_sold', 0)
+            _src_strike = c.get('source_strike', 0)
+            if _shares_sold > 0 and spot > _src_strike:
+                _locked_gain = (spot - _src_strike) * _shares_sold
+                qd += _locked_gain
+
+        return (qd, new_state, new_q_dict, c)
     except Exception:
         return (-float('inf'), None, None, c)
 
@@ -1747,7 +1762,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 _portfolio_shares = int(portfolio_state.get('shares', SHARES) or SHARES)
                 _share_qty_to_sell = min(_portfolio_shares, abs(qty) * 100)
                 if _share_qty_to_sell >= 100:
-                    _close_cost = price * abs(qty) * 100  # buy back the call
+                    _close_cost = per_share * abs(qty) * 100  # buy back the call (per_share is the current price)
                     _share_proceeds = spot * _share_qty_to_sell
                     _net_cash = _share_proceeds - _close_cost
                     # Mean reversion variance: 1σ adverse move over remaining DTE
@@ -3953,6 +3968,11 @@ def apply_trade_to_state(state, trade, spot, iv, today):
                 else:
                     new_positions.pop(i)
                 break
+        # Cycle 199: synthetic early-assignment also reduces shares
+        _shares_to_sell = trade.get('shares_sold', 0)
+        if _shares_to_sell > 0:
+            new_state['shares'] = max(0, int(new_state.get('shares', SHARES) or SHARES) - int(_shares_to_sell))
+            new_state['total_delta'] = new_state.get('total_delta', 0) - _shares_to_sell
 
     # Recompute smoothness and concentration from new positions
     new_state['positions'] = new_positions
@@ -4976,7 +4996,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
             p_state.get('avg_weekly_theta', 0) <
             p_state.get('target_weekly_income', 1500) * 0.6
         )
-        _INCOME_BYPASS_TYPES = {'OPEN', 'COVERED CALL'}
+        _INCOME_BYPASS_TYPES = {'OPEN', 'COVERED CALL', 'CLOSE'}
         # Cycle 154: lowered from -5 → -50. Cycle 153's -5 still blocked
         # OPENs because adding to a busy expiry incurs a waterfall penalty
         # that pushes full_score to -5.6 ~ -5.7. The cleanest fix is to
@@ -5022,6 +5042,15 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
                     top.append((s, c))
                     _top_sigs.add(id(c))
                     _cc_added += 1
+            # Cycle 199: include synthetic CLOSE+SELL candidates (early-assignment
+            # locked-gain trades). These have a big qΔ bonus from _eval_candidate
+            # but cheap_score doesn't see the locked gain, so they wouldn't make
+            # it through the standard filter. Add ALL synthetics for full eval.
+            for s, c in cheap_scored:
+                if (c.get('type') == 'CLOSE' and c.get('shares_sold', 0) > 0
+                        and id(c) not in _top_sigs):
+                    top.append((s, c))
+                    _top_sigs.add(id(c))
         full_scored = []
         bypass_candidates = []  # always empty after revert; preserved for downstream code
         for _, c in top:

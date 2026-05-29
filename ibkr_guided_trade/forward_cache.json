@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-05-29T09:37:56.327892",
+  "timestamp": "2026-05-29T09:47:56.996712",
   "spot": 11.135399999999999,
   "iv": 0.45,
   "shares": 7600,
@@ -17,22 +17,22 @@
       "income_drop_pct": 18.0,
       "scenarios": {
         "down": {
-          "count": 14,
-          "avg_theta": 636.0,
-          "avg_opportunity": 555.0,
-          "avg_total": 775.0
+          "count": 12,
+          "avg_theta": 644.0,
+          "avg_opportunity": 552.0,
+          "avg_total": 782.0
         },
         "flat": {
           "count": 7,
-          "avg_theta": 1008.0,
-          "avg_opportunity": 612.0,
-          "avg_total": 1161.0
+          "avg_theta": 1002.0,
+          "avg_opportunity": 596.0,
+          "avg_total": 1151.0
         },
         "up": {
-          "count": 9,
-          "avg_theta": 825.0,
-          "avg_opportunity": 648.0,
-          "avg_total": 987.0
+          "count": 11,
+          "avg_theta": 790.0,
+          "avg_opportunity": 651.0,
+          "avg_total": 953.0
         }
       },
       "rollover_urgency": "CRITICAL"
@@ -48,22 +48,22 @@
       "income_drop_pct": -10.0,
       "scenarios": {
         "down": {
-          "count": 9,
-          "avg_theta": 348.0,
-          "avg_opportunity": 542.0,
-          "avg_total": 483.0
+          "count": 18,
+          "avg_theta": 212.0,
+          "avg_opportunity": 529.0,
+          "avg_total": 344.0
         },
         "flat": {
-          "count": 7,
-          "avg_theta": 914.0,
-          "avg_opportunity": 591.0,
-          "avg_total": 1062.0
+          "count": 4,
+          "avg_theta": 889.0,
+          "avg_opportunity": 598.0,
+          "avg_total": 1038.0
         },
         "up": {
-          "count": 14,
-          "avg_theta": 714.0,
-          "avg_opportunity": 656.0,
-          "avg_total": 878.0
+          "count": 8,
+          "avg_theta": 693.0,
+          "avg_opportunity": 659.0,
+          "avg_total": 858.0
         }
       },
       "rollover_urgency": "CRITICAL"
@@ -79,22 +79,22 @@
       "income_drop_pct": 39.0,
       "scenarios": {
         "down": {
-          "count": 17,
-          "avg_theta": 125.0,
-          "avg_opportunity": 530.0,
-          "avg_total": 257.0
+          "count": 10,
+          "avg_theta": 199.0,
+          "avg_opportunity": 551.0,
+          "avg_total": 336.0
         },
         "flat": {
-          "count": 5,
-          "avg_theta": 392.0,
-          "avg_opportunity": 592.0,
-          "avg_total": 540.0
+          "count": 8,
+          "avg_theta": 384.0,
+          "avg_opportunity": 596.0,
+          "avg_total": 533.0
         },
         "up": {
-          "count": 8,
-          "avg_theta": 178.0,
-          "avg_opportunity": 706.0,
-          "avg_total": 355.0
+          "count": 12,
+          "avg_theta": 173.0,
+          "avg_opportunity": 695.0,
+          "avg_total": 347.0
         }
       },
       "rollover_urgency": "CRITICAL"
@@ -110,22 +110,22 @@
       "income_drop_pct": 65.0,
       "scenarios": {
         "down": {
-          "count": 17,
+          "count": 22,
           "avg_theta": 55.0,
-          "avg_opportunity": 531.0,
-          "avg_total": 187.0
+          "avg_opportunity": 534.0,
+          "avg_total": 189.0
         },
         "flat": {
-          "count": 6,
-          "avg_theta": 82.0,
-          "avg_opportunity": 604.0,
-          "avg_total": 233.0
+          "count": 3,
+          "avg_theta": 84.0,
+          "avg_opportunity": 598.0,
+          "avg_total": 234.0
         },
         "up": {
-          "count": 7,
-          "avg_theta": 32.0,
-          "avg_opportunity": 724.0,
-          "avg_total": 213.0
+          "count": 5,
+          "avg_theta": 42.0,
+          "avg_opportunity": 692.0,
+          "avg_total": 214.0
         }
       },
       "rollover_urgency": "CRITICAL"
@@ -141,22 +141,22 @@
       "income_drop_pct": -72.0,
       "scenarios": {
         "down": {
-          "count": 18,
-          "avg_theta": 53.0,
+          "count": 19,
+          "avg_theta": 47.0,
           "avg_opportunity": 0.0,
-          "avg_total": 53.0
+          "avg_total": 47.0
         },
         "flat": {
-          "count": 2,
-          "avg_theta": 88.0,
+          "count": 1,
+          "avg_theta": 101.0,
           "avg_opportunity": 0.0,
-          "avg_total": 88.0
+          "avg_total": 101.0
         },
         "up": {
           "count": 10,
-          "avg_theta": 48.0,
+          "avg_theta": 49.0,
           "avg_opportunity": 0.0,
-          "avg_total": 48.0
+          "avg_total": 49.0
         }
       },
       "rollover_urgency": "LOW"
@@ -172,22 +172,22 @@
       "income_drop_pct": -124.0,
       "scenarios": {
         "down": {
-          "count": 15,
-          "avg_theta": 44.0,
+          "count": 18,
+          "avg_theta": 62.0,
           "avg_opportunity": 0.0,
-          "avg_total": 44.0
+          "avg_total": 62.0
         },
         "flat": {
-          "count": 6,
-          "avg_theta": 126.0,
+          "count": 3,
+          "avg_theta": 120.0,
           "avg_opportunity": 0.0,
-          "avg_total": 126.0
+          "avg_total": 120.0
         },
         "up": {
           "count": 9,
-          "avg_theta": 28.0,
+          "avg_theta": 31.0,
           "avg_opportunity": 0.0,
-          "avg_total": 28.0
+          "avg_total": 31.0
         }
       },
       "rollover_urgency": "LOW"
