@@ -8,8 +8,43 @@ treats our requests as first-party.
 New in the SDK refactor:
     * :data:`QUERY_EXTENDED_ORDER`  – single-order status polling
     * :data:`QUERY_ALL_ACCOUNTS`    – account discovery for margin filter
+    * :data:`QUERY_TRADING_BALANCE` – cash and buying power for an account
 """
 from __future__ import annotations
+
+# ============================================================= trading balance
+
+QUERY_TRADING_BALANCE = """
+query FetchTradingBalanceBuyingPower($accountCanonicalId: ID!, $currency: Currency!, $securityId: ID) {
+  account(id: $accountCanonicalId) {
+    id
+    financials {
+      current {
+        id
+        tradingBalanceView {
+          id
+          buyingPower(securityId: $securityId, currency: $currency) {
+            id
+            quantity
+            currency
+            __typename
+          }
+          cash(currency: $currency) {
+            id
+            quantity
+            currency
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+"""
 
 # ============================================================= financials
 

@@ -749,9 +749,13 @@ def compute_gamma_regime(spot):
 # ── WealthSimple Live Position Fetch ─────────────────────────────────────────
 _margin_capital_usd = 109433  # fetched from WS: $113k NLV - $3.6k cushion. Updated by fetch_ws_positions().
 _OTHER_HOLDINGS = {}  # cycle 142: non-UNG stock holdings (BOXX, ADA, etc.) captured by fetch_ws_positions
-# Cycle 201: cash and position value separately tracked.
-# Cash = NLV - Σ(positions). User: "never in negative cash to avoid pay interest."
+# Cycle 201: cash, buying power, and position value tracked separately.
+# Cash = WS-reported settled cash (FetchTradingBalanceBuyingPower).
+# Buying Power = Cash + margin available for new buys.
+# Position Value = Σ(positions market value).
+# User: "never in negative cash to avoid pay interest."
 _ws_cash_usd = 0.0
+_ws_buying_power_usd = 0.0
 _ws_position_value_usd = 0.0
 
 
@@ -892,14 +896,30 @@ def fetch_ws_positions():
             # Fallback: get spot from yfinance
             ung_price = float(yf.Ticker('UNG').history(period='1d')['Close'].iloc[-1])
 
-        # Cycle 201b: derive Cash properly. Both NLV and positions now in USD.
-        # NLV was captured into _margin_capital_usd (= NLV - $3,600 cushion);
-        # the cushion was for "don't deploy 100% of NLV" safety, NOT a real
-        # subtraction. Real NLV = _margin_capital_usd + 3600.
+        # Cycle 201c: query WS directly for Cash and Buying Power instead of
+        # deriving from NLV - positions (inferential, off by ~$1k due to
+        # intra-second price drift). User: "try to see exact way to get USD
+        # available." Found FetchTradingBalanceBuyingPower returns exact
+        # USD cash + buying power.
         _ws_position_value_usd = _total_position_value
-        _nlv_real = _margin_capital_usd + 3600
-        _ws_cash_usd = _nlv_real - _total_position_value
-        print(f"Cash: ${_ws_cash_usd:,.2f} | Position value: ${_total_position_value:,.2f} | NLV: ${_nlv_real:,.2f}")
+        try:
+            from ws_sdk import QUERY_TRADING_BALANCE
+            _UNG_SEC_ID = 'sec-s-32f0b46791214cbcbee9486e40232ea4'
+            _tb = graphql_query(session, 'FetchTradingBalanceBuyingPower',
+                                QUERY_TRADING_BALANCE, {
+                'accountCanonicalId': _mid, 'currency': 'USD',
+                'securityId': _UNG_SEC_ID,
+            })
+            if _tb:
+                _tbv = _tb.get('account', {}).get('financials', {}).get('current', {}).get('tradingBalanceView', {})
+                _ws_cash_usd = float(_tbv.get('cash', {}).get('quantity', 0))
+                global _ws_buying_power_usd
+                _ws_buying_power_usd = float(_tbv.get('buyingPower', {}).get('quantity', 0))
+                print(f"Cash (USD): ${_ws_cash_usd:,.2f} | Buying Power: ${_ws_buying_power_usd:,.2f} | Position value: ${_total_position_value:,.2f}")
+        except Exception as _ce:
+            # Fallback to inferential calculation
+            _ws_cash_usd = (_margin_capital_usd + 3600) - _total_position_value
+            print(f"Cash (inferential): ${_ws_cash_usd:,.2f}  (trading balance query failed: {_ce})")
 
         return shares, share_avg, options, ung_price
 

@@ -91,6 +91,7 @@ from .queries import (
     QUERY_OPTION_CHAIN,
     QUERY_OPTION_EXPIRATION_DATES,
     QUERY_SECURITY_SEARCH,
+    QUERY_TRADING_BALANCE,
 )
 from .quotes import KNOWN_SECURITIES, resolve_symbol, search_security
 
@@ -116,6 +117,7 @@ __all__ = [
     "QUERY_MULTILEG_ORDER", "QUERY_EXTENDED_ORDER", "QUERY_ALL_ACCOUNTS",
     "MUTATION_ORDER_CREATE", "MUTATION_ORDER_CANCEL", "MUTATION_ORDER_MODIFY",
     "MUTATION_ORDER_EXECUTION_CREATE", "MUTATION_PREFLIGHT_CHECK",
+    "QUERY_TRADING_BALANCE",
     # orders
     "generate_order_id", "place_order", "place_multileg_order",
     "cancel_order", "modify_order", "preflight_multileg",
