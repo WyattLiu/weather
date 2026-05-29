@@ -799,9 +799,13 @@ def fetch_ws_positions():
         # other accounts (crypto, cash savings) that shouldn't pollute the
         # engine's view. _mid was computed above; if missing, fall back to
         # all accounts (with warning).
+        # Cycle 201b: query positions in USD to match NLV currency (was CAD,
+        # which caused Cash = NLV_USD - positions_CAD arithmetic mismatch).
+        # User reported Cash = $15,189.85; we were calculating $12,041 due
+        # to the currency error.
         _query_args = {
             "identityId": identity_id,
-            "currency": "CAD",
+            "currency": "USD",
             "first": 50,
             "aggregated": True,
             "currencyOverride": "MARKET",
@@ -888,15 +892,14 @@ def fetch_ws_positions():
             # Fallback: get spot from yfinance
             ung_price = float(yf.Ticker('UNG').history(period='1d')['Close'].iloc[-1])
 
-        # Cycle 201: derive Cash and Position Value from WS data
-        # NLV ≈ Cash + Σ(position market values)
-        # So Cash = NLV - Σ(positions). This is the true "settled" cash
-        # that earns/pays interest. User: "never in negative cash."
+        # Cycle 201b: derive Cash properly. Both NLV and positions now in USD.
+        # NLV was captured into _margin_capital_usd (= NLV - $3,600 cushion);
+        # the cushion was for "don't deploy 100% of NLV" safety, NOT a real
+        # subtraction. Real NLV = _margin_capital_usd + 3600.
         _ws_position_value_usd = _total_position_value
-        # NLV was captured into _margin_capital_usd (= NLV - cushion); add cushion back
-        _nlv_estimate = _margin_capital_usd + 3600
-        _ws_cash_usd = _nlv_estimate - _total_position_value
-        print(f"Cash: ${_ws_cash_usd:,.0f} | Position value: ${_total_position_value:,.0f} | NLV est: ${_nlv_estimate:,.0f}")
+        _nlv_real = _margin_capital_usd + 3600
+        _ws_cash_usd = _nlv_real - _total_position_value
+        print(f"Cash: ${_ws_cash_usd:,.2f} | Position value: ${_total_position_value:,.2f} | NLV: ${_nlv_real:,.2f}")
 
         return shares, share_avg, options, ung_price
 
