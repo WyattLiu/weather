@@ -101,6 +101,36 @@ def compute_weekly_theta(positions, spot, iv, ref_date):
     return total_theta
 
 
+def bs_delta_local(S, K, T, r, sigma, right='P'):
+    if T <= 0.001 or sigma <= 0:
+        if right == 'C':
+            return 1.0 if S > K else 0.0
+        return -1.0 if S < K else 0.0
+    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    if right == 'C':
+        return norm.cdf(d1)
+    return norm.cdf(d1) - 1.0
+
+
+def compute_portfolio_delta_at_spot(positions, sim_spot, iv, ref_date, shares):
+    """Re-evaluate ALL portfolio Greeks at a simulated future spot.
+    Returns (total_delta, dollar_delta_per_pct, share_value_pnl)."""
+    r = 0.045
+    opt_delta = 0.0
+    for exp_str, strike, right, qty, avg in positions:
+        try:
+            exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+        except Exception:
+            continue
+        dte = max(1, (exp_date - ref_date).days)
+        T = dte / 365.0
+        d = bs_delta_local(sim_spot, strike, T, r, iv, right) * 100
+        opt_delta += qty * d
+    total_delta = shares + opt_delta
+    dollar_per_pct = total_delta * sim_spot * 0.01
+    return total_delta, dollar_per_pct
+
+
 def best_available_trade(spot, iv, ref_date, capital_free):
     """What's the best ATM put + CC at this spot? Returns combined premium."""
     best_prem = 0
@@ -162,12 +192,20 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
 
         # Monte Carlo: simulate spot paths to this week
         scenarios = {'down': [], 'flat': [], 'up': []}
+        all_pnls = []  # for CVaR computation
         for _ in range(N_PATHS):
             sim_spot = simulate_spot(spot, iv, 7 * week_num)
             sim_theta = compute_weekly_theta(surviving, sim_spot, iv, week_date)
+            # Cycle 197: track delta evolution at this scenario
+            sim_delta, sim_dollar_per_pct = compute_portfolio_delta_at_spot(
+                surviving, sim_spot, iv, week_date, shares)
+            # Dollar P&L = share move + option MTM change
+            share_pnl = shares * (sim_spot - spot)
+            # Approximate option MTM (changes per scenario)
+            opt_pnl_approx = (sim_delta - shares) * (sim_spot - spot) * 0.5  # midpoint integration
+            total_pnl = share_pnl + opt_pnl_approx
 
-            # What could we sell with freed capital?
-            freed_margin = expired_contracts * spot * 100 * 0.5  # rough
+            freed_margin = expired_contracts * spot * 100 * 0.5
             new_trade_prem = best_available_trade(sim_spot, iv, week_date, freed_margin)
 
             entry = {
@@ -175,7 +213,11 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
                 'surviving_theta_wk': round(sim_theta * 7, 0),
                 'new_opportunity_prem': round(new_trade_prem, 0),
                 'total_projected_wk': round(sim_theta * 7 + new_trade_prem / 4, 0),
+                'sim_delta': round(sim_delta, 0),
+                'dollar_pnl': round(total_pnl, 0),
+                'dollar_per_pct': round(sim_dollar_per_pct, 0),
             }
+            all_pnls.append(total_pnl)
 
             if sim_spot < spot * 0.97:
                 scenarios['down'].append(entry)
@@ -189,6 +231,15 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
                 return 0
             return round(np.mean([e[key] for e in entries]), 0)
 
+        # Cycle 197: dollar P&L distribution stats
+        sorted_pnls = sorted(all_pnls)
+        cvar_5_pct = float(np.mean(sorted_pnls[:max(1, len(sorted_pnls) // 20)]))  # worst 5%
+        cvar_25_pct = float(np.mean(sorted_pnls[:max(1, len(sorted_pnls) // 4)]))  # worst 25%
+        p_loss = sum(1 for p in all_pnls if p < 0) / len(all_pnls) if all_pnls else 0
+        median_pnl = float(np.median(all_pnls))
+        # Delta-at-CVaR: portfolio delta in the worst-5% scenarios
+        worst_5_idx = sorted(range(len(all_pnls)), key=lambda i: all_pnls[i])[:max(1, len(all_pnls)//20)]
+
         week_data = {
             'week': week_num,
             'date': week_date.isoformat(),
@@ -197,6 +248,10 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
             'expired_theta_wk': round(expired_theta, 0),
             'surviving_contracts': sum(abs(q) for _, _, _, q, _ in surviving),
             'surviving_theta_wk': round(surviving_theta_weekly, 0),
+            'cvar_5pct_pnl': round(cvar_5_pct, 0),
+            'cvar_25pct_pnl': round(cvar_25_pct, 0),
+            'median_pnl': round(median_pnl, 0),
+            'p_loss': round(p_loss * 100, 0),
             'income_drop_pct': round(
                 (1 - surviving_theta_weekly / max(1, compute_weekly_theta(positions, spot, iv, today) * 7)) * 100, 0
             ),

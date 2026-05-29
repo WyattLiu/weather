@@ -1692,8 +1692,16 @@ def generate_candidates(portfolio_state, spot, iv, today):
                     'why': f"{ext_pct:.0f}% extrinsic, {dte}d left. New {actual_dte}d has ${new_pure_ext:.2f}/sh. {liq_note}.",
                 })
 
-        # Generate CLOSE candidates for near-worthless positions
-        if extrinsic * abs(qty) * 100 < 50:  # close when < $50 total extrinsic remaining
+        # Generate CLOSE candidates for near-worthless OR deep-ITM positions.
+        # Cycle 196: user insight — deep ITM short calls have small extrinsic
+        # but tie up share collateral. Closing + selling shares frees capital
+        # for BOXX (4% risk-free) or new puts (better income). The beam should
+        # evaluate this trade-off, not gate it behind a $50 threshold.
+        _close_total_ext = extrinsic * abs(qty) * 100
+        _is_deep_itm_short_call = (right == 'C' and qty < 0 and intrinsic > 0.3
+                                    and extrinsic < 0.40)
+        _close_eligible = (_close_total_ext < 50) or _is_deep_itm_short_call
+        if _close_eligible:
             close_theta = abs(bs_theta(spot, strike, T, r, iv, right)) * abs(qty) * 100
             close_delta = qty * bs_delta(spot, strike, T, r, iv, right) * 100
             close_gamma = qty * bs_gamma(spot, strike, T, r, iv) * 100
@@ -1719,8 +1727,12 @@ def generate_candidates(portfolio_state, spot, iv, today):
                 'vega_change': -close_vega,
                 'new_extrinsic_total': 0,
                 'n_legs': 1,
-                'detail': f"Only ${extrinsic * abs(qty) * 100:.2f} extrinsic left. Consider rolling to ATM ${nearest_atm_strike}{right} at 30-40 DTE.",
-                'why': "Theta exhausted. Free up margin.",
+                'detail': f"${_close_total_ext:.0f} extrinsic left | frees ${abs(qty) * strike * 100:,.0f} share collateral for BOXX/puts",
+                'why': (f"Deep ITM short call: extrinsic ${extrinsic:.2f}/sh vs frees {abs(qty)*100} shares. "
+                        f"Selling shares + parking in BOXX earns ~${abs(qty) * strike * 100 * 0.04 / 365 * dte:.0f} over {dte}d "
+                        f"or write fresh puts at lower strikes."
+                        if _is_deep_itm_short_call else
+                        "Theta exhausted. Free up margin."),
             })
 
     # TAKE PROFIT: positions where we've captured a meaningful fraction
