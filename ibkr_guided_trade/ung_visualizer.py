@@ -2459,6 +2459,65 @@ def generate_candidates(portfolio_state, spot, iv, today):
                         'why': f"LEAPS hedge: {_tail_qty} existing. Reduces unhedged CVaR tail exposure. Beam evaluates whether premium cost is justified by risk reduction.",
                     })
 
+    # Cycle 200: BUY BOXX candidates for idle cash. User: "BOXX estimator
+    # should be part of the engine, max BOXX since margin rate is high."
+    # Compute idle cash = capital - share_value - put_margin_used. Reserve
+    # 30% for opportunistic puts; deploy 70% in BOXX (4% risk-free, no
+    # margin needed). Generate ladder of BOXX buy sizes.
+    try:
+        _boxx_px = 116.91  # cached, refresh via yfinance in get_boxx_price()
+        # Use NET LIQUIDATION (total wealth) as the basis. capital_base is the
+        # MARGIN sub-account only and underestimates cash available for BOXX.
+        # User: "I don't need margin to buy BOXX; want to max it; margin rate
+        # is high." So estimate idle cash from total wealth.
+        _net_liq = float(portfolio_state.get('net_liquidation', _margin_capital_usd * 1.5) or _margin_capital_usd * 1.5)
+        _shares_b = int(portfolio_state.get('shares', SHARES) or SHARES)
+        _share_value = _shares_b * spot
+        # Approximate margin used by short puts (cash-secured WS style)
+        _put_margin_used = 0.0
+        for _exp_p, _K_p, _rt_p, _qty_p, _avg_p in positions:
+            if _rt_p == 'P' and _qty_p < 0:
+                _prem_p = (_avg_p / 100) if _avg_p > 1 else _avg_p
+                _put_margin_used += max(0, _K_p * 100 - _prem_p * 100) * abs(_qty_p)
+        _idle_cash = max(0, _net_liq - _share_value - _put_margin_used)
+        _reserve = _idle_cash * 0.30  # keep liquid for new puts
+        _deployable = _idle_cash - _reserve
+        if _deployable >= _boxx_px * 5:  # at least 5 shares worth
+            for _frac, _label in [(0.5, '50%'), (1.0, 'full')]:
+                _deploy = _deployable * _frac
+                _n_boxx = int(_deploy / _boxx_px)
+                if _n_boxx < 5:
+                    continue
+                _cost = _n_boxx * _boxx_px
+                _yield_yr = _cost * 0.04
+                _yield_wk = _yield_yr / 52
+                candidates.append({
+                    'type': 'BUY BOXX',
+                    'action': f"Buy {_n_boxx} BOXX shares @ ${_boxx_px:.2f} ({_label} of deployable)",
+                    'add_qty': _n_boxx,
+                    'theta_change': _yield_wk / 7,  # daily theta-equivalent
+                    'delta_change': 0,  # BOXX is non-correlated to UNG
+                    'gamma_change': 0,
+                    'vega_change': 0,
+                    'new_extrinsic_total': 0,
+                    'n_legs': 1,
+                    'boxx_cost': _cost,
+                    'liquidity': {
+                        'oi': 0,
+                        'bid': _boxx_px,
+                        'ask': _boxx_px,
+                        'spread_pct': 0.01,  # tight ETF spread
+                        'oi_usage_pct': 0,
+                        'notional': round(_cost),
+                        'credit_debit': -round(_cost),
+                        'friction_est': 1,  # commission only
+                    },
+                    'detail': f"Deploy ${_cost:.0f} | annual ${_yield_yr:.0f} (${_yield_wk:.0f}/wk) | idle cash ${_idle_cash:.0f}",
+                    'why': f"Park idle cash in BOXX (1-3mo Treasury proxy). Earns ~4% risk-free vs sitting in margin account. Reserve ${_reserve:.0f} for opportunistic puts.",
+                })
+    except Exception:
+        pass
+
     return candidates
 
 
@@ -3941,6 +4000,14 @@ def apply_trade_to_state(state, trade, spot, iv, today):
         _buy_qty = abs(trade.get('qty', trade.get('add_qty', 0)))
         new_state['shares'] = new_state.get('shares', SHARES) + _buy_qty
 
+    elif trade['type'] == 'BUY BOXX':
+        # BOXX is uncorrelated to UNG — no delta/gamma impact.
+        # Adds theta_change (BOXX yield) and reduces idle cash.
+        _boxx_cost = trade.get('boxx_cost', 0)
+        new_state['boxx_value'] = new_state.get('boxx_value', 0) + _boxx_cost
+        new_state['boxx_shares'] = new_state.get('boxx_shares', 0) + trade.get('add_qty', 0)
+        # theta_change carries the daily yield; total_theta already updated below
+
     elif trade['type'] == 'COVERED CALL':
         target_exp = trade.get('target_exp')
         target_strike = trade.get('target_strike')
@@ -4996,7 +5063,7 @@ def compute_recommendations(spot, iv, expiry_groups, weekly_theta, smoothness, a
             p_state.get('avg_weekly_theta', 0) <
             p_state.get('target_weekly_income', 1500) * 0.6
         )
-        _INCOME_BYPASS_TYPES = {'OPEN', 'COVERED CALL', 'CLOSE'}
+        _INCOME_BYPASS_TYPES = {'OPEN', 'COVERED CALL', 'CLOSE', 'BUY BOXX'}
         # Cycle 154: lowered from -5 → -50. Cycle 153's -5 still blocked
         # OPENs because adding to a busy expiry incurs a waterfall penalty
         # that pushes full_score to -5.6 ~ -5.7. The cleanest fix is to
