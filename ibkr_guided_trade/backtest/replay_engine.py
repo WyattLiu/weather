@@ -475,6 +475,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     effective_otm = max(0.02, otm_put / 2)  # closer to money
                     trades.append({'date': idx, 'type': 'PANIC_BUY_DETECTED',
                                    'pnl': 0.0, 'spot': spot_u, 'z': z})
+                # CALM INCOME BOOST: when sitting in cash with 0 shares in
+                # NEUTRAL-CHEAP regime + not falling-knife + not anomaly,
+                # write closer-to-money puts. Acceptable assignment risk
+                # because we WANT shares back if cheap, and premium income
+                # ~3x higher than 10% OTM.
+                elif (p.get('calm_boost')
+                        and s['shares'] == 0
+                        and -0.25 < z < 0.75
+                        and not falling_knife(row)
+                        and anomaly == 'NORMAL'):
+                    effective_otm = 0.03  # 3% OTM, ~30 delta
+                    put_qty = max(2, int(put_qty * 0.6))  # smaller qty
+                    trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
+                                   'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
                 prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
@@ -712,8 +726,16 @@ STRATEGIES = {
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'divergence_trading': True,
-        # NOTE: removed use_surprise_z — surprise-z changes regime
-        # classifications and disrupts the roll_up_calls timing.
+    },
+    # Champion chassis + calm_boost: write closer-to-money puts when
+    # sitting in cash in NEUTRAL regime, harvesting premium that 10% OTM
+    # puts can't capture at sub-$15 UNG. Tested only in calm regime (no
+    # shares, neutral z, not falling, not anomaly).
+    'roll_up_calm_boost': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'calm_boost': True,
     },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
