@@ -439,15 +439,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # VOL-REGIME SIZING: when IV (proxied by rv_30) is high, sell
             # more premium; when depressed, back off. Premium is the alpha
             # source — chase it when it's rich.
-            if p.get('vol_aware_sizing'):
+            vol_mode = p.get('vol_aware_sizing')
+            if vol_mode:
                 rv30 = float(row.get('rv_30') or 0.5)
-                # Base IV ~0.55 in calibrated model. High = >0.80, low = <0.40
-                if rv30 > 0.80:
-                    put_qty = int(put_qty * 1.5)
-                    call_qty = int(call_qty * 1.5)
-                elif rv30 < 0.40:
-                    put_qty = max(1, int(put_qty * 0.6))
-                    call_qty = max(1, int(call_qty * 0.6))
+                if vol_mode == 'aggressive':
+                    # Finer-grained ladder, more aggressive at extremes
+                    if rv30 > 1.00:   mult = 2.0
+                    elif rv30 > 0.80: mult = 1.5
+                    elif rv30 > 0.60: mult = 1.2
+                    elif rv30 < 0.40: mult = 0.6
+                    elif rv30 < 0.30: mult = 0.4
+                    else:             mult = 1.0
+                else:
+                    # Default 2-step (the proven winner)
+                    if rv30 > 0.80:   mult = 1.5
+                    elif rv30 < 0.40: mult = 0.6
+                    else:             mult = 1.0
+                put_qty = max(1, int(put_qty * mult))
+                call_qty = max(1, int(call_qty * mult))
 
             # Anomaly gate — stand down entirely if 2022-style spike
             anomaly = detect_anomaly(row)
@@ -906,6 +915,18 @@ STRATEGIES = {
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
+    },
+    # Aggressive vol ladder: 5-step instead of 2-step.
+    'champion_vol_aggressive': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': 'aggressive',
     },
     # Even tighter — z<-1.5 (only deepest rich extremes)
     'champion_extreme_itm': {
