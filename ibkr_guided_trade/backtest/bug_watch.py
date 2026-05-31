@@ -138,6 +138,21 @@ def check_history(report: BugReport, name: str, hist: pd.DataFrame):
             report.add('WARN', name, f'{col}_explosion',
                       f'max {col} = {max_pos} — loop bug? unrealistic concentration?')
 
+    # COVERED CALL ONLY policy: short_calls * 100 must never exceed shares.
+    # Any violation = naked call sold (forbidden by user rule, see
+    # [[feedback_covered_calls_only]])
+    if 'shares' in hist.columns and 'short_calls' in hist.columns:
+        gap = hist['short_calls'] * 100 - hist['shares']
+        violations = hist[gap > 0]
+        if not violations.empty:
+            worst_idx = int(gap.idxmax())
+            sc = int(violations.iloc[worst_idx]['short_calls']) if worst_idx < len(violations) else 0
+            sh = int(violations.iloc[worst_idx]['shares']) if worst_idx < len(violations) else 0
+            d = str(violations.iloc[worst_idx]['date']) if worst_idx < len(violations) else '?'
+            report.add('ERROR', name, 'naked_calls_sold',
+                      f'short_calls exceeded shares on {len(violations)} days. '
+                      f'Worst: {sc} contracts vs {sh} shares on {d}')
+
 
 def check_trades(report: BugReport, name: str, trades: pd.DataFrame):
     """Sanity check the trade log."""

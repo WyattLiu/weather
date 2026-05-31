@@ -374,14 +374,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                        'pnl': 0.0, 'credit': credit,
                                        'K': K, 'qty': put_qty})
 
-            # CCs (only if have shares)
-            if s['shares'] >= 300:
-                # Aggressive ITM CC: when z is rich, write deeper ITM to force assignment
+            # CCs (only if have UNCOVERED shares — covered-call ONLY policy,
+            # never naked. See [[feedback_covered_calls_only]])
+            existing_cc_qty = sum(sc['qty'] for sc in s['short_calls'])
+            uncovered_shares = max(0, s['shares'] - existing_cc_qty * 100)
+            if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
                 effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
-                qty = min(call_qty, s['shares'] // 100)
+                qty = min(call_qty, uncovered_shares // 100)
                 prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
                 if prem > 0.05:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
