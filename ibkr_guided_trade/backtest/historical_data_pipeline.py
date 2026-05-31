@@ -95,15 +95,19 @@ def fetch_eia_historical(years=5):
         else:
             print(f"  EIA {name}: cached ({_file_age_hours(cache_path):.0f}h old)")
 
-        # Parse
+        # Parse — keep all rows; storage is WEEKLY (~52/yr), monthly is ~12/yr
+        # Old bug: tail(years*12+24) truncated weekly storage to only 1.6 years
         try:
             sheet = 'Data 1'
             df = pd.read_excel(cache_path, sheet_name=sheet, skiprows=2)
             df.columns = ['date', 'value']
             df['date'] = pd.to_datetime(df['date'])
             df = df.set_index('date').sort_index()
-            df = df.tail(years * 12 + 24)  # buffer
+            # Keep last N years worth of data (works for both weekly and monthly)
+            cutoff = df.index.max() - pd.DateOffset(years=years + 1)
+            df = df[df.index >= cutoff]
             out[name] = df['value']
+            print(f"    parsed: {len(df)} rows {df.index.min().date()} → {df.index.max().date()}")
         except Exception as e:
             print(f"    parse failed: {e}")
     return out
