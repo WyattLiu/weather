@@ -124,10 +124,13 @@ def compute_regime_history(rows):
         weight_sum = sum(c['weight'] for c in comps)
         scale = target_weight / weight_sum if weight_sum > 0 else 1.0
         z_val = sum(c['z_contrib'] for c in comps) * scale
-        if z_val > 1: reg = 'EXTREME_CHEAP'
-        elif z_val > 0.5: reg = 'CHEAP'
-        elif z_val > -0.5: reg = 'NEUTRAL'
-        elif z_val > -1: reg = 'RICH'
+        # Match LIVE engine regime thresholds (7-bucket schema)
+        if z_val > 1.0: reg = 'EXTREME_CHEAP'
+        elif z_val > 0.5: reg = 'VERY_CHEAP'
+        elif z_val > 0.25: reg = 'CHEAP'
+        elif z_val > -0.25: reg = 'NEUTRAL'
+        elif z_val > -0.5: reg = 'RICH'
+        elif z_val > -1.0: reg = 'VERY_RICH'
         else: reg = 'EXTREME_RICH'
         out.append({'date': r.get('date'), 'z': round(z_val, 3), 'regime': reg, 'ung': r.get('UNG')})
     return out
@@ -364,10 +367,12 @@ def compute_z_factor_breakdown(latest_row):
         'factors': factors,
         'weight_coverage_pct': round(weight_sum / target_weight * 100, 1),
         'regime': (
-            'EXTREME_CHEAP' if z_total > 1 else
-            'CHEAP' if z_total > 0.5 else
-            'NEUTRAL' if z_total > -0.5 else
-            'RICH' if z_total > -1 else 'EXTREME_RICH'
+            'EXTREME_CHEAP' if z_total > 1.0 else
+            'VERY_CHEAP' if z_total > 0.5 else
+            'CHEAP' if z_total > 0.25 else
+            'NEUTRAL' if z_total > -0.25 else
+            'RICH' if z_total > -0.5 else
+            'VERY_RICH' if z_total > -1.0 else 'EXTREME_RICH'
         ),
     }
 
@@ -404,7 +409,9 @@ h1 { margin: 0; font-size: 1.4rem; color: var(--accent); }
 .factor-row { display: grid; grid-template-columns: 1fr 80px 80px 100px; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
 .factor-row:last-child { border-bottom: 0; }
 .regime-badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-weight: 600; font-size: 0.8rem; }
-.regime-EXTREME_CHEAP { background: rgba(63,185,80,0.3); color: var(--gain); }
+.regime-EXTREME_CHEAP { background: rgba(63,185,80,0.4); color: var(--gain); }
+.regime-VERY_CHEAP { background: rgba(63,185,80,0.25); color: var(--gain); }
+.regime-VERY_RICH { background: rgba(248,81,73,0.25); color: var(--loss); }
 .regime-CHEAP { background: rgba(63,185,80,0.15); color: var(--gain); }
 .regime-NEUTRAL { background: rgba(139,148,158,0.2); color: var(--dim); }
 .regime-RICH { background: rgba(210,153,34,0.2); color: var(--warn); }
