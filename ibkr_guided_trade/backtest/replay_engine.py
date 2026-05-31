@@ -271,7 +271,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             keep.append(sp)
         s['short_puts'] = keep
 
-        # Expire short calls
+        # Expire short calls — with roll_up_call support
         keep = []
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
@@ -281,6 +281,33 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if cv < sc['entry_prem'] * 0.5:
                     s['cash'] += (sc['entry_prem'] - cv) * 100 * sc['qty']
                     continue
+
+            # ROLL UP + OUT when ITM call expiring soon
+            # User: 'if we are in CHEAP/NEUTRAL region, sell 30 DTE 11.5C
+            # or 12C on Monday to roll the 11 expiring 12C'
+            # Trigger: call is ITM (or near), <=7 days, regime CHEAP/NEUTRAL
+            is_itm = spot_u > sc['K']
+            near_expiry = T_left * 365 <= 7
+            in_cheap_neutral = z > -0.25  # CHEAP/NEUTRAL/upward
+            if (p.get('roll_up_calls') and is_itm and near_expiry
+                    and in_cheap_neutral and T_left > 1/365):
+                # Close current (pay intrinsic + small extrinsic)
+                cv = bs_call(spot_u, sc['K'], T_left, iv_u)
+                s['cash'] -= cv * 100 * sc['qty']
+                # Open new at higher strike (5% OTM from current spot) + 30 DTE
+                new_K = round(spot_u * 1.05)
+                new_prem = bs_call(spot_u, new_K, 30/365, iv_u)
+                if new_prem > 0.05:
+                    s['cash'] += (new_prem * 100 * sc['qty']
+                                  - sc['qty'] * SPREAD_OPTION * 100 * 2)  # 2 spreads
+                    keep.append({
+                        'entry': idx, 'K': new_K, 'dte': 30,
+                        'qty': sc['qty'], 'entry_prem': new_prem,
+                    })
+                    trades.append({'date': idx, 'type': 'CALL_ROLL_UP',
+                                   'from_K': sc['K'], 'to_K': new_K, 'qty': sc['qty']})
+                continue
+
             if days >= sc['dte']:
                 if spot_u > sc['K']:
                     s['shares'] -= sc['qty'] * 100
@@ -393,6 +420,14 @@ STRATEGIES = {
     'deep_otm_passive': {
         'otm_put': 0.20, 'otm_call': 0.10, 'put_qty': 3, 'call_qty': 3,
         'tp_50': True,
+    },
+    # User's Monday-roll-up strategy: when CHEAP/NEUTRAL and have ITM calls
+    # expiring within a week, roll up + out to higher strike 30 DTE.
+    # Lets the position stay alive in bullish regime without giving up shares.
+    'regime_aware_roll_up': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
     },
 }
 
