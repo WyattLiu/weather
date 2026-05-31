@@ -287,8 +287,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 else:
                     storage_peak = r == 'EXTREME_RICH'
                     at_peak = storage_peak or (price_spike and near_peak_top)
+                # CORE-SHARES FLOOR: elevator can only sell shares above the
+                # core floor. Prevents the wheel from spinning out of base.
+                core_floor = p.get('core_shares', 0)
+                available_above_core = max(0, s['shares'] - core_floor)
+                core_ok = available_above_core >= sc['qty'] * 100
                 if (at_peak and is_deep_itm and low_extrinsic
-                        and s['shares'] >= sc['qty'] * 100):
+                        and s['shares'] >= sc['qty'] * 100
+                        and core_ok):
                     s['cash'] -= cv * 100 * sc['qty'] + sc['qty'] * SPREAD_OPTION * 100
                     n_shares = sc['qty'] * 100
                     s['cash'] += n_shares * spot_u - n_shares * SPREAD_SHARE
@@ -462,10 +468,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                        'pnl': 0.0, 'credit': credit,
                                        'K': K, 'qty': put_qty})
 
-            # CCs (only if have UNCOVERED shares — covered-call ONLY policy,
-            # never naked. See [[feedback_covered_calls_only]])
+            # CCs (only if have UNCOVERED shares ABOVE core — covered-call
+            # ONLY [[feedback_covered_calls_only]]; core shares are
+            # protected from CC writing to avoid bleed-out via assignment.)
             existing_cc_qty = sum(sc['qty'] for sc in s['short_calls'])
-            uncovered_shares = max(0, s['shares'] - existing_cc_qty * 100)
+            core_floor = p.get('core_shares', 0)
+            uncovered_shares = max(0, s['shares'] - core_floor - existing_cc_qty * 100)
             if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
@@ -647,6 +655,22 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15,
         'elevator_mode': 'strict',
         'target_shares': 4000,
+    },
+    # v3 adds core_shares floor — elevator + CC won't drain shares below
+    # core. Keeps wheel base alive through spikes for future income.
+    'smooth_27_v3_core': {
+        'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'boxx': True,
+        'use_surprise_z': True,
+        'falling_knife_filter': True,
+        'anomaly_standdown': True,
+        'z_scaled_sizing': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',
+        'target_shares': 4000,
+        'core_shares': 2000,  # never drain below 2000 via elevator
     },
 }
 
