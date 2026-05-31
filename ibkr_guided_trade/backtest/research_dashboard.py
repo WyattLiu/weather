@@ -112,37 +112,25 @@ ENGINE_PLAYBOOK = {
 
 
 def compute_regime_history(rows):
-    """Compute per-day regime + per-regime stats."""
-    # Need to compute z per day (using same proxy as compute_z_factor_breakdown)
-    regime_per_day = []
+    """Compute per-day regime using the SAME _z_components as the badge.
+    Both will always agree."""
+    out = []
+    target_weight = sum(Z_WEIGHTS.values())
     for r in rows:
-        z = 0
-        n = 0
-        # Simple proxy: use NG trend + storage trend
-        if r.get('ng_trend') is not None:
-            z += -r['ng_trend'] * 3 * 0.4
-            n += 0.4
-        if r.get('eia_storage_weekly'):
-            s_z = (r['eia_storage_weekly'] - 2500) / 500
-            z += -s_z * 0.3
-            n += 0.3
-        if r.get('VIX'):
-            vix_z = (r['VIX'] - 20) / 10
-            z += -vix_z * 0.1
-            n += 0.1
-        if r.get('CL') and r.get('NG') and r['NG'] > 0:
-            ratio = r['CL'] / r['NG']
-            r_z = (ratio - 25) / 10
-            z += r_z * 0.2
-            n += 0.2
-        z_val = z / n if n > 0 else 0
+        comps = _z_components(r)
+        if not comps:
+            out.append({'date': r.get('date'), 'z': 0, 'regime': 'NEUTRAL', 'ung': r.get('UNG')})
+            continue
+        weight_sum = sum(c['weight'] for c in comps)
+        scale = target_weight / weight_sum if weight_sum > 0 else 1.0
+        z_val = sum(c['z_contrib'] for c in comps) * scale
         if z_val > 1: reg = 'EXTREME_CHEAP'
         elif z_val > 0.5: reg = 'CHEAP'
         elif z_val > -0.5: reg = 'NEUTRAL'
         elif z_val > -1: reg = 'RICH'
         else: reg = 'EXTREME_RICH'
-        regime_per_day.append({'date': r.get('date'), 'z': round(z_val, 3), 'regime': reg, 'ung': r.get('UNG')})
-    return regime_per_day
+        out.append({'date': r.get('date'), 'z': round(z_val, 3), 'regime': reg, 'ung': r.get('UNG')})
+    return out
 
 
 def compute_regime_stats(regime_history):
@@ -288,77 +276,93 @@ def compute_insights(rows):
     return insights
 
 
-def compute_z_factor_breakdown(latest_row):
-    """Return current z-score and per-factor contributions."""
-    if not latest_row:
-        return {'z': 0, 'factors': []}
-    factors = []
+# UNIFIED Z-SCORE WEIGHTS (used by BOTH badge and chart)
+Z_WEIGHTS = {
+    'storage_level': 0.30,
+    'days_supply': 0.25,
+    'ng_trend': 0.20,
+    'vix': 0.10,
+    'oil_ng_ratio': 0.15,
+}
 
-    # Storage z (proxy)
-    storage = latest_row.get('eia_storage_weekly')
+
+def _z_components(row):
+    """Compute z contributions for a single row. Returns list of dicts
+    or empty list if essential data missing. Used by BOTH compute_z_factor_breakdown
+    AND compute_regime_history so they always agree."""
+    if not row:
+        return []
+    out = []
+
+    storage = row.get('eia_storage_weekly')
     if storage:
-        # Quick z: how far from 2500 (rough mean)?
         s_z = (storage - 2500) / 500
-        factors.append({
-            'name': 'Storage Level',
-            'value': f"{storage:.0f} Bcf",
-            'z_contrib': -s_z * 0.30,  # high storage = bearish, weight 0.30
-            'weight': 0.30,
+        out.append({
+            'name': 'Storage Level', 'value': f"{storage:.0f} Bcf",
+            'z_contrib': -s_z * Z_WEIGHTS['storage_level'],
+            'weight': Z_WEIGHTS['storage_level'],
             'direction': 'bearish' if s_z > 0 else 'bullish',
         })
 
-    # Days supply
-    ds = latest_row.get('days_supply')
-    if ds:
+    ds = row.get('days_supply')
+    if ds and ds > 0:
         ds_z = (ds - 31) / 5
-        factors.append({
-            'name': 'Days of Supply',
-            'value': f"{ds:.1f} days",
-            'z_contrib': -ds_z * 0.25,
-            'weight': 0.25,
+        out.append({
+            'name': 'Days of Supply', 'value': f"{ds:.1f} days",
+            'z_contrib': -ds_z * Z_WEIGHTS['days_supply'],
+            'weight': Z_WEIGHTS['days_supply'],
             'direction': 'bearish' if ds_z > 0 else 'bullish',
         })
 
-    # NG trend
-    trend = latest_row.get('ng_trend')
+    trend = row.get('ng_trend')
     if trend is not None:
-        factors.append({
-            'name': 'NG Trend vs MA200',
-            'value': f"{trend*100:+.1f}%",
-            'z_contrib': -trend * 3 * 0.20,
-            'weight': 0.20,
+        out.append({
+            'name': 'NG Trend vs MA200', 'value': f"{trend*100:+.1f}%",
+            'z_contrib': -trend * 3 * Z_WEIGHTS['ng_trend'],
+            'weight': Z_WEIGHTS['ng_trend'],
             'direction': 'bearish' if trend > 0 else 'bullish',
         })
 
-    # VIX
-    vix = latest_row.get('VIX')
+    vix = row.get('VIX')
     if vix:
         vix_norm = (vix - 20) / 10
-        factors.append({
-            'name': 'VIX (market fear)',
-            'value': f"{vix:.1f}",
-            'z_contrib': -vix_norm * 0.10,
-            'weight': 0.10,
+        out.append({
+            'name': 'VIX (market fear)', 'value': f"{vix:.1f}",
+            'z_contrib': -vix_norm * Z_WEIGHTS['vix'],
+            'weight': Z_WEIGHTS['vix'],
             'direction': 'bearish' if vix > 20 else 'bullish',
         })
 
-    # Oil/NG ratio
-    if latest_row.get('CL') and latest_row.get('NG'):
-        ratio = latest_row['CL'] / latest_row['NG']
+    if row.get('CL') and row.get('NG') and row['NG'] > 0:
+        ratio = row['CL'] / row['NG']
         r_z = (ratio - 25) / 10
-        factors.append({
-            'name': 'Oil/NG Ratio',
-            'value': f"{ratio:.1f}",
-            'z_contrib': r_z * 0.15,
-            'weight': 0.15,
+        out.append({
+            'name': 'Oil/NG Ratio', 'value': f"{ratio:.1f}",
+            'z_contrib': r_z * Z_WEIGHTS['oil_ng_ratio'],
+            'weight': Z_WEIGHTS['oil_ng_ratio'],
             'direction': 'bullish' if r_z > 0 else 'bearish',
         })
 
-    # Composite
-    z_total = sum(f['z_contrib'] for f in factors)
+    return out
+
+
+def compute_z_factor_breakdown(latest_row):
+    """Return current z-score and per-factor contributions. Uses _z_components
+    for consistency with compute_regime_history."""
+    factors = _z_components(latest_row)
+    # Composite: sum of contributions (weights already applied)
+    # Normalize by weight coverage (so missing factors don't inflate/deflate)
+    weight_sum = sum(f['weight'] for f in factors)
+    target_weight = sum(Z_WEIGHTS.values())  # 1.00 by construction
+    if weight_sum < target_weight and weight_sum > 0:
+        scale = target_weight / weight_sum
+    else:
+        scale = 1.0
+    z_total = sum(f['z_contrib'] for f in factors) * scale
     return {
         'z': z_total,
         'factors': factors,
+        'weight_coverage_pct': round(weight_sum / target_weight * 100, 1),
         'regime': (
             'EXTREME_CHEAP' if z_total > 1 else
             'CHEAP' if z_total > 0.5 else
@@ -774,6 +778,27 @@ class Handler(BaseHTTPRequestHandler):
                 'eia_storage_weekly': r.get('eia_storage_weekly'),
                 'days_supply': r.get('days_supply'),
             } for r in rows]
+            # Data freshness per source
+            from datetime import date as _date_t
+            today_d = _date_t.today()
+            freshness = {}
+            for col in ['UNG', 'NG', 'VIX', 'KOLD', 'BOIL', 'CL',
+                        'eia_storage_weekly', 'eia_consumption', 'eia_production',
+                        'eia_lng_exports', 'days_supply', 'iv_30d']:
+                last_date = None
+                last_value = None
+                for r in reversed(rows):
+                    if r.get(col) is not None:
+                        last_date = r['date'][:10] if r.get('date') else None
+                        last_value = r[col]
+                        break
+                if last_date:
+                    try:
+                        d = datetime.strptime(last_date, '%Y-%m-%d').date()
+                        age = (today_d - d).days
+                    except Exception:
+                        age = None
+                    freshness[col] = {'last_date': last_date, 'age_days': age, 'last_value': last_value}
             return self._send_json({
                 'latest': latest,
                 'z_breakdown': z_break,
@@ -783,6 +808,7 @@ class Handler(BaseHTTPRequestHandler):
                 'regime_stats': regime_stats,
                 'playbook': ENGINE_PLAYBOOK,
                 'strategy_summary': strategy_summary,
+                'data_freshness': freshness,
                 'updated_at': datetime.now().isoformat(),
             })
         self.send_error(404)

@@ -141,7 +141,9 @@ class WheelStrategy:
             if spot_u <= 0:
                 continue
             spot_k = row.get('KOLD', 0)
-            iv_u = row.get('iv_30d', 0.55) or 0.55
+            iv_u = row.get('iv_30d', 0.55)
+        if iv_u is None or (isinstance(iv_u, float) and math.isnan(iv_u)) or iv_u <= 0:
+            iv_u = 0.55
             z = compute_historical_z(row)
             r = regime(z)
 
@@ -228,7 +230,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         spot_k = row.get('KOLD', 0) or 0
         if isinstance(spot_k, float) and math.isnan(spot_k):
             spot_k = 0
-        iv_u = row.get('iv_30d', 0.55) or 0.55
+        iv_u = row.get('iv_30d', 0.55)
+        if iv_u is None or (isinstance(iv_u, float) and math.isnan(iv_u)) or iv_u <= 0:
+            iv_u = 0.55
         z = compute_historical_z(row)
         r = regime(z)
 

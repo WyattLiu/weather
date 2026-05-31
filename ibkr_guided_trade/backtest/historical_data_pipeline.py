@@ -153,9 +153,11 @@ def build_master_dataset(years=5):
         df[f'eia_{name}'] = daily
 
     # Days of supply (storage / consumption)
+    # EIA consumption reported in MMcf/month, storage in Bcf
+    # Convert: cons_bcfd = MMcf/month / 30 days / 1000 (MMcf→Bcf)
+    # Typical: 2.3M MMcf/mo / 30 / 1000 = 77 Bcf/d → days = 2290 Bcf / 77 = ~30 days ✓
     if 'eia_storage_weekly' in df.columns and 'eia_consumption' in df.columns:
-        # consumption is monthly Bcf, convert to Bcf/d
-        cons_bcfd = df['eia_consumption'] / 30.0
+        cons_bcfd = df['eia_consumption'] / 30.0 / 1000.0  # MMcf/mo → Bcf/d
         df['days_supply'] = df['eia_storage_weekly'] / cons_bcfd.replace(0, np.nan)
 
     # NG term structure (NG=F + simple curve approximation)
