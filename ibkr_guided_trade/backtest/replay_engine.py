@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from seasonal_z import add_seasonal_factors  # type: ignore
+from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -109,6 +110,8 @@ def precompute_factor_z(df):
     # that storage-based z misses.
     if 'UNG' in df.columns:
         df['ung_spike_60d'] = df['UNG'].pct_change(60)
+    # Realized vol windows (powers IV model — replaces fixed 0.55)
+    df = precompute_realized_vol(df, col='UNG')
     return df
 
 
@@ -141,9 +144,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         spot_k = row.get('KOLD', 0) or 0
         if isinstance(spot_k, float) and math.isnan(spot_k):
             spot_k = 0
-        iv_u = row.get('iv_30d', 0.55)
-        if iv_u is None or (isinstance(iv_u, float) and math.isnan(iv_u)) or iv_u <= 0:
-            iv_u = 0.55
+        # Time-varying IV: per-strike via calibrated model (realized vol +
+        # VIX regime + skew + term structure). Falls back to 0.55 only if
+        # no realized vol available (first 30 days).
+        def iv_at(K, dte, right='C'):
+            return iv_for_quote(row, K, spot_u, dte, right)
         z = compute_historical_z(row, use_surprise=use_surprise)
         r = regime(z)
 
@@ -155,7 +160,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
             # Take profit
             if p.get('tp_50') and T_left > 1/365:
-                cv = bs_put(spot_u, sp['K'], T_left, iv_u)
+                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 if cv < sp['entry_prem'] * 0.5:
                     s['cash'] += (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': (sp['entry_prem']-cv)*100*sp['qty']})
@@ -163,11 +168,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
             # Roll down
             if p.get('roll_down') and spot_u < sp['K'] * 0.98 and T_left > 5/365:
-                cv = bs_put(spot_u, sp['K'], T_left, iv_u)
+                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 s['cash'] -= cv * 100 * sp['qty']
                 # New strike
                 nk = round(spot_u * (1 - p.get('otm_put', 0.10)))
-                npr = bs_put(spot_u, nk, 30/365, iv_u)
+                npr = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
                 s['cash'] += npr * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                 keep.append({'entry': idx, 'K': nk, 'dte': 30, 'qty': sp['qty'], 'entry_prem': npr})
                 continue
@@ -188,7 +193,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             days = (idx - sc['entry']).days
             T_left = max(1, sc['dte'] - days) / 365
             if p.get('tp_50') and T_left > 1/365:
-                cv = bs_call(spot_u, sc['K'], T_left, iv_u)
+                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 if cv < sc['entry_prem'] * 0.5:
                     s['cash'] += (sc['entry_prem'] - cv) * 100 * sc['qty']
                     continue
@@ -203,7 +208,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('elevator_close') and T_left > 1/365:
                 deep_itm_thresh = p.get('elevator_itm_pct', 0.05)
                 is_deep_itm = spot_u > sc['K'] * (1 + deep_itm_thresh)
-                cv = bs_call(spot_u, sc['K'], T_left, iv_u)
+                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 intrinsic = max(0, spot_u - sc['K'])
                 extrinsic = cv - intrinsic
                 ext_max = p.get('elevator_extrinsic_max', 0.15)
@@ -253,11 +258,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if (p.get('roll_up_calls') and is_itm and near_expiry
                     and in_cheap_neutral and T_left > 1/365):
                 # Close current (pay intrinsic + small extrinsic)
-                cv = bs_call(spot_u, sc['K'], T_left, iv_u)
+                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 s['cash'] -= cv * 100 * sc['qty']
                 # Open new at higher strike (5% OTM from current spot) + 30 DTE
                 new_K = round(spot_u * 1.05)
-                new_prem = bs_call(spot_u, new_K, 30/365, iv_u)
+                new_prem = bs_call(spot_u, new_K, 30/365, iv_at(new_K, 30, 'C'))
                 if new_prem > 0.05:
                     s['cash'] += (new_prem * 100 * sc['qty']
                                   - sc['qty'] * SPREAD_OPTION * 100 * 2)  # 2 spreads
@@ -307,7 +312,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             skip_put = p.get('regime_skip_puts_z') is not None and z < p['regime_skip_puts_z']
             if not skip_put:
                 K = round(spot_u * (1 - otm_put))
-                prem = bs_put(spot_u, K, 30/365, iv_u)
+                prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
                     s['cash'] += prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
                     s['short_puts'].append({'entry': idx, 'K': K, 'dte': 30,
@@ -321,7 +326,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, s['shares'] // 100)
-                prem = bs_call(spot_u, K, 30/365, iv_u)
+                prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
                 if prem > 0.05:
                     s['cash'] += prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['short_calls'].append({'entry': idx, 'K': K, 'dte': 30,
@@ -335,7 +340,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
                 if not s['long_puts']:
                     Kp = round(spot_u * 0.95)
-                    cost = bs_put(spot_u, Kp, 90/365, iv_u)
+                    cost = bs_put(spot_u, Kp, 90/365, iv_at(Kp, 90, 'P'))
                     qty = 3
                     s['cash'] -= cost * 100 * qty + qty * SPREAD_OPTION * 100
                     s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90, 'qty': qty, 'cost': cost})
