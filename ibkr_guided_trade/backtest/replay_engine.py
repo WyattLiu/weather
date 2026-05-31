@@ -436,6 +436,19 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
             call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
 
+            # VOL-REGIME SIZING: when IV (proxied by rv_30) is high, sell
+            # more premium; when depressed, back off. Premium is the alpha
+            # source — chase it when it's rich.
+            if p.get('vol_aware_sizing'):
+                rv30 = float(row.get('rv_30') or 0.5)
+                # Base IV ~0.55 in calibrated model. High = >0.80, low = <0.40
+                if rv30 > 0.80:
+                    put_qty = int(put_qty * 1.5)
+                    call_qty = int(call_qty * 1.5)
+                elif rv30 < 0.40:
+                    put_qty = max(1, int(put_qty * 0.6))
+                    call_qty = max(1, int(call_qty * 0.6))
+
             # Anomaly gate — stand down entirely if 2022-style spike
             anomaly = detect_anomaly(row)
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
@@ -879,6 +892,20 @@ STRATEGIES = {
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'entry_cadence': 3,
+    },
+    # Vol-aware sizing: scale put/call qty by realized vol regime.
+    # High vol (>80%) → 1.5x, Low vol (<40%) → 0.6x. Chase premium when
+    # rich (matches user "make sure we use options well").
+    'champion_vol_aware': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
     },
     # Even tighter — z<-1.5 (only deepest rich extremes)
     'champion_extreme_itm': {
