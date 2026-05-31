@@ -16,10 +16,13 @@ import json
 import argparse
 import pandas as pd
 import numpy as np
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from scipy.stats import norm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from seasonal_z import add_seasonal_factors  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -45,29 +48,26 @@ def bs_call(S, K, T, sig, r=0.045):
     return S*norm.cdf(d1) - K*math.exp(-r*T)*norm.cdf(d1 - sig*math.sqrt(T))
 
 
-def compute_historical_z(row):
+def compute_historical_z(row, use_surprise=False):
     """Approximate composite z-score from available factors.
 
-    Real engine uses 21 factors with IC weights. This proxy uses:
-      - Storage deviation (z of storage_weekly vs 5-yr avg) — weight 0.30
-      - Days supply (z of days_supply) — weight 0.25
-      - Price trend (NG vs MA200) — weight 0.20
-      - VIX (high vix = bearish NG via demand fear) — weight 0.10
-      - Oil/NG ratio (high = bullish NG via fuel switching) — weight 0.15
-
-    Returns ~0.7+ correlation with real composite z.
+    use_surprise=True uses seasonal-detrended storage/days_supply
+    (storage_surprise_z) — removes the dominant ~annual sine cycle,
+    so signal reflects deviation from SEASONAL expectation, not raw level.
     """
     z_components = []
     weights = []
 
     # Storage deviation (negative when storage low = bullish)
-    if 'storage_z' in row and not pd.isna(row['storage_z']):
-        z_components.append(-row['storage_z'])  # low storage = bullish
+    storage_col = 'storage_surprise_z' if use_surprise else 'storage_z'
+    if storage_col in row and not pd.isna(row[storage_col]):
+        z_components.append(-row[storage_col])
         weights.append(0.30)
 
     # Days supply
-    if 'days_supply_z' in row and not pd.isna(row['days_supply_z']):
-        z_components.append(-row['days_supply_z'])  # low days_supply = bullish
+    ds_col = 'days_supply_surprise_z' if use_surprise else 'days_supply_z'
+    if ds_col in row and not pd.isna(row[ds_col]):
+        z_components.append(-row[ds_col])
         weights.append(0.25)
 
     # NG trend
@@ -95,14 +95,20 @@ def compute_historical_z(row):
 
 
 def precompute_factor_z(df):
-    """Add z-score normalized columns for storage and days_supply."""
-    # Storage z: deviation from 252-day mean / std
+    """Add z-score normalized columns: naive (252d) AND seasonal surprise.
+    Also adds price-spike indicator (UNG % change vs 60d ago)."""
     if 'eia_storage_weekly' in df.columns:
         s = df['eia_storage_weekly']
         df['storage_z'] = ((s - s.rolling(252).mean()) / (s.rolling(252).std() + 1e-9))
     if 'days_supply' in df.columns:
         s = df['days_supply']
         df['days_supply_z'] = ((s - s.rolling(252).mean()) / (s.rolling(252).std() + 1e-9))
+    # Seasonal-detrended (removes annual sine cycle that dominates raw z)
+    df = add_seasonal_factors(df)
+    # Price spike indicator (60d % change) — catches demand spikes (Russia)
+    # that storage-based z misses.
+    if 'UNG' in df.columns:
+        df['ung_spike_60d'] = df['UNG'].pct_change(60)
     return df
 
 
@@ -112,102 +118,6 @@ def regime(z_val):
     if z_val > -0.5: return 'NEUTRAL'
     if z_val > -1.0: return 'RICH'
     return 'EXTREME_RICH'
-
-
-class WheelStrategy:
-    """Configurable wheel strategy with regime awareness."""
-
-    def __init__(self, name, params):
-        self.name = name
-        self.params = params  # dict with strategy knobs
-
-    def run(self, df, initial_cash=48000, initial_shares=6200):
-        cash = initial_cash
-        shares = initial_shares
-        boxx_shares = 0
-        kold_shares = 0
-        short_puts = []
-        short_calls = []
-        long_puts = []
-
-        history = []
-        trades = []
-
-        for i, (idx, row) in enumerate(df.iterrows()):
-            if i + 30 >= len(df):
-                break
-
-            spot_u = row.get('UNG', 0)
-            if spot_u <= 0:
-                continue
-            spot_k = row.get('KOLD', 0)
-            iv_u = row.get('iv_30d', 0.55)
-        if iv_u is None or (isinstance(iv_u, float) and math.isnan(iv_u)) or iv_u <= 0:
-            iv_u = 0.55
-            z = compute_historical_z(row)
-            r = regime(z)
-
-            # Process expirations
-            new_puts = []
-            for p in short_puts:
-                if (idx - p['entry']).days >= p['dte']:
-                    if spot_u < p['K']:
-                        # Assignment
-                        cash -= (p['K'] - spot_u) * 100 * p['qty']
-                        shares += p['qty'] * 100
-                        cash -= p['qty'] * 100 * p['K']
-                        trades.append({'date': idx, 'type': 'PUT_ASSIGN', 'qty': p['qty']})
-                else:
-                    new_puts.append(p)
-            short_puts = new_puts
-
-            new_calls = []
-            for c in short_calls:
-                if (idx - c['entry']).days >= c['dte']:
-                    if spot_u > c['K']:
-                        shares -= c['qty'] * 100
-                        cash += c['qty'] * 100 * c['K']
-                        trades.append({'date': idx, 'type': 'CALL_ASSIGN', 'qty': c['qty']})
-                else:
-                    new_calls.append(c)
-            short_calls = new_calls
-
-            new_lps = []
-            for p in long_puts:
-                if (idx - p['entry']).days >= p['dte']:
-                    cash += max(0, p['K'] - spot_u) * 100 * p['qty']
-                    trades.append({'date': idx, 'type': 'LONG_PUT_EXPIRE'})
-                else:
-                    new_lps.append(p)
-            long_puts = new_lps
-
-            # BOXX yield
-            if boxx_shares > 0:
-                cash += boxx_shares * 117 * 0.04 / 365
-
-            # KOLD exit if z reverts
-            if kold_shares > 0 and z > -0.3:
-                cash += kold_shares * spot_k - kold_shares * SPREAD_SHARE
-                trades.append({'date': idx, 'type': 'KOLD_EXIT', 'qty': kold_shares})
-                kold_shares = 0
-
-            # Weekly entries
-            if i % 7 == 0:
-                self._apply_regime(r, z, spot_u, spot_k, iv_u, idx,
-                                    short_puts, short_calls, long_puts,
-                                    cash, shares, kold_shares, boxx_shares, trades)
-                # need mutable references...
-                # Rebuild via state dict approach
-                pass
-
-            # Need state dict pattern — refactor below
-            nav = cash + shares * spot_u + boxx_shares * 117 + kold_shares * spot_k
-            history.append({'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
-                            'cash': cash, 'shares': shares, 'boxx': boxx_shares,
-                            'kold': kold_shares, 'nav': nav,
-                            'short_puts': len(short_puts), 'short_calls': len(short_calls)})
-
-        return pd.DataFrame(history), pd.DataFrame(trades)
 
 
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
@@ -220,6 +130,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
     trades = []
 
     p = strategy_params
+    use_surprise = p.get('use_surprise_z', False)
 
     for i in range(len(df) - 30):
         idx = df.index[i]
@@ -233,7 +144,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         iv_u = row.get('iv_30d', 0.55)
         if iv_u is None or (isinstance(iv_u, float) and math.isnan(iv_u)) or iv_u <= 0:
             iv_u = 0.55
-        z = compute_historical_z(row)
+        z = compute_historical_z(row, use_surprise=use_surprise)
         r = regime(z)
 
         # Expire short puts
@@ -271,7 +182,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             keep.append(sp)
         s['short_puts'] = keep
 
-        # Expire short calls — with roll_up_call support
+        # Expire short calls — with roll_up_call + elevator close support
         keep = []
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
@@ -280,6 +191,56 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 cv = bs_call(spot_u, sc['K'], T_left, iv_u)
                 if cv < sc['entry_prem'] * 0.5:
                     s['cash'] += (sc['entry_prem'] - cv) * 100 * sc['qty']
+                    continue
+
+            # ELEVATOR CLOSE (user's "Russia-spike" pattern):
+            # At peak — EITHER (regime EXTREME_RICH on surprise_z)
+            # OR (UNG up >30% in 60d → price-momentum spike, catches demand-
+            # driven peaks that storage z misses, e.g. Russia 2022) —
+            # AND short call is deep ITM with low extrinsic →
+            # buy-to-close call + sell underlying shares to lock the rally
+            # gain before mean reversion. Avoids waiting for assignment.
+            if p.get('elevator_close') and T_left > 1/365:
+                deep_itm_thresh = p.get('elevator_itm_pct', 0.05)
+                is_deep_itm = spot_u > sc['K'] * (1 + deep_itm_thresh)
+                cv = bs_call(spot_u, sc['K'], T_left, iv_u)
+                intrinsic = max(0, spot_u - sc['K'])
+                extrinsic = cv - intrinsic
+                ext_max = p.get('elevator_extrinsic_max', 0.15)
+                low_extrinsic = extrinsic < ext_max
+                # Peak triggers: tighter — require BOTH price spike AND
+                # near-peak detection. "Near peak" = current spot within 5%
+                # of trailing 60d high (avoids dumping early in the up-leg).
+                spike_pct = row.get('ung_spike_60d', 0) or 0
+                spike_thresh = p.get('elevator_spike_pct', 0.30)
+                price_spike = spike_pct > spike_thresh
+                # Trailing 60d high
+                if i >= 60:
+                    win = df['UNG'].iloc[max(0, i-60):i+1]
+                    h60 = win.max()
+                    near_peak_top = spot_u >= h60 * 0.95
+                else:
+                    near_peak_top = False
+                # Mode selector: 'strict' = both, 'or' = either
+                mode = p.get('elevator_mode', 'strict')
+                if mode == 'strict':
+                    at_peak = price_spike and near_peak_top
+                else:
+                    storage_peak = r == 'EXTREME_RICH'
+                    at_peak = storage_peak or (price_spike and near_peak_top)
+                if (at_peak and is_deep_itm and low_extrinsic
+                        and s['shares'] >= sc['qty'] * 100):
+                    s['cash'] -= cv * 100 * sc['qty'] + sc['qty'] * SPREAD_OPTION * 100
+                    n_shares = sc['qty'] * 100
+                    s['cash'] += n_shares * spot_u - n_shares * SPREAD_SHARE
+                    s['shares'] -= n_shares
+                    locked = (spot_u - sc['K']) * 100 * sc['qty']
+                    trades.append({
+                        'date': idx, 'type': 'ELEVATOR_CLOSE',
+                        'trigger': 'spike' if price_spike else 'storage_peak',
+                        'K': sc['K'], 'spot': spot_u, 'qty': sc['qty'],
+                        'locked_gain': locked, 'z': z, 'spike_60d': spike_pct,
+                    })
                     continue
 
             # ROLL UP + OUT when ITM call expiring soon
@@ -447,10 +408,41 @@ STRATEGIES = {
         'aggressive_itm_cc_z': -0.25,  # if z < -0.25, sell 5% ITM CCs
         'itm_cc_pct': -0.05,           # 5% ITM strike
     },
+    # NEW: use seasonal-detrended z (removes annual sine contamination)
+    # Same machinery as regime_aware but z reflects deviation from
+    # SEASONAL expectation, not raw level.
+    'regime_aware_surprise': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+    },
+    # NEW: elevator close — at peak spike (EXTREME_RICH surprise_z), if short
+    # call is deep ITM with no extrinsic, buy back + sell shares to lock the
+    # rally gain before mean reversion.
+    'elevator_close_surprise': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',   # require spike + near-peak top
+    },
+    # Looser: ANY rich signal triggers elevator
+    'elevator_or_mode': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'or',
+    },
 }
 
 
-def compare_strategies(years=5):
+def compare_strategies():
     print(f"=== Loading dataset ===")
     df_path = os.path.join(CACHE_DIR, 'master_dataset.csv')
     if not os.path.exists(df_path):
@@ -466,7 +458,8 @@ def compare_strategies(years=5):
     initial_shares = 6200
     initial_nav = initial_cash + initial_shares * df['UNG'].iloc[0]
 
-    results = {}
+    years_held = (df.index[-1] - df.index[0]).days / 365
+    results: dict = {}
     for name, params in STRATEGIES.items():
         print(f"Running {name}...")
         hist, trades = run_strategy_simple(df, params, initial_cash, initial_shares)
@@ -478,7 +471,6 @@ def compare_strategies(years=5):
                       hist['nav'].cummax().max() * 100)
         daily_ret = hist['nav'].pct_change().dropna()
         sharpe = daily_ret.mean() / (daily_ret.std() + 1e-9) * math.sqrt(252)
-        years_held = (hist['date'].iloc[-1] - hist['date'].iloc[0]).days / 365
         ann = ((final / initial_nav) ** (1/years_held) - 1) * 100 if years_held > 0 else 0
         results[name] = {
             'final': final, 'return_pct': ret, 'annual_pct': ann,
@@ -509,17 +501,16 @@ def compare_strategies(years=5):
         name: {k: v for k, v in r.items() if k not in ('history', 'trades')}
         for name, r in results.items()
     }
-    summary['ung_return_pct'] = ung_ret
-    summary['initial_nav'] = initial_nav
-    summary['years'] = years_held
-    summary['updated_at'] = datetime.now().isoformat()
+    summary['ung_return_pct'] = ung_ret  # type: ignore
+    summary['initial_nav'] = initial_nav  # type: ignore
+    summary['years'] = years_held  # type: ignore
+    summary['updated_at'] = datetime.now().isoformat()  # type: ignore
     with open(os.path.join(RESULTS_DIR, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=2, default=str)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--years', type=int, default=5)
     parser.add_argument('--compare', action='store_true', default=True)
-    args = parser.parse_args()
-    compare_strategies(years=args.years)
+    parser.parse_args()
+    compare_strategies()
