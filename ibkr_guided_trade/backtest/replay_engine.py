@@ -426,12 +426,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
             s['kold'] = 0
 
-        # Weekly entries
-        if i % 7 == 0:
+        # Entry cadence — default weekly; configurable for smoother layering
+        entry_cadence = p.get('entry_cadence', 7)
+        if i % entry_cadence == 0:
+            # Scale per-entry size so total weekly exposure stays constant
+            size_scale = entry_cadence / 7.0
             otm_put = p.get('otm_put', 0.10)
             otm_call = p.get('otm_call', 0.05)
-            put_qty = p.get('put_qty', 3)
-            call_qty = p.get('call_qty', 3)
+            put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
+            call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
 
             # Anomaly gate — stand down entirely if 2022-style spike
             anomaly = detect_anomaly(row)
@@ -863,6 +866,19 @@ STRATEGIES = {
         'itm_cc_pct': -0.05,
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+    },
+    # Same chassis, but enter twice-weekly (i%3) with half size — smoother
+    # cadence, same total exposure. Tests if entry-day concentration matters.
+    'champion_biweekly': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'entry_cadence': 3,
     },
     # Even tighter — z<-1.5 (only deepest rich extremes)
     'champion_extreme_itm': {
