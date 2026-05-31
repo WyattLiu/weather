@@ -98,7 +98,13 @@ def compute_historical_z(row, use_surprise=False):
 
 def precompute_factor_z(df):
     """Add z-score normalized columns: naive (252d) AND seasonal surprise.
-    Also adds price-spike indicator (UNG % change vs 60d ago)."""
+    Also adds price-spike indicator (UNG % change vs 60d ago).
+    BUG FIX (cycle 20260531_143753): drop NaN UNG rows FIRST so rolling
+    windows count trading days, not calendar days. Previously rolling(50)
+    on weekend-padded data could never accumulate 50 valid samples,
+    silently NaN-ing all trend signals (50d MA, 200d MA, uptrend)."""
+    if 'UNG' in df.columns:
+        df = df[df['UNG'].notna()].copy()
     if 'eia_storage_weekly' in df.columns:
         s = df['eia_storage_weekly']
         df['storage_z'] = ((s - s.rolling(252).mean()) / (s.rolling(252).std() + 1e-9))
@@ -234,13 +240,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     continue
 
             # Roll down — only if remaining DTE is above min_roll_dte
-            # threshold. Per [[feedback_dte_diversification]]: "let near-DTE
-            # OTM expire vs roll". Short-DTE puts have little extrinsic to
-            # capture by rolling; just let them play out.
+            # threshold. Per [[feedback_dte_diversification]] (refined cycle
+            # 20260531_140253): "let near-DTE OTM expire vs roll". Short-DTE
+            # puts have little extrinsic to capture by rolling.
+            # ALSO trend-aware: in uptrend, let ITM puts ride (price may
+            # recover); in downtrend, rolling is protective.
             min_roll_dte = p.get('min_roll_dte', 5)  # default = old behavior
             dte_left = T_left * 365
-            if (p.get('roll_down') and spot_u < sp['K'] * 0.98
-                    and dte_left > min_roll_dte):
+            roll_eligible = (p.get('roll_down') and spot_u < sp['K'] * 0.98
+                             and dte_left > min_roll_dte)
+            # Trend-aware skip — only if flag enabled
+            if roll_eligible and p.get('trend_aware_roll'):
+                if bool(row.get('ung_uptrend', False)):
+                    # Uptrend → let it recover, skip the roll
+                    roll_eligible = False
+            if roll_eligible:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
                 s['cash'] -= cv * 100 * sp['qty']
@@ -774,6 +788,15 @@ STRATEGIES = {
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'dte_ladder': [7, 14, 30, 45],
         'min_roll_dte': 14,
+    },
+    # Trend-aware rolling: roll only when ITM AND in downtrend; in uptrend
+    # let ITM puts ride for recovery. Per refined rule in
+    # [[feedback_dte_diversification]] cycle 20260531_140253.
+    'roll_up_trend_aware': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
     },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
