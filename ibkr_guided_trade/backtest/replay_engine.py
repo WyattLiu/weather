@@ -510,13 +510,26 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                            'reason': 'insufficient_buying_power'})
                             put_qty = 0
                     if put_qty > 0:
-                        credit = prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
-                        s['cash'] += credit
-                        s['short_puts'].append({'entry': idx, 'K': K, 'dte': 30,
-                                                'qty': put_qty, 'entry_prem': prem})
-                        trades.append({'date': idx, 'type': 'OPEN_PUT',
-                                       'pnl': 0.0, 'credit': credit,
-                                       'K': K, 'qty': put_qty})
+                        # DTE diversification — per [[feedback_dte_diversification]]:
+                        # spread across DTEs not pile at 30. Each DTE gets a slice
+                        # sized by 1/N.
+                        dte_ladder = p.get('dte_ladder', [30])
+                        n_dtes = len(dte_ladder)
+                        per_dte_qty = max(1, put_qty // n_dtes)
+                        # Re-margin-check the FULL allocation
+                        for dte_choice in dte_ladder:
+                            # Re-price for this specific DTE
+                            iv_dte = iv_at(K, dte_choice, 'P')
+                            prem_dte = bs_put(spot_u, K, dte_choice/365, iv_dte)
+                            if prem_dte < 0.05:
+                                continue
+                            credit_dte = prem_dte * 100 * per_dte_qty - per_dte_qty * SPREAD_OPTION * 100
+                            s['cash'] += credit_dte
+                            s['short_puts'].append({'entry': idx, 'K': K, 'dte': dte_choice,
+                                                    'qty': per_dte_qty, 'entry_prem': prem_dte})
+                            trades.append({'date': idx, 'type': 'OPEN_PUT',
+                                           'pnl': 0.0, 'credit': credit_dte,
+                                           'K': K, 'qty': per_dte_qty, 'dte': dte_choice})
 
             # CCs (only if have UNCOVERED shares ABOVE core — covered-call
             # ONLY [[feedback_covered_calls_only]]; core shares are
@@ -736,6 +749,15 @@ STRATEGIES = {
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'calm_boost': True,
+    },
+    # DTE diversification per [[feedback_dte_diversification]]: spread
+    # weekly put writes across 7/14/30/45 DTEs. Each DTE gets put_qty/4
+    # contracts. Smoother theta curve, less concentration at one expiry.
+    'roll_up_dte_ladder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'dte_ladder': [7, 14, 30, 45],
     },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
