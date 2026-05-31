@@ -117,9 +117,15 @@ def precompute_factor_z(df):
         df['ung_5d_mom'] = df['UNG'].pct_change(5)
         # 60d high (for called-away cycle peak detection)
         df['ung_60d_high'] = df['UNG'].rolling(60).max()
-        # 252d (1yr) range — for anomaly detection
+        # 252d (1yr) range — for anomaly detection AND trend
         df['ung_252d_mean'] = df['UNG'].rolling(252).mean()
         df['ung_252d_std'] = df['UNG'].rolling(252).std()
+        df['ung_200d_ma'] = df['UNG'].rolling(200).mean()
+        df['ung_50d_ma'] = df['UNG'].rolling(50).mean()
+        # Trend: 50d above 200d AND price above 50d = uptrend confirmed
+        df['ung_uptrend'] = (df['UNG'] > df['ung_50d_ma']) & (df['ung_50d_ma'] > df['ung_200d_ma'])
+        # Downtrend: price below 200d AND 50d below 200d
+        df['ung_downtrend'] = (df['UNG'] < df['ung_200d_ma']) & (df['ung_50d_ma'] < df['ung_200d_ma'])
     df = precompute_realized_vol(df, col='UNG')
     return df
 
@@ -378,6 +384,38 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
                 trades.append({'date': idx, 'type': 'STAND_DOWN_ANOMALY',
                                'pnl': 0.0, 'regime': anomaly})
+
+            # DIRECT ACCUMULATION KERNEL — per user "in low UNG time we
+            # accumulate". REQUIRES uptrend confirmation OR (deep cheap z
+            # AND price near 252d low). UNG can bleed down for months in
+            # calm regime — accumulating against a sustained downtrend is
+            # exactly the falling knife the user told us never to catch.
+            target_shares = p.get('target_shares', 0)
+            in_downtrend = bool(row.get('ung_downtrend', False))
+            in_uptrend = bool(row.get('ung_uptrend', False))
+            # Only accumulate if (uptrend confirmed) OR (EXTREME cheap z + not
+            # falling). Skip in downtrend even if z says cheap.
+            trend_ok = in_uptrend or (z > 1.0 and not in_downtrend)
+            if (target_shares > 0
+                    and s['shares'] < target_shares
+                    and z > -0.25
+                    and not falling_knife(row)
+                    and anomaly == 'NORMAL'
+                    and trend_ok):
+                gap = target_shares - s['shares']
+                # Buy in tranches sized to z conviction: full gap at z>+0.5,
+                # half at +0.25, quarter near neutral
+                if z > 0.5:    tranche = gap
+                elif z > 0.25: tranche = gap // 2
+                else:          tranche = gap // 4
+                tranche = (tranche // 100) * 100  # round to whole lots
+                cost = tranche * (spot_u + SPREAD_SHARE)
+                if tranche >= 100 and s['cash'] > cost + 5000:
+                    s['cash'] -= cost
+                    s['shares'] += tranche
+                    trades.append({'date': idx, 'type': 'BUY_SHARES_ACCUMULATE',
+                                   'pnl': 0.0, 'qty': tranche, 'spot': spot_u,
+                                   'z': z, 'cost': cost})
             # Skip puts based on regime AND falling-knife filter
             skip_put = p.get('regime_skip_puts_z') is not None and z < p['regime_skip_puts_z']
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
@@ -592,6 +630,23 @@ STRATEGIES = {
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15,
         'elevator_mode': 'strict',
+    },
+    # v2 adds: direct accumulation when z cheap + low shares — fixes
+    # smooth_27's structural problem of losing entire share base over
+    # 5 years (6200 → 0 by 2025) because passive puts at 8% OTM in calm
+    # regime rarely assign. target_shares=4000 maintains active wheel base.
+    'smooth_27_v2': {
+        'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'boxx': True,
+        'use_surprise_z': True,
+        'falling_knife_filter': True,
+        'anomaly_standdown': True,
+        'z_scaled_sizing': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',
+        'target_shares': 4000,
     },
 }
 
