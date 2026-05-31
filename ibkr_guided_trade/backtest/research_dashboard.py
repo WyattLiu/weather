@@ -795,17 +795,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, data):
         try:
+            # Sanitize: replace NaN/Infinity with None recursively (JSON-valid)
+            def clean(obj):
+                if isinstance(obj, dict):
+                    return {k: clean(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [clean(v) for v in obj]
+                if isinstance(obj, float):
+                    if math.isnan(obj) or math.isinf(obj):
+                        return None
+                    return obj
+                return obj
+            cleaned = clean(data)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            def default(o):
-                if isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
-                    return None
-                return str(o)
-            self.wfile.write(json.dumps(data, default=default).encode('utf-8'))
+            # allow_nan=False forces it to fail loudly rather than emit NaN
+            payload = json.dumps(cleaned, default=str, allow_nan=False)
+            self.wfile.write(payload.encode('utf-8'))
         except (BrokenPipeError, ConnectionResetError):
-            pass  # client disconnected, no need to crash
+            pass
 
     def log_message(self, *a):
         pass
