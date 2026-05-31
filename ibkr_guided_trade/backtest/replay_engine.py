@@ -348,13 +348,31 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 K = round(spot_u * (1 - otm_put))
                 prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
-                    credit = prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
-                    s['cash'] += credit
-                    s['short_puts'].append({'entry': idx, 'K': K, 'dte': 30,
-                                            'qty': put_qty, 'entry_prem': prem})
-                    trades.append({'date': idx, 'type': 'OPEN_PUT',
-                                   'pnl': 0.0, 'credit': credit,
-                                   'K': K, 'qty': put_qty})
+                    # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
+                    # Available collateral = current cash + premium received -
+                    # existing short-put obligations. Refuse trade if would push
+                    # cash + collateral_used past available.
+                    if p.get('margin_check', True):
+                        existing_put_collateral = sum(
+                            sp['K'] * 100 * sp['qty'] for sp in s['short_puts']
+                        )
+                        new_collateral = K * 100 * put_qty
+                        credit = prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
+                        # Cash floor after this trade: cash + credit must cover
+                        # total put obligations
+                        if s['cash'] + credit < existing_put_collateral + new_collateral:
+                            trades.append({'date': idx, 'type': 'OPEN_PUT_REJECTED_MARGIN',
+                                           'pnl': 0.0, 'K': K, 'qty': put_qty,
+                                           'reason': 'insufficient_buying_power'})
+                            put_qty = 0
+                    if put_qty > 0:
+                        credit = prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
+                        s['cash'] += credit
+                        s['short_puts'].append({'entry': idx, 'K': K, 'dte': 30,
+                                                'qty': put_qty, 'entry_prem': prem})
+                        trades.append({'date': idx, 'type': 'OPEN_PUT',
+                                       'pnl': 0.0, 'credit': credit,
+                                       'K': K, 'qty': put_qty})
 
             # CCs (only if have shares)
             if s['shares'] >= 300:
