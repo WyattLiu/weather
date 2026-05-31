@@ -841,6 +841,17 @@ STRATEGIES = {
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'trend_aware_roll': True,
     },
+    # Tightened: only fire aggressive_itm_cc at z<-1.0 (EXTREME rich) not
+    # z<-0.25. Hypothesis: keep some Sharpe boost without giving up as
+    # much return.
+    'champion_tight_itm': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,  # extreme rich only
+        'itm_cc_pct': -0.05,
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
