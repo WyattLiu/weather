@@ -111,9 +111,40 @@ def precompute_factor_z(df):
     # that storage-based z misses.
     if 'UNG' in df.columns:
         df['ung_spike_60d'] = df['UNG'].pct_change(60)
-    # Realized vol windows (powers IV model — replaces fixed 0.55)
+        # Falling-knife signals: 20d low + 5d momentum
+        df['ung_20d_low'] = df['UNG'].rolling(20).min()
+        df['ung_at_20d_low'] = df['UNG'] <= df['ung_20d_low'] * 1.005
+        df['ung_5d_mom'] = df['UNG'].pct_change(5)
+        # 60d high (for called-away cycle peak detection)
+        df['ung_60d_high'] = df['UNG'].rolling(60).max()
+        # 252d (1yr) range — for anomaly detection
+        df['ung_252d_mean'] = df['UNG'].rolling(252).mean()
+        df['ung_252d_std'] = df['UNG'].rolling(252).std()
     df = precompute_realized_vol(df, col='UNG')
     return df
+
+
+def detect_anomaly(row) -> str:
+    """Return 'ANOMALY_UP' / 'ANOMALY_DOWN' / 'NORMAL'.
+    Per [[feedback_no_falling_knife_anomaly]]: stand down in extreme regimes
+    rather than fight them with normal wheel kernels."""
+    spike = row.get('ung_spike_60d', 0) or 0
+    if spike > 0.50:
+        return 'ANOMALY_UP'
+    if spike < -0.50:
+        return 'ANOMALY_DOWN'
+    rv = row.get('rv_30', 0) or 0
+    if rv > 1.00:
+        return 'ANOMALY_UP'  # extreme vol — treat as caution
+    return 'NORMAL'
+
+
+def falling_knife(row) -> bool:
+    """True if UNG is in active downtrend — don't accumulate here.
+    Per [[feedback_no_falling_knife_anomaly]]."""
+    at_low = bool(row.get('ung_at_20d_low', False))
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    return at_low and mom5 < -0.03
 
 
 def regime(z_val):
@@ -342,9 +373,28 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             put_qty = p.get('put_qty', 3)
             call_qty = p.get('call_qty', 3)
 
-            # Skip puts based on regime
+            # Anomaly gate — stand down entirely if 2022-style spike
+            anomaly = detect_anomaly(row)
+            if p.get('anomaly_standdown') and anomaly != 'NORMAL':
+                trades.append({'date': idx, 'type': 'STAND_DOWN_ANOMALY',
+                               'pnl': 0.0, 'regime': anomaly})
+            # Skip puts based on regime AND falling-knife filter
             skip_put = p.get('regime_skip_puts_z') is not None and z < p['regime_skip_puts_z']
+            if p.get('anomaly_standdown') and anomaly != 'NORMAL':
+                skip_put = True
+            if p.get('falling_knife_filter') and falling_knife(row):
+                skip_put = True
+                trades.append({'date': idx, 'type': 'SKIP_PUT_FALLING_KNIFE',
+                               'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
+                # Z-scaled sizing: bigger when more cheap (higher conviction),
+                # require both cheap z AND falling-knife passed.
+                # Per [[project_target_27pct]]: scale up to 3x at z>+0.75
+                if p.get('z_scaled_sizing'):
+                    if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
+                    elif z > 0.25: put_qty = int(p.get('put_qty', 3) * 2)
+                    elif z > -0.25: put_qty = int(p.get('put_qty', 3) * 1)
+                    else: put_qty = max(1, int(p.get('put_qty', 3) * 0.5))
                 K = round(spot_u * (1 - otm_put))
                 prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
@@ -521,6 +571,24 @@ STRATEGIES = {
         'tp_50': True, 'roll_down': False,
         'regime_skip_puts_z': -0.5, 'bearish_stack': False, 'boxx': True,
         'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',
+    },
+    # Aims for 27% annualized in NORMAL regime. Encodes user rules:
+    # - covered calls only (already global)
+    # - never falling knife (require momentum confirmation)
+    # - z-scaled sizing (bigger when conviction stacks)
+    # - 2022-style anomaly: stand down, don't fight
+    # - elevator close at peaks
+    'smooth_27': {
+        'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'boxx': True,
+        'use_surprise_z': True,
+        'falling_knife_filter': True,
+        'anomaly_standdown': True,
+        'z_scaled_sizing': True,
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15,
         'elevator_mode': 'strict',
