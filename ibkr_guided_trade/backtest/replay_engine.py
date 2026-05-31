@@ -852,6 +852,27 @@ STRATEGIES = {
         'aggressive_itm_cc_z': -1.0,  # extreme rich only
         'itm_cc_pct': -0.05,
     },
+    # tight_itm + elevator — test if elevator adds value when combined
+    # with the tighter ITM trigger (different fire-context than full champion)
+    'champion_tight_plus_elev': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+    },
+    # Even tighter — z<-1.5 (only deepest rich extremes)
+    'champion_extreme_itm': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.5,  # only deepest rich
+        'itm_cc_pct': -0.05,
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
