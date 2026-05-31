@@ -354,13 +354,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
             # CCs (only if have shares)
             if s['shares'] >= 300:
-                K = round(spot_u * (1 + otm_call))
+                # Aggressive ITM CC: when z is rich, write deeper ITM to force assignment
+                use_itm = (p.get('aggressive_itm_cc_z') is not None
+                           and z < p['aggressive_itm_cc_z'])
+                effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
+                K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, s['shares'] // 100)
                 prem = bs_call(spot_u, K, 30/365, iv_u)
                 if prem > 0.05:
                     s['cash'] += prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['short_calls'].append({'entry': idx, 'K': K, 'dte': 30,
-                                             'qty': qty, 'entry_prem': prem})
+                                             'qty': qty, 'entry_prem': prem,
+                                             'is_itm_aggressive': use_itm})
+                    if use_itm:
+                        trades.append({'date': idx, 'type': 'AGGRESSIVE_ITM_CC',
+                                       'K': K, 'qty': qty, 'z': z})
 
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
@@ -428,6 +436,16 @@ STRATEGIES = {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+    },
+    # User: 'sell ITM CCs to take off shares when Z says so'
+    # When regime is RICH or worse, write 5% ITM CCs to FORCE share assignment
+    # Aggressive divestment of share exposure when model says expensive
+    'aggressive_unload_on_rich': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'aggressive_itm_cc_z': -0.25,  # if z < -0.25, sell 5% ITM CCs
+        'itm_cc_pct': -0.05,           # 5% ITM strike
     },
 }
 
