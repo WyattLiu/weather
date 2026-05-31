@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from seasonal_z import add_seasonal_factors  # type: ignore
 from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
+from attribution import attribute_trades, print_attribution  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -162,27 +163,40 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('tp_50') and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 if cv < sp['entry_prem'] * 0.5:
-                    s['cash'] += (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
-                    trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': (sp['entry_prem']-cv)*100*sp['qty']})
+                    pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
+                    s['cash'] += pnl
+                    trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl})
                     continue
 
             # Roll down
             if p.get('roll_down') and spot_u < sp['K'] * 0.98 and T_left > 5/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
+                close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
                 s['cash'] -= cv * 100 * sp['qty']
-                # New strike
                 nk = round(spot_u * (1 - p.get('otm_put', 0.10)))
                 npr = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
                 s['cash'] += npr * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                 keep.append({'entry': idx, 'K': nk, 'dte': 30, 'qty': sp['qty'], 'entry_prem': npr})
+                # Roll P&L = closed leg's gain (premium collected may be future credit)
+                trades.append({'date': idx, 'type': 'PUT_ROLL_DOWN', 'pnl': close_pnl,
+                               'from_K': sp['K'], 'to_K': nk, 'qty': sp['qty']})
                 continue
 
             if days >= sp['dte']:
                 if spot_u < sp['K']:
+                    # Assigned: P&L = premium kept - assignment loss
+                    loss = (sp['K'] - spot_u) * 100 * sp['qty']
+                    pnl = sp['entry_prem'] * 100 * sp['qty'] - loss
                     s['cash'] -= (sp['K'] - spot_u) * 100 * sp['qty']
                     s['shares'] += sp['qty'] * 100
                     s['cash'] -= sp['qty'] * 100 * sp['K']
-                    trades.append({'date': idx, 'type': 'PUT_ASSIGN', 'qty': sp['qty']})
+                    trades.append({'date': idx, 'type': 'PUT_ASSIGN', 'qty': sp['qty'],
+                                   'pnl': pnl, 'K': sp['K']})
+                else:
+                    # OTM expiry — full premium kept
+                    pnl = sp['entry_prem'] * 100 * sp['qty']
+                    trades.append({'date': idx, 'type': 'PUT_EXPIRE_OTM', 'qty': sp['qty'],
+                                   'pnl': pnl})
                 continue
             keep.append(sp)
         s['short_puts'] = keep
@@ -195,7 +209,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('tp_50') and T_left > 1/365:
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 if cv < sc['entry_prem'] * 0.5:
-                    s['cash'] += (sc['entry_prem'] - cv) * 100 * sc['qty']
+                    pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
+                    s['cash'] += pnl
+                    trades.append({'date': idx, 'type': 'CALL_TP', 'pnl': pnl,
+                                   'K': sc['K'], 'qty': sc['qty']})
                     continue
 
             # ELEVATOR CLOSE (user's "Russia-spike" pattern):
@@ -240,11 +257,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     s['cash'] += n_shares * spot_u - n_shares * SPREAD_SHARE
                     s['shares'] -= n_shares
                     locked = (spot_u - sc['K']) * 100 * sc['qty']
+                    # P&L vs letting it assign: spot - K per share (assignment
+                    # would have given only K), minus extrinsic cost to close
+                    pnl = (spot_u - sc['K'] - extrinsic) * 100 * sc['qty']
                     trades.append({
                         'date': idx, 'type': 'ELEVATOR_CLOSE',
                         'trigger': 'spike' if price_spike else 'storage_peak',
                         'K': sc['K'], 'spot': spot_u, 'qty': sc['qty'],
-                        'locked_gain': locked, 'z': z, 'spike_60d': spike_pct,
+                        'locked_gain': locked, 'pnl': pnl,
+                        'z': z, 'spike_60d': spike_pct,
                     })
                     continue
 
@@ -257,28 +278,36 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             in_cheap_neutral = z > -0.25  # CHEAP/NEUTRAL/upward
             if (p.get('roll_up_calls') and is_itm and near_expiry
                     and in_cheap_neutral and T_left > 1/365):
-                # Close current (pay intrinsic + small extrinsic)
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
+                close_pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
                 s['cash'] -= cv * 100 * sc['qty']
-                # Open new at higher strike (5% OTM from current spot) + 30 DTE
                 new_K = round(spot_u * 1.05)
                 new_prem = bs_call(spot_u, new_K, 30/365, iv_at(new_K, 30, 'C'))
                 if new_prem > 0.05:
                     s['cash'] += (new_prem * 100 * sc['qty']
-                                  - sc['qty'] * SPREAD_OPTION * 100 * 2)  # 2 spreads
+                                  - sc['qty'] * SPREAD_OPTION * 100 * 2)
                     keep.append({
                         'entry': idx, 'K': new_K, 'dte': 30,
                         'qty': sc['qty'], 'entry_prem': new_prem,
                     })
                     trades.append({'date': idx, 'type': 'CALL_ROLL_UP',
+                                   'pnl': close_pnl,
                                    'from_K': sc['K'], 'to_K': new_K, 'qty': sc['qty']})
                 continue
 
             if days >= sc['dte']:
                 if spot_u > sc['K']:
+                    # Premium kept, but shares called away at K (lost spot-K)
+                    lost = (spot_u - sc['K']) * 100 * sc['qty']
+                    pnl = sc['entry_prem'] * 100 * sc['qty'] - lost
                     s['shares'] -= sc['qty'] * 100
                     s['cash'] += sc['qty'] * 100 * sc['K']
-                    trades.append({'date': idx, 'type': 'CALL_ASSIGN', 'qty': sc['qty']})
+                    trades.append({'date': idx, 'type': 'CALL_ASSIGN',
+                                   'qty': sc['qty'], 'pnl': pnl, 'K': sc['K']})
+                else:
+                    pnl = sc['entry_prem'] * 100 * sc['qty']
+                    trades.append({'date': idx, 'type': 'CALL_EXPIRE_OTM',
+                                   'qty': sc['qty'], 'pnl': pnl})
                 continue
             keep.append(sc)
         s['short_calls'] = keep
@@ -287,7 +316,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         keep = []
         for lp in s['long_puts']:
             if (idx - lp['entry']).days >= lp['dte']:
-                s['cash'] += max(0, lp['K'] - spot_u) * 100 * lp['qty']
+                payout = max(0, lp['K'] - spot_u) * 100 * lp['qty']
+                cost = lp.get('cost', 0) * 100 * lp['qty']
+                pnl = payout - cost
+                s['cash'] += payout
+                trades.append({'date': idx, 'type': 'LONG_PUT_EXPIRE',
+                               'pnl': pnl, 'qty': lp['qty'], 'K': lp['K']})
                 continue
             keep.append(lp)
         s['long_puts'] = keep
@@ -314,9 +348,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 K = round(spot_u * (1 - otm_put))
                 prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
-                    s['cash'] += prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
+                    credit = prem * 100 * put_qty - put_qty * SPREAD_OPTION * 100
+                    s['cash'] += credit
                     s['short_puts'].append({'entry': idx, 'K': K, 'dte': 30,
                                             'qty': put_qty, 'entry_prem': prem})
+                    trades.append({'date': idx, 'type': 'OPEN_PUT',
+                                   'pnl': 0.0, 'credit': credit,
+                                   'K': K, 'qty': put_qty})
 
             # CCs (only if have shares)
             if s['shares'] >= 300:
@@ -328,13 +366,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 qty = min(call_qty, s['shares'] // 100)
                 prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
                 if prem > 0.05:
-                    s['cash'] += prem * 100 * qty - qty * SPREAD_OPTION * 100
+                    credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
+                    s['cash'] += credit
                     s['short_calls'].append({'entry': idx, 'K': K, 'dte': 30,
                                              'qty': qty, 'entry_prem': prem,
                                              'is_itm_aggressive': use_itm})
-                    if use_itm:
-                        trades.append({'date': idx, 'type': 'AGGRESSIVE_ITM_CC',
-                                       'K': K, 'qty': qty, 'z': z})
+                    open_kind = 'OPEN_ITM_CC' if use_itm else 'OPEN_CC'
+                    trades.append({'date': idx, 'type': open_kind,
+                                   'pnl': 0.0, 'credit': credit,
+                                   'K': K, 'qty': qty, 'z': z})
 
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
@@ -342,8 +382,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     Kp = round(spot_u * 0.95)
                     cost = bs_put(spot_u, Kp, 90/365, iv_at(Kp, 90, 'P'))
                     qty = 3
-                    s['cash'] -= cost * 100 * qty + qty * SPREAD_OPTION * 100
+                    debit = cost * 100 * qty + qty * SPREAD_OPTION * 100
+                    s['cash'] -= debit
                     s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90, 'qty': qty, 'cost': cost})
+                    trades.append({'date': idx, 'type': 'OPEN_LONG_PUT',
+                                   'pnl': -debit, 'K': Kp, 'qty': qty})
 
                 # Guard against NaN spot_k or NaN nav
                 if s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
@@ -444,6 +487,24 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15,
         'elevator_mode': 'or',
     },
+    # Attribution finding (cycle 205c): PUT_ROLL_DOWN had 0% win rate,
+    # losing $755-924/fire across all strategies. Test disabling it.
+    'no_rolldown': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': False,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': False, 'boxx': True,
+        'use_surprise_z': True,
+    },
+    # Best-of: surprise_z + no rolldown + no tail hedge + elevator close
+    'best_of_attribution': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': False,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': False, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',
+    },
 }
 
 
@@ -500,6 +561,13 @@ def compare_strategies():
         out_path = os.path.join(RESULTS_DIR, f'{name}_trades.csv')
         r['trades'].to_csv(out_path, index=False)
     print(f"\nResults saved to {RESULTS_DIR}/")
+
+    # Per-kernel attribution
+    for name, r in results.items():
+        nav_delta = r['final'] - initial_nav
+        attr = attribute_trades(r['trades'].to_dict('records'))
+        print_attribution(name, attr, nav_delta)
+        attr.to_csv(os.path.join(RESULTS_DIR, f'{name}_attribution.csv'), index=False)
 
     # Save summary JSON for web UI
     summary = {
