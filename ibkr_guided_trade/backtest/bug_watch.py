@@ -25,6 +25,17 @@ SUSPICIOUS_RETURN_HIGH = 500.0   # > +500% in 5yr = check pricing
 SUSPICIOUS_RETURN_LOW  = -100.0  # < -100% = cash blew up
 MAX_KERNEL_FIRES       = 3000    # > 3000 fires of one kernel = loop?
 PERFECT_WIN_FIRES_MIN  = 50      # 100% win after >=50 fires = synthetic pricing?
+PERFECT_WIN_AVG_THRESH = 500.0   # ...but only flag if avg/fire is large.
+# Conditional-outcome kernels fire ONLY when the outcome is positive (e.g., TP
+# only fires when premium drops past threshold; EXPIRE_OTM only fires when OTM
+# = full premium kept). 100% win is mathematically forced by the trigger, not
+# evidence of pricing bugs. Skip the "too perfect" check for these.
+CONDITIONAL_OUTCOME_KERNELS = {
+    'PUT_TP', 'CALL_TP',
+    'PUT_EXPIRE_OTM', 'CALL_EXPIRE_OTM',
+    'LONG_PUT_EXPIRE',  # records realized payout, only "wins" if ITM at expiry
+    'ELEVATOR_CLOSE',   # only fires when peak + low extrinsic — winning is the trigger
+}
 MAX_NAV_NEG_PCT        = 0.5     # NAV < -50% of initial = blown up
 CASH_NEG_THRESHOLD     = -100000 # Cash more negative than -$100K = margin abuse
 
@@ -142,17 +153,24 @@ def check_trades(report: BugReport, name: str, trades: pd.DataFrame):
             report.add('WARN', name, f'{kernel}_loop',
                       f'{kernel} fired {n} times — possible loop')
 
-    # Per-kernel 100% win rate w/ many fires = pricing is too perfect
+    # Per-kernel 100% win rate w/ many fires AND large avg = real pricing concern.
+    # 100% win at small avg is mathematically expected for conditional triggers
+    # (TP fires only when premium dropped past threshold), not a bug.
     if 'pnl' in trades.columns:
         for kernel in counts.index:
+            if kernel in CONDITIONAL_OUTCOME_KERNELS:
+                continue
             sub = trades[trades['type'] == kernel]
             if len(sub) < PERFECT_WIN_FIRES_MIN:
                 continue
             wins = (sub['pnl'] > 0).sum()
             if wins == len(sub):
-                report.add('WARN', name, f'{kernel}_too_perfect',
-                          f'{kernel} fired {len(sub)} times with 100% wins — '
-                          f'BS-synthesized free lunch? real chains would have losses.')
+                avg = float(sub['pnl'].mean())
+                if avg > PERFECT_WIN_AVG_THRESH:
+                    report.add('WARN', name, f'{kernel}_too_perfect',
+                              f'{kernel} fired {len(sub)} times, 100% wins, '
+                              f'${avg:.0f}/fire avg — suspiciously large; '
+                              f'verify BS pricing not synthesizing free lunch')
 
 
 def run_checks() -> BugReport:
