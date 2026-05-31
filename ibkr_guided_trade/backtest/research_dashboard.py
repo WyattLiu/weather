@@ -47,6 +47,152 @@ def load_master_dataset():
     return rows
 
 
+# Engine playbook: what the engine WOULD do at each regime
+ENGINE_PLAYBOOK = {
+    'EXTREME_CHEAP': {
+        'thesis': 'NG fundamentals very bullish — supply tight, mean-reversion to higher prices',
+        'actions': [
+            'Sell ATM puts aggressively (5+ contracts, 30 DTE)',
+            'Hold full UNG share position',
+            'Sell modest 5%+ OTM covered calls',
+            'Skip BOXX deployment — capital tied up in wheel',
+            'Don\'t buy KOLD or UNG puts',
+        ],
+        'delta_target': '100% NAV-equivalent long',
+        'income_pace': 'Maximum — collect every premium opportunity',
+    },
+    'CHEAP': {
+        'thesis': 'Still bullish but less extreme — wheel grinding',
+        'actions': [
+            'Sell ATM/5%OTM puts (3-5 contracts)',
+            'Hold UNG shares',
+            'Standard covered calls 5% OTM',
+            'Small BOXX deployment for excess cash',
+        ],
+        'delta_target': '80-90% NAV long',
+        'income_pace': 'Strong',
+    },
+    'NEUTRAL': {
+        'thesis': 'No clear directional edge — collect premium, manage risk',
+        'actions': [
+            'Sell 5-10% OTM puts (2-4 contracts)',
+            'Hold core shares',
+            'OTM covered calls 3-5% above',
+            'Build BOXX position with excess cash',
+        ],
+        'delta_target': '60-75% NAV long',
+        'income_pace': 'Moderate',
+    },
+    'RICH': {
+        'thesis': 'NG getting expensive — reduce long exposure via assignment',
+        'actions': [
+            'STOP new put writing (avoid catching falling knife)',
+            'Sell ATM/slightly-ITM covered calls (force assignment)',
+            'Let shares get called away — accumulate cash',
+            'Increase BOXX position',
+            'Consider small UNG long puts (defined risk)',
+        ],
+        'delta_target': '30-50% NAV long, transitioning',
+        'income_pace': 'Reduced — defensive',
+    },
+    'EXTREME_RICH': {
+        'thesis': 'Mean reversion likely — tactical bearish positioning',
+        'actions': [
+            'BUY 90-day 5%OTM UNG puts (3-5 contracts) — defined-risk short',
+            'BUY small KOLD shares (3% NAV) — leveraged bearish',
+            'NO new short put writing',
+            'Continue selling ITM CCs on remaining shares',
+            'Park most cash in BOXX',
+            'Set exit triggers: close positions when z reverts to -0.3',
+        ],
+        'delta_target': '0-30% NAV long (mostly cash/hedges)',
+        'income_pace': 'Minimal — playing for capital appreciation on reversion',
+    },
+}
+
+
+def compute_regime_history(rows):
+    """Compute per-day regime + per-regime stats."""
+    # Need to compute z per day (using same proxy as compute_z_factor_breakdown)
+    regime_per_day = []
+    for r in rows:
+        z = 0
+        n = 0
+        # Simple proxy: use NG trend + storage trend
+        if r.get('ng_trend') is not None:
+            z += -r['ng_trend'] * 3 * 0.4
+            n += 0.4
+        if r.get('eia_storage_weekly'):
+            s_z = (r['eia_storage_weekly'] - 2500) / 500
+            z += -s_z * 0.3
+            n += 0.3
+        if r.get('VIX'):
+            vix_z = (r['VIX'] - 20) / 10
+            z += -vix_z * 0.1
+            n += 0.1
+        if r.get('CL') and r.get('NG') and r['NG'] > 0:
+            ratio = r['CL'] / r['NG']
+            r_z = (ratio - 25) / 10
+            z += r_z * 0.2
+            n += 0.2
+        z_val = z / n if n > 0 else 0
+        if z_val > 1: reg = 'EXTREME_CHEAP'
+        elif z_val > 0.5: reg = 'CHEAP'
+        elif z_val > -0.5: reg = 'NEUTRAL'
+        elif z_val > -1: reg = 'RICH'
+        else: reg = 'EXTREME_RICH'
+        regime_per_day.append({'date': r.get('date'), 'z': round(z_val, 3), 'regime': reg, 'ung': r.get('UNG')})
+    return regime_per_day
+
+
+def compute_regime_stats(regime_history):
+    """Aggregate stats: time in each regime, transitions, avg outcome."""
+    if not regime_history:
+        return {}
+    from collections import Counter
+    regime_counts = Counter(r['regime'] for r in regime_history)
+    total = len(regime_history)
+
+    # Find transitions and what happened next
+    transitions = []
+    for i in range(1, len(regime_history)):
+        prev_r = regime_history[i-1]['regime']
+        curr_r = regime_history[i]['regime']
+        if prev_r != curr_r:
+            transitions.append({
+                'date': regime_history[i]['date'],
+                'from': prev_r,
+                'to': curr_r,
+                'ung_at_transition': regime_history[i].get('ung'),
+            })
+
+    # For each EXTREME_RICH/RICH start, find 30-day UNG return
+    extreme_signals = []
+    for i in range(len(regime_history) - 30):
+        if regime_history[i]['regime'] == 'EXTREME_RICH' and (i == 0 or regime_history[i-1]['regime'] != 'EXTREME_RICH'):
+            entry_ung = regime_history[i].get('ung')
+            exit_ung = regime_history[i+30].get('ung')
+            if entry_ung and exit_ung:
+                extreme_signals.append({
+                    'entry_date': regime_history[i]['date'],
+                    'entry_ung': entry_ung,
+                    'ung_30d_later': exit_ung,
+                    'return_30d_pct': (exit_ung / entry_ung - 1) * 100,
+                })
+
+    return {
+        'days_per_regime': dict(regime_counts),
+        'pct_per_regime': {k: round(v / total * 100, 1) for k, v in regime_counts.items()},
+        'n_transitions': len(transitions),
+        'last_5_transitions': transitions[-5:] if transitions else [],
+        'extreme_rich_signals': extreme_signals,
+        'avg_extreme_rich_30d_return': (
+            round(sum(s['return_30d_pct'] for s in extreme_signals) / len(extreme_signals), 1)
+            if extreme_signals else None
+        ),
+    }
+
+
 def compute_insights(rows):
     """Generate research observations from current data."""
     if not rows:
@@ -307,6 +453,21 @@ th:first-child, td:first-child { text-align: left; }
   </div>
 
   <div class="panel" style="grid-column: span 2;">
+    <h2>📜 Engine Playbook by Regime — What the engine does at each Z</h2>
+    <div id="playbook"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🔄 Regime Statistics (Historical)</h2>
+    <div id="regimeStats"></div>
+  </div>
+
+  <div class="panel">
+    <h2>⚠️ EXTREME_RICH Signal Track Record</h2>
+    <div id="extremeStats"></div>
+  </div>
+
+  <div class="panel" style="grid-column: span 2;">
     <h2>💡 Engine Insights & Opportunities</h2>
     <div id="insights"></div>
   </div>
@@ -339,6 +500,86 @@ async function load() {
   renderIV(data.history);
   renderInsights(data.insights);
   renderStrategies(data.strategy_summary);
+  renderPlaybook(data.playbook, data.z_breakdown?.regime);
+  renderRegimeStats(data.regime_stats);
+  renderExtremeStats(data.regime_stats);
+}
+
+function renderPlaybook(pb, currentRegime) {
+  if (!pb) return;
+  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;">';
+  for (const [regime, data] of Object.entries(pb)) {
+    const isCurrent = regime === currentRegime;
+    const borderColor = isCurrent ? '#58a6ff' : 'transparent';
+    html += `<div style="border:2px solid ${borderColor};border-radius:6px;padding:10px;background:rgba(0,0,0,0.2);">
+      <div style="margin-bottom:6px;"><span class="regime-badge regime-${regime}">${regime}</span>
+        ${isCurrent ? '<span style="color:var(--accent);font-size:0.7rem;margin-left:8px;">← CURRENT</span>' : ''}</div>
+      <div style="color:var(--dim);font-size:0.78rem;margin-bottom:6px;font-style:italic;">${data.thesis}</div>
+      <div style="font-size:0.8rem;">
+        <strong style="color:var(--accent);">Delta target:</strong> ${data.delta_target}<br>
+        <strong style="color:var(--accent);">Income pace:</strong> ${data.income_pace}<br>
+        <strong style="color:var(--accent);">Actions:</strong>
+        <ul style="margin:4px 0 0 18px;padding:0;color:var(--text);font-size:0.78rem;">
+          ${data.actions.map(a => `<li>${a}</li>`).join('')}
+        </ul>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('playbook').innerHTML = html;
+}
+
+function renderRegimeStats(s) {
+  if (!s || !s.pct_per_regime) {
+    document.getElementById('regimeStats').innerHTML = '<div style="color:var(--dim);">Loading...</div>';
+    return;
+  }
+  let html = '<table>';
+  html += '<tr><th>Regime</th><th>Days</th><th>%</th></tr>';
+  for (const [r, days] of Object.entries(s.days_per_regime || {})) {
+    html += `<tr>
+      <td><span class="regime-badge regime-${r}" style="font-size:0.65rem;padding:2px 6px;">${r}</span></td>
+      <td>${days}</td>
+      <td>${s.pct_per_regime[r]}%</td>
+    </tr>`;
+  }
+  html += '</table>';
+  html += `<div style="margin-top:10px;color:var(--dim);font-size:0.8rem;">
+    ${s.n_transitions} regime transitions in dataset
+  </div>`;
+  if (s.last_5_transitions?.length) {
+    html += '<div style="margin-top:8px;font-size:0.75rem;color:var(--dim);">Recent transitions:</div>';
+    for (const t of s.last_5_transitions.slice(-3)) {
+      html += `<div style="font-size:0.75rem;padding:2px 0;">${(t.date || '').slice(0,10)}: ${t.from} → ${t.to}</div>`;
+    }
+  }
+  document.getElementById('regimeStats').innerHTML = html;
+}
+
+function renderExtremeStats(s) {
+  if (!s || !s.extreme_rich_signals) return;
+  const sigs = s.extreme_rich_signals;
+  if (!sigs.length) {
+    document.getElementById('extremeStats').innerHTML = '<div style="color:var(--dim);">No EXTREME_RICH signals fired in available history.</div>';
+    return;
+  }
+  let html = `<div style="font-size:0.85rem;margin-bottom:8px;">
+    <strong>Avg 30d UNG return after EXTREME_RICH signal:
+      <span class="${s.avg_extreme_rich_30d_return < 0 ? 'gain' : 'loss'}">${s.avg_extreme_rich_30d_return}%</span></strong>
+    (negative = bearish thesis worked; we'd profit on UNG puts/KOLD longs)
+  </div>`;
+  html += '<table><tr><th>Entry Date</th><th>Entry UNG</th><th>30d Later</th><th>30d Return</th></tr>';
+  for (const sig of sigs.slice(-10)) {
+    const retClass = sig.return_30d_pct < 0 ? 'gain' : 'loss';  // bearish thesis: negative = win
+    html += `<tr>
+      <td>${(sig.entry_date || '').slice(0,10)}</td>
+      <td>$${sig.entry_ung?.toFixed(2)}</td>
+      <td>$${sig.ung_30d_later?.toFixed(2)}</td>
+      <td class="${retClass}">${sig.return_30d_pct?.toFixed(1)}%</td>
+    </tr>`;
+  }
+  html += '</table>';
+  document.getElementById('extremeStats').innerHTML = html;
 }
 
 function renderMarket(d) {
@@ -383,38 +624,34 @@ function renderFactors(z) {
 
 function renderZChart(hist) {
   if (!hist || hist.length === 0) return;
-  // Compute synthetic z over time (price-based proxy)
-  const dates = hist.map(h => h.date);
-  const ung = hist.map(h => h.UNG);
-  // 200-day MA
-  const ma200 = ung.map((v, i) => {
-    if (i < 200) return null;
-    const window = ung.slice(i-200, i).filter(x => x);
-    return window.reduce((a,b)=>a+b,0) / window.length;
+  // Use the regime_history from the server (already computed with all factors)
+  // Fall back to client-side if missing
+  fetch('/api/research').then(r => r.json()).then(d => {
+    const rh = d.regime_history || [];
+    if (!rh.length) return;
+    const dates = rh.map(r => r.date);
+    const zs = rh.map(r => r.z);
+    Plotly.react('zChart', [
+      { x: dates, y: zs, type: 'scatter', mode: 'lines', name: 'Composite Z',
+        line: { color: '#58a6ff' } },
+    ], {
+      ...LAYOUT,
+      shapes: [
+        { type: 'rect', x0: dates[0], x1: dates[dates.length-1], y0: 1, y1: 3, fillcolor: 'rgba(63,185,80,0.10)', line: { width: 0 } },
+        { type: 'rect', x0: dates[0], x1: dates[dates.length-1], y0: 0.5, y1: 1, fillcolor: 'rgba(63,185,80,0.05)', line: { width: 0 } },
+        { type: 'rect', x0: dates[0], x1: dates[dates.length-1], y0: -0.5, y1: -1, fillcolor: 'rgba(210,153,34,0.05)', line: { width: 0 } },
+        { type: 'rect', x0: dates[0], x1: dates[dates.length-1], y0: -1, y1: -3, fillcolor: 'rgba(248,81,73,0.10)', line: { width: 0 } },
+        { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: 1, y1: 1, line: { color: '#3fb950', dash: 'dash', width: 1 } },
+        { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: -1, y1: -1, line: { color: '#f85149', dash: 'dash', width: 1 } },
+        { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: 0, y1: 0, line: { color: '#8b949e', dash: 'dot', width: 1 } },
+      ],
+      annotations: [
+        { x: dates[Math.floor(dates.length*0.05)], y: 1.5, text: 'EXTREME CHEAP', showarrow: false, font: { color: '#3fb950', size: 10 } },
+        { x: dates[Math.floor(dates.length*0.05)], y: -1.5, text: 'EXTREME RICH', showarrow: false, font: { color: '#f85149', size: 10 } },
+      ],
+      yaxis: { ...LAYOUT.yaxis, title: 'Composite Z-Score' },
+    }, { responsive: true, displayModeBar: false });
   });
-  const std200 = ung.map((v, i) => {
-    if (i < 200 || !ma200[i]) return null;
-    const window = ung.slice(i-200, i).filter(x => x);
-    const mean = window.reduce((a,b)=>a+b,0) / window.length;
-    return Math.sqrt(window.map(x => (x-mean)**2).reduce((a,b)=>a+b,0) / window.length);
-  });
-  const z = ung.map((v, i) => (v && ma200[i] && std200[i]) ? -((v - ma200[i]) / std200[i]) : null);
-
-  Plotly.react('zChart', [
-    { x: dates, y: z, type: 'scatter', mode: 'lines', name: 'Z-Score', line: { color: '#58a6ff' } },
-  ], {
-    ...LAYOUT,
-    shapes: [
-      { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: 1, y1: 1, line: { color: '#3fb950', dash: 'dash', width: 1 } },
-      { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: -1, y1: -1, line: { color: '#f85149', dash: 'dash', width: 1 } },
-      { type: 'line', x0: dates[0], x1: dates[dates.length-1], y0: 0, y1: 0, line: { color: '#8b949e', dash: 'dot', width: 1 } },
-    ],
-    annotations: [
-      { x: dates[Math.floor(dates.length*0.05)], y: 1.1, text: 'CHEAP →', showarrow: false, font: { color: '#3fb950', size: 9 } },
-      { x: dates[Math.floor(dates.length*0.05)], y: -1.1, text: '← RICH', showarrow: false, font: { color: '#f85149', size: 9 } },
-    ],
-    yaxis: { ...LAYOUT.yaxis, title: 'Z-Score' },
-  }, { responsive: true, displayModeBar: false });
 }
 
 function renderStorage(hist) {
@@ -516,17 +753,35 @@ class Handler(BaseHTTPRequestHandler):
                     break
             z_break = compute_z_factor_breakdown(latest)
             insights = compute_insights(rows)
-            # Strategy summary
+            regime_history = compute_regime_history(rows)
+            regime_stats = compute_regime_stats(regime_history)
             sum_path = os.path.join(RESULTS_DIR, 'summary.json')
             strategy_summary = {}
             if os.path.exists(sum_path):
                 with open(sum_path) as f:
                     strategy_summary = json.load(f)
+            # Trim history to essentials to reduce payload
+            slim_history = [{
+                'date': r.get('date'),
+                'UNG': r.get('UNG'),
+                'KOLD': r.get('KOLD'),
+                'BOIL': r.get('BOIL'),
+                'NG': r.get('NG'),
+                'VIX': r.get('VIX'),
+                'iv_30d': r.get('iv_30d'),
+                'iv_60d': r.get('iv_60d'),
+                'iv_90d': r.get('iv_90d'),
+                'eia_storage_weekly': r.get('eia_storage_weekly'),
+                'days_supply': r.get('days_supply'),
+            } for r in rows]
             return self._send_json({
                 'latest': latest,
                 'z_breakdown': z_break,
                 'insights': insights,
-                'history': rows,
+                'history': slim_history,
+                'regime_history': regime_history,
+                'regime_stats': regime_stats,
+                'playbook': ENGINE_PLAYBOOK,
                 'strategy_summary': strategy_summary,
                 'updated_at': datetime.now().isoformat(),
             })
