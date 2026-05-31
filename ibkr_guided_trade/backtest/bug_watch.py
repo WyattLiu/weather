@@ -188,6 +188,59 @@ def check_trades(report: BugReport, name: str, trades: pd.DataFrame):
                               f'verify BS pricing not synthesizing free lunch')
 
 
+def check_dataset_signals(report: BugReport):
+    """Sanity check the master dataset's derived signals.
+
+    Per [[feedback_rolling_window_calendar_vs_trading_days]]: trend
+    signals stuck at one value for >95% of days are almost certainly
+    rolling-window starvation bugs (pandas .rolling() on calendar-padded
+    data with NaN weekends).
+    """
+    import sys as _sys
+    _here = os.path.dirname(os.path.abspath(__file__))
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    try:
+        from replay_engine import precompute_factor_z  # type: ignore
+    except Exception as e:
+        report.add('WARN', 'dataset', 'precompute_unavailable', str(e))
+        return
+
+    cache_path = os.path.join(_here, 'cache', 'master_dataset.csv')
+    if not os.path.exists(cache_path):
+        return
+    df = pd.read_csv(cache_path, parse_dates=['Date'], index_col=0)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+
+    # Signals that should vary day-to-day in a long sample
+    bool_signals = ['ung_uptrend', 'ung_downtrend', 'ung_at_20d_low']
+    for sig in bool_signals:
+        if sig not in df.columns:
+            continue
+        true_pct = df[sig].mean() * 100  # fraction True
+        # Any boolean stuck at <1% OR >99% is suspicious
+        if true_pct < 1.0:
+            report.add('WARN', 'dataset', f'{sig}_starved',
+                      f'{sig} True only {true_pct:.1f}% of days — '
+                      'rolling-window starvation likely')
+        elif true_pct > 99.0:
+            report.add('WARN', 'dataset', f'{sig}_saturated',
+                      f'{sig} True {true_pct:.1f}% of days — '
+                      'signal not discriminating')
+
+    # Continuous signals that should not be 100% NaN
+    cont_signals = ['ung_50d_ma', 'ung_200d_ma', 'storage_surprise_z',
+                    'storage_z', 'days_supply_z']
+    for sig in cont_signals:
+        if sig not in df.columns:
+            continue
+        nan_pct = df[sig].isna().mean() * 100
+        if nan_pct > 50.0:
+            report.add('WARN', 'dataset', f'{sig}_mostly_nan',
+                      f'{sig} is NaN {nan_pct:.0f}% of days — '
+                      'rolling-window starvation likely')
+
+
 def run_checks() -> BugReport:
     report = BugReport()
 
@@ -212,6 +265,10 @@ def run_checks() -> BugReport:
         if os.path.exists(trades_path):
             trades = pd.read_csv(trades_path)
             check_trades(report, name, trades)
+
+    # Preventive: dataset-level signal sanity (catches calibration bugs
+    # that wouldn't show up in per-strategy outputs)
+    check_dataset_signals(report)
 
     return report
 
