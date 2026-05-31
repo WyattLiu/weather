@@ -153,6 +153,34 @@ def falling_knife(row) -> bool:
     return at_low and mom5 < -0.03
 
 
+def detect_divergence(row, z: float) -> str:
+    """Return ALIGNED / PANIC_BUY_OPP / EUPHORIC_SELL_OPP.
+    Per [[project_fundamental_divergence_alpha]]: trade fundamental vs crowd
+    divergence. TIGHTLY GATED — false positives are catastrophic (deep ITM
+    CC sold into a bounce = massive locked loss). Require ALL conditions:
+
+    PANIC_BUY_OPP needs:
+      - z > +1.0 (extreme cheap, not just slightly)
+      - 5d momentum < -7% (real panic, not noise)
+      - NOT falling-knife
+      - 60d spike < 0 (sustained weakness, not a pullback in uptrend)
+
+    EUPHORIC_SELL_OPP needs:
+      - z < -1.0 (extreme rich)
+      - 60d return > +30% (real euphoria, not a normal rally)
+      - rv_30 > 0.80 (IV/vol pricing the euphoria)
+    """
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    spike = float(row.get('ung_spike_60d') or 0)
+    rv = float(row.get('rv_30') or 0)
+    if (z > 1.0 and mom5 < -0.07 and not falling_knife(row)
+            and spike < 0):
+        return 'PANIC_BUY_OPP'
+    if z < -1.0 and spike > 0.30 and rv > 0.80:
+        return 'EUPHORIC_SELL_OPP'
+    return 'ALIGNED'
+
+
 def regime(z_val):
     if z_val > 1.0: return 'EXTREME_CHEAP'
     if z_val > 0.5: return 'CHEAP'
@@ -431,15 +459,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 trades.append({'date': idx, 'type': 'SKIP_PUT_FALLING_KNIFE',
                                'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
-                # Z-scaled sizing: bigger when more cheap (higher conviction),
-                # require both cheap z AND falling-knife passed.
-                # Per [[project_target_27pct]]: scale up to 3x at z>+0.75
+                divergence = detect_divergence(row, z)
+                # Z-scaled sizing — bigger when more cheap.
                 if p.get('z_scaled_sizing'):
                     if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
                     elif z > 0.25: put_qty = int(p.get('put_qty', 3) * 2)
                     elif z > -0.25: put_qty = int(p.get('put_qty', 3) * 1)
                     else: put_qty = max(1, int(p.get('put_qty', 3) * 0.5))
-                K = round(spot_u * (1 - otm_put))
+                # DIVERGENCE ALPHA: panic-selling through cheap signals =
+                # high-conviction entry. Bump size + tighten strike.
+                # Per [[project_fundamental_divergence_alpha]]
+                effective_otm = otm_put
+                if p.get('divergence_trading') and divergence == 'PANIC_BUY_OPP':
+                    put_qty = int(put_qty * 1.5)
+                    effective_otm = max(0.02, otm_put / 2)  # closer to money
+                    trades.append({'date': idx, 'type': 'PANIC_BUY_DETECTED',
+                                   'pnl': 0.0, 'spot': spot_u, 'z': z})
+                K = round(spot_u * (1 - effective_otm))
                 prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
@@ -477,7 +513,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
-                effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
+                # Divergence: when crowd is euphorically buying through rich
+                # signals, sell DEEPER ITM CCs to lock the move via assignment.
+                # Per [[project_fundamental_divergence_alpha]]
+                divergence_cc = detect_divergence(row, z)
+                if p.get('divergence_trading') and divergence_cc == 'EUPHORIC_SELL_OPP':
+                    use_itm = True
+                    effective_otm = -0.08  # 8% ITM, near-certain assignment
+                    trades.append({'date': idx, 'type': 'EUPHORIC_SELL_DETECTED',
+                                   'pnl': 0.0, 'spot': spot_u, 'z': z})
+                else:
+                    effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, uncovered_shares // 100)
                 prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
@@ -658,6 +704,17 @@ STRATEGIES = {
     },
     # v3 adds core_shares floor — elevator + CC won't drain shares below
     # core. Keeps wheel base alive through spikes for future income.
+    # Same chassis as regime_aware_roll_up (the empirical winner) plus
+    # divergence trading — bigger size + ATM strikes when fundamentals
+    # diverge from crowd panic/euphoria.
+    'roll_up_plus_divergence': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'divergence_trading': True,
+        # NOTE: removed use_surprise_z — surprise-z changes regime
+        # classifications and disrupts the roll_up_calls timing.
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
