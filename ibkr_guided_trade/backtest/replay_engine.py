@@ -233,8 +233,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl})
                     continue
 
-            # Roll down
-            if p.get('roll_down') and spot_u < sp['K'] * 0.98 and T_left > 5/365:
+            # Roll down — only if remaining DTE is above min_roll_dte
+            # threshold. Per [[feedback_dte_diversification]]: "let near-DTE
+            # OTM expire vs roll". Short-DTE puts have little extrinsic to
+            # capture by rolling; just let them play out.
+            min_roll_dte = p.get('min_roll_dte', 5)  # default = old behavior
+            dte_left = T_left * 365
+            if (p.get('roll_down') and spot_u < sp['K'] * 0.98
+                    and dte_left > min_roll_dte):
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
                 s['cash'] -= cv * 100 * sp['qty']
@@ -758,6 +764,16 @@ STRATEGIES = {
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'dte_ladder': [7, 14, 30, 45],
+    },
+    # DTE ladder + DTE-aware rolls: don't roll puts with <14 DTE left
+    # (let them expire OTM or assign). Per [[feedback_dte_diversification]]
+    # "let near-DTE OTM expire vs roll".
+    'roll_up_dte_smart': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'dte_ladder': [7, 14, 30, 45],
+        'min_roll_dte': 14,
     },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
