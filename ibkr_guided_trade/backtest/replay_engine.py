@@ -833,6 +833,14 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15,
         'elevator_mode': 'strict',
     },
+    # Ablation revealed aggressive_itm_cc costs $89K in champion_with_elevator
+    # AND elevator_close adds ~$0. Strip both, keep the rest of the chassis.
+    'champion_clean': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
