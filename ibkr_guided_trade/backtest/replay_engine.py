@@ -798,6 +798,19 @@ STRATEGIES = {
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
         'trend_aware_roll': True,
     },
+    # Hybrid: spike-period DTE-smart + calm-period aggressive ITM CC.
+    # Idea is to capture both regime advantages.
+    'champion_hybrid': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'dte_ladder': [7, 14, 30, 45],
+        'min_roll_dte': 14,
+        'trend_aware_roll': True,
+        # Calm-regime ITM CC (the aggressive_unload edge)
+        'aggressive_itm_cc_z': -0.25,
+        'itm_cc_pct': -0.05,
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
