@@ -916,6 +916,19 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
     },
+    # Drop regime_skip_puts (ablation showed it costs $20K when combined
+    # with vol_aware — gates fight each other). Keep everything else.
+    'champion_vol_unleashed': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
     # Aggressive vol ladder: 5-step instead of 2-step.
     'champion_vol_aggressive': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
