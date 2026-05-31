@@ -811,6 +811,28 @@ STRATEGIES = {
         'aggressive_itm_cc_z': -0.25,
         'itm_cc_pct': -0.05,
     },
+    # Strip DTE ladder — test if hybrid's Sharpe is from itm_cc + trend_aware
+    # alone (without ladder churn that ate spike returns)
+    'champion_no_ladder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25,
+        'itm_cc_pct': -0.05,
+    },
+    # Hybrid + elevator_close — should catch peak gains during spikes
+    'champion_with_elevator': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25,
+        'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'elevator_mode': 'strict',
+    },
     'smooth_27_v3_core': {
         'otm_put': 0.08, 'otm_call': 0.05, 'put_qty': 4, 'call_qty': 5,
         'tp_50': True, 'roll_down': True, 'roll_up_calls': True,
