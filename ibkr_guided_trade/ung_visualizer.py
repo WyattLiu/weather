@@ -36,6 +36,47 @@ STRESS_SCENARIOS = {
 _QUALITY_POOL = ThreadPoolExecutor(max_workers=40, thread_name_prefix='quality')
 
 
+# ══════════════════════════════════════════════════════════════════════
+# BACKTEST-VALIDATED PARAMETERS (cycle 20260601_*, see auto-memory:
+# project_ung_wheel_design_recipe.md)
+#
+# Tunable constants ported from the continuous backtest harness which
+# tested 46 strategies and found these to be optimal. Defaults here are
+# the BACKTEST-VALIDATED values. To revert any to historical production
+# behavior, change the value (old values noted in comments).
+# ══════════════════════════════════════════════════════════════════════
+
+# TP threshold — % of original premium captured before closing.
+# Production historically: 60 in income mode, 40 in normal.
+# Backtest curve (TP=70 in backtest semantics = capture 30%):
+#   capture 70%: +101% / Sharpe 1.13  (too patient — mean reversion catches)
+#   capture 50%: +156% / Sharpe 1.15
+#   capture 30%: +178% / Sharpe 1.15  ← PEAK
+#   capture 20%: +171% / Sharpe 1.04
+#   capture 10%: +149% / Sharpe 0.92
+# Faster TP recycles capital into new high-premium positions.
+# Mechanism documented in feedback_fast_tp_in_high_vol.md
+TP_MIN_CAPTURE_PCT = 30          # was 60 (income) / 40 (normal)
+TP_NEAR_DTE_CAPTURE_PCT = 30     # was 40 — captured % needed when DTE <= 7
+TP_NEAR_DTE_DAYS = 7             # unchanged
+
+# Vol-aware position sizing — scale qty by realized vol regime.
+# Backtest evidence: champion_vol_unleashed +155% / Sharpe 1.15 vs
+# non-vol-aware baseline at +109% / 1.00. +6pp annualized from this lever.
+# Mechanism: chase premium when rich, back off when cheap.
+VOL_SCALE_HIGH = 1.5     # if rv_30 > VOL_HIGH_THRESH, multiply qty
+VOL_SCALE_LOW = 0.6      # if rv_30 < VOL_LOW_THRESH, multiply qty
+VOL_HIGH_THRESH = 0.80
+VOL_LOW_THRESH = 0.40
+
+# ITM CC depth for aggressive de-risking in rich regime.
+# Backtest evidence: -20% ITM gave calm-regime peak +30% over 3yr (+8.2%
+# annualized); -30% ITM gave full Sharpe peak 1.67 but hurt calm regime.
+# Production-recommended sweet spot: -20% ITM when z < AGGRESSIVE_ITM_Z.
+AGGRESSIVE_ITM_Z_THRESHOLD = -1.0    # extreme rich only (per cycle 20260531_192753)
+AGGRESSIVE_ITM_CC_PCT = 0.20         # 20% ITM strike when condition met
+
+
 def _eval_candidate(p_state, c, spot, iv, today, initial_quality):
     try:
         new_state = apply_trade_to_state(dict(p_state), c, spot, iv, today)
@@ -1836,17 +1877,20 @@ def generate_candidates(portfolio_state, spot, iv, today):
 
     # TAKE PROFIT: positions where we've captured a meaningful fraction
     # of premium AND keeping them open is hurting (theta nearly exhausted).
-    # Cycle 159: tighter gate in income-mode. CENTRAL_PHILOSOPHY anti-pattern:
-    # "Closing a profitable short put early just to redeploy at a slightly
-    # better strike (friction > marginal income)". With UNG income at 23%
-    # of target, every theta-producing position is precious — don't close
-    # winners at 40% if there's still meaningful theta to harvest. Require
-    # 60%+ profit OR ≤7 DTE (theta nearly done either way).
+    #
+    # UPDATED cycle 20260601_*: backtest-validated TP threshold (see
+    # TP_MIN_CAPTURE_PCT constant). Earlier production used 60% in income
+    # mode / 40% in normal mode, but the backtest curve across TP values
+    # 10-90% capture showed 30% is the peak — faster TP recycles capital
+    # into new high-premium positions, beating "patient" thresholds.
+    # See feedback_fast_tp_in_high_vol.md for the full curve.
+    #
+    # Income mode kept as documentation but no longer changes the threshold.
     _tp_income_mode = (
         portfolio_state.get('avg_weekly_theta', 0) <
         portfolio_state.get('target_weekly_income', 1500) * 0.6
     )
-    _tp_min_profit = 60 if _tp_income_mode else 40
+    _tp_min_profit = TP_MIN_CAPTURE_PCT
     for exp_str_pos, strike, right, qty, avg_cost in positions:
         expiry = datetime.strptime(exp_str_pos, '%Y-%m-%d').date()
         dte = max((expiry - today).days, 0)
@@ -1861,7 +1905,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
             # In income mode: 60%+ profit OR ≤7 DTE (theta nearly done either way)
             _passes = (
                 profit_pct > _tp_min_profit
-                or (dte <= 7 and profit_pct > 40)
+                or (dte <= TP_NEAR_DTE_DAYS and profit_pct > TP_NEAR_DTE_CAPTURE_PCT)
             )
             if _passes:
                 # Partial profit-taking ladder: standard wheel practice is to scale out
