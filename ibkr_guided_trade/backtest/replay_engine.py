@@ -929,6 +929,15 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
     },
+    # Strip elevator_close + boxx + roll_down (ablation flagged $12K drag).
+    # Keep tp_50, roll_up_calls (the proven big winners) + vol_aware.
+    'champion_vol_pure': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': False, 'roll_up_calls': True,
+        'bearish_stack': True,
+        'trend_aware_roll': True,
+        'vol_aware_sizing': True,
+    },
     # Aggressive vol ladder: 5-step instead of 2-step.
     'champion_vol_aggressive': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
