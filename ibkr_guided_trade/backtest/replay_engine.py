@@ -230,8 +230,18 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             days = (idx - sp['entry']).days
             T_left = max(1, sp['dte'] - days) / 365
 
-            # Take profit — configurable threshold (default 50% drop)
-            tp_thresh = p.get('tp_threshold', 0.5) if p.get('tp_50') else None
+            # Take profit — configurable threshold (default 50% drop).
+            # If tp_dynamic enabled, vary by vol regime per
+            # [[feedback_fast_tp_in_high_vol]]: TP=70% in high vol, 50% mid,
+            # 30% low (when premium is too meager for fast capture).
+            tp_thresh = None
+            if p.get('tp_50'):
+                tp_thresh = p.get('tp_threshold', 0.5)
+                if p.get('tp_dynamic'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    if rv30 > 0.80:   tp_thresh = 0.7
+                    elif rv30 < 0.40: tp_thresh = 0.3
+                    else:             tp_thresh = 0.5
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 if cv < sp['entry_prem'] * tp_thresh:
@@ -292,7 +302,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
             T_left = max(1, sc['dte'] - days) / 365
-            tp_thresh = p.get('tp_threshold', 0.5) if p.get('tp_50') else None
+            tp_thresh = None
+            if p.get('tp_50'):
+                tp_thresh = p.get('tp_threshold', 0.5)
+                if p.get('tp_dynamic'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    if rv30 > 0.80:   tp_thresh = 0.7
+                    elif rv30 < 0.40: tp_thresh = 0.3
+                    else:             tp_thresh = 0.5
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 if cv < sc['entry_prem'] * tp_thresh:
@@ -979,6 +996,18 @@ STRATEGIES = {
     'champion_vol_tp90': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_threshold': 0.9,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0, 'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
+    # Dynamic TP: 70% in high vol, 50% mid, 30% low vol
+    'champion_vol_tp_dyn': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
         'bearish_stack': True, 'boxx': True,
         'trend_aware_roll': True,
