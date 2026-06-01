@@ -230,10 +230,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             days = (idx - sp['entry']).days
             T_left = max(1, sp['dte'] - days) / 365
 
-            # Take profit
-            if p.get('tp_50') and T_left > 1/365:
+            # Take profit — configurable threshold (default 50% drop)
+            tp_thresh = p.get('tp_threshold', 0.5) if p.get('tp_50') else None
+            if tp_thresh is not None and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
-                if cv < sp['entry_prem'] * 0.5:
+                if cv < sp['entry_prem'] * tp_thresh:
                     pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl})
@@ -291,9 +292,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
             T_left = max(1, sc['dte'] - days) / 365
-            if p.get('tp_50') and T_left > 1/365:
+            tp_thresh = p.get('tp_threshold', 0.5) if p.get('tp_50') else None
+            if tp_thresh is not None and T_left > 1/365:
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
-                if cv < sc['entry_prem'] * 0.5:
+                if cv < sc['entry_prem'] * tp_thresh:
                     pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'CALL_TP', 'pnl': pnl,
@@ -936,6 +938,30 @@ STRATEGIES = {
         'tp_50': True, 'roll_down': False, 'roll_up_calls': True,
         'bearish_stack': True,
         'trend_aware_roll': True,
+        'vol_aware_sizing': True,
+    },
+    # Vol_unleashed with TP at 30% (take profits faster)
+    'champion_vol_tp30': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.3,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0, 'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
+    # Vol_unleashed with TP at 70% (let winners run)
+    'champion_vol_tp70': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.7,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -1.0, 'itm_cc_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
     },
     # Aggressive vol ladder: 5-step instead of 2-step.
