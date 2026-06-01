@@ -489,6 +489,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('downtrend_standdown') and in_sustained_down:
                 trades.append({'date': idx, 'type': 'STAND_DOWN_DOWNTREND',
                                'pnl': 0.0, 'spot': spot_u})
+            # PRICE-LEVEL-AWARE DOWNTREND gate (refines simple downtrend
+            # gate per user's "low UNG accumulate" rule). Only standdown
+            # when downtrend STARTS FROM HIGH (UNG > high_floor); allow
+            # wheel at low prices regardless of trend.
+            high_floor = p.get('downtrend_high_floor', 0)
+            if (p.get('downtrend_from_high_standdown')
+                    and in_sustained_down
+                    and spot_u > high_floor):
+                trades.append({'date': idx, 'type': 'STAND_DOWN_HIGH_DT',
+                               'pnl': 0.0, 'spot': spot_u})
 
             # DIRECT ACCUMULATION KERNEL — per user "in low UNG time we
             # accumulate". REQUIRES uptrend confirmation OR (deep cheap z
@@ -526,6 +536,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
                 skip_put = True
             if p.get('downtrend_standdown') and in_sustained_down:
+                skip_put = True
+            if (p.get('downtrend_from_high_standdown')
+                    and in_sustained_down
+                    and spot_u > p.get('downtrend_high_floor', 0)):
                 skip_put = True
             if p.get('falling_knife_filter') and falling_knife(row):
                 skip_put = True
@@ -1134,6 +1148,22 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
         'downtrend_standdown': True,
+    },
+    # Price-level-aware standdown: only stop wheel when downtrend STARTS
+    # from high prices (UNG > $30). Allows continued operation at low
+    # prices per user's "low UNG accumulate" rule.
+    'champion_robust_pricedt': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.30,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'downtrend_from_high_standdown': True,
+        'downtrend_high_floor': 30.0,  # UNG > $30 + downtrend = wait
     },
     # Aggressive vol ladder: 5-step instead of 2-step.
     'champion_vol_aggressive': {
