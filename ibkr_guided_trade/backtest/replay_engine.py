@@ -1051,6 +1051,39 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
     },
+    'champion_dyn_itm_15pct': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.15,  # very deep
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
+    'champion_dyn_itm_20pct': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,  # 20% ITM
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
+    'champion_dyn_itm_30pct': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.30,  # 30% ITM
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+    },
     # Aggressive vol ladder: 5-step instead of 2-step.
     'champion_vol_aggressive': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
