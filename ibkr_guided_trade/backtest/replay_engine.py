@@ -482,6 +482,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
                 trades.append({'date': idx, 'type': 'STAND_DOWN_ANOMALY',
                                'pnl': 0.0, 'regime': anomaly})
+            # Sustained downtrend gate — skip ALL put-selling when UNG
+            # is in confirmed downtrend (price < 200d MA AND 50d < 200d).
+            # Catches the slow multi-year grind that anomaly detector misses.
+            in_sustained_down = bool(row.get('ung_downtrend', False))
+            if p.get('downtrend_standdown') and in_sustained_down:
+                trades.append({'date': idx, 'type': 'STAND_DOWN_DOWNTREND',
+                               'pnl': 0.0, 'spot': spot_u})
 
             # DIRECT ACCUMULATION KERNEL — per user "in low UNG time we
             # accumulate". REQUIRES uptrend confirmation OR (deep cheap z
@@ -517,6 +524,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # Skip puts based on regime AND falling-knife filter
             skip_put = p.get('regime_skip_puts_z') is not None and z < p['regime_skip_puts_z']
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
+                skip_put = True
+            if p.get('downtrend_standdown') and in_sustained_down:
                 skip_put = True
             if p.get('falling_knife_filter') and falling_knife(row):
                 skip_put = True
@@ -1096,6 +1105,35 @@ STRATEGIES = {
         'elevator_close': True, 'elevator_itm_pct': 0.05,
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
+    },
+    # Robustness-target: dyn_itm_30pct (Sharpe leader) + anomaly standdown
+    # + falling-knife filter. Goal: minimize worst-window drawdown.
+    'champion_robust': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.30,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'anomaly_standdown': True,
+        'falling_knife_filter': True,
+    },
+    # Add sustained-downtrend gate: skip put-selling when UNG < 200d MA
+    # AND 50d < 200d (catches the slow grind regimes).
+    'champion_robust_dt': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.30,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'downtrend_standdown': True,
     },
     # Aggressive vol ladder: 5-step instead of 2-step.
     'champion_vol_aggressive': {
