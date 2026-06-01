@@ -241,6 +241,72 @@ def check_dataset_signals(report: BugReport):
                       'rolling-window starvation likely')
 
 
+def check_sample_bias(report: BugReport, top_n: int = 5):
+    """Run rolling 3yr windows on top-N strategies. Per
+    [[feedback_sample_bias_rolling_window]]: headline returns can be
+    dominated by 2021 spike capture. Flag strategies whose worst-window
+    return < -10% or whose window-range exceeds 50pp.
+    """
+    import sys as _sys
+    _here = os.path.dirname(os.path.abspath(__file__))
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    try:
+        from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z  # type: ignore
+    except Exception as e:
+        report.add('WARN', 'sample_bias', 'replay_unavailable', str(e))
+        return
+
+    summary_path = os.path.join(RESULTS_DIR, 'summary.json')
+    if not os.path.exists(summary_path):
+        return
+    with open(summary_path) as f:
+        summary = json.load(f)
+    candidates = [(k, v) for k, v in summary.items()
+                  if isinstance(v, dict) and 'return_pct' in v]
+    candidates.sort(key=lambda kv: kv[1]['return_pct'], reverse=True)
+    top = [k for k, _ in candidates[:top_n] if k in STRATEGIES]
+    if not top:
+        return
+
+    cache_path = os.path.join(_here, 'cache', 'master_dataset.csv')
+    if not os.path.exists(cache_path):
+        return
+    df = pd.read_csv(cache_path, parse_dates=['Date'], index_col=0)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+
+    start_dates = ['2021-06', '2021-12', '2022-06', '2022-12', '2023-06']
+    for name in top:
+        wins = []
+        for sd in start_dates:
+            try:
+                start = pd.Timestamp(sd + '-01')
+                end = start + pd.DateOffset(years=3)
+                sub = df.loc[sd:end.strftime('%Y-%m')]
+                if len(sub) < 500:
+                    continue
+                hist, _ = run_strategy_simple(sub, STRATEGIES[name], 48000, 6200)
+                initial = 48000 + 6200 * sub['UNG'].iloc[0]
+                final = float(hist.iloc[-1]['nav'])
+                ret = (final / initial - 1) * 100
+                wins.append(ret)
+            except Exception:
+                continue
+        if len(wins) < 3:
+            continue
+        worst = min(wins)
+        rng = max(wins) - min(wins)
+        if worst < -10:
+            report.add('WARN', name, 'sample_bias_worst_window',
+                      f'worst 3yr window return {worst:.1f}% — '
+                      f'headline number is sample-biased '
+                      f'(windows: {[round(w,1) for w in wins]})')
+        elif rng > 80:
+            report.add('WARN', name, 'sample_bias_wide_range',
+                      f'3yr window return range {rng:.1f}pp — high variance '
+                      f'across start dates ({[round(w,1) for w in wins]})')
+
+
 def run_checks() -> BugReport:
     report = BugReport()
 
@@ -269,6 +335,10 @@ def run_checks() -> BugReport:
     # Preventive: dataset-level signal sanity (catches calibration bugs
     # that wouldn't show up in per-strategy outputs)
     check_dataset_signals(report)
+
+    # Rolling-window robustness — catches sample bias
+    # ([[feedback_sample_bias_rolling_window]])
+    check_sample_bias(report, top_n=5)
 
     return report
 
