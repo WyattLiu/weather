@@ -15,7 +15,8 @@
     "regime_aware_strike", "income_mode_strike",
     "anomaly_detector", "falling_knife_filter",
     "seasonal_z", "elevator_close", "tail_hedge_floor",
-    "concentration_penalty", "smoothness_aware"
+    "concentration_penalty", "smoothness_aware",
+    "pillar_boost", "scenario_distribution"
   ],
   "items": [
     {
@@ -32,11 +33,16 @@
       "id": 2,
       "name": "ScenarioDistribution (quantile kernel)",
       "description": "Production uses 7-point quantile kernel covering ±2σ + 0, with seasonal_drift + supply_regime + pillars baked in. Backtest Kelly uses simple BS d2 for p_itm.",
-      "status": "not_started",
+      "status": "ported",
       "priority": "high",
       "estimated_effort": "medium",
       "expected_impact": "improves Kelly accuracy ~10-20pp",
-      "test_result": null
+      "test_result": {
+        "return_delta_pct": -0.8,
+        "sharpe_delta": 0.01,
+        "verdict": "PORTED standalone-neutral — 7-point quantile too coarse to beat BS at simple p_otm; needs coupling with seasonal_drift + pillars for production-level impact",
+        "strategy_name": "kelly_with_sd"
+      }
     },
     {
       "id": 3,

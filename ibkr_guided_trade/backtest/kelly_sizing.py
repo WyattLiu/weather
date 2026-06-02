@@ -15,7 +15,8 @@ def kelly_qty_short_put(spot: float, strike: float, dte: int, iv: float,
                        cash_available: float, premium: float,
                        max_frac: float = 0.25,
                        kelly_safety: float = 0.5,
-                       model_conviction: float = 0.0) -> int:
+                       model_conviction: float = 0.0,
+                       scenario_dist=None) -> int:
     """Kelly-sized qty for a short cash-secured put.
 
     Args:
@@ -35,9 +36,14 @@ def kelly_qty_short_put(spot: float, strike: float, dte: int, iv: float,
         return 0
 
     T = dte / 365.0
-    # P(spot_T < strike) via BS — assumes lognormal, zero drift, no contango.
-    d2 = (math.log(spot / strike) - 0.5 * iv ** 2 * T) / (iv * math.sqrt(T))
-    p_otm_bs = float(norm.cdf(d2))   # prob spot > strike per BS
+    # P(spot_T < strike) — prefer ScenarioDistribution if provided
+    # (proper 7-point quantile kernel with seasonal_drift + contango).
+    # Fall back to BS d2 (lognormal, zero drift) otherwise.
+    if scenario_dist is not None:
+        p_otm_bs = float(scenario_dist.prob_above(strike, dte))
+    else:
+        d2 = (math.log(spot / strike) - 0.5 * iv ** 2 * T) / (iv * math.sqrt(T))
+        p_otm_bs = float(norm.cdf(d2))   # prob spot > strike per BS
 
     # CONVICTION ADJUSTMENT (the "firmness" the user asked for):
     # BS assumes zero-drift random walk. In reality, when model conviction

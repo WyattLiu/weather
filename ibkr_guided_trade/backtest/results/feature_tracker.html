@@ -52,10 +52,10 @@
            <div class="stat" style="color:#d29922">+8.0%</div></div>
     </div>
     <div class="progress-row">
-      <div>not started: <strong>3</strong></div>
+      <div>not started: <strong>2</strong></div>
       <div style="color:#d29922">in progress: <strong>0</strong></div>
       <div style="color:#58a6ff">tested: <strong>0</strong></div>
-      <div style="color:#3fb950">ported: <strong>4</strong></div>
+      <div style="color:#3fb950">ported: <strong>5</strong></div>
       <div style="color:#bc8cff">neg result: <strong>0</strong></div>
     </div>
   </div>
@@ -75,11 +75,11 @@
           </div>
           
         </div>
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
             <span class="pri">🔴</span>
             <h3>2. ScenarioDistribution (quantile kernel)</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#3fb950">ported</span>
           </div>
           <p class="desc">Production uses 7-point quantile kernel covering ±2σ + 0, with seasonal_drift + supply_regime + pillars baked in. Backtest Kelly uses simple BS d2 for p_itm.</p>
           <div class="meta">
@@ -87,6 +87,12 @@
             impact: <em>improves Kelly accuracy ~10-20pp</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ -0.8pp ·
+              Sharpe Δ +0.01 ·
+              PORTED standalone-neutral — 7-point quantile too coarse to beat BS at simple p_otm; needs coupling with seasonal_drift + pillars for production-level impact
+            </div>
         </div>
         <div class="card" style="border-left: 4px solid #666">
           <div class="card-head">
@@ -178,9 +184,9 @@
             </div>
         </div>
 
-  <h2>✅ Already Ported (18)</h2>
-  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span></div>
+  <h2>✅ Already Ported (20)</h2>
+  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span><span class="pill">pillar_boost</span><span class="pill">scenario_distribution</span></div>
 
-  <footer>Updated 2026-06-02 · 2026-06-02 15:51 ·
+  <footer>Updated 2026-06-02 · 2026-06-02 16:14 ·
   Generated from feature_tracker.json</footer>
 </body></html>

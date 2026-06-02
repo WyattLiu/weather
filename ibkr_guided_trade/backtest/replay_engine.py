@@ -26,6 +26,7 @@ from seasonal_z import add_seasonal_factors  # type: ignore
 from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 from attribution import attribute_trades, print_attribution  # type: ignore
 from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
+from scenario_distribution import ScenarioDistribution  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -808,15 +809,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     else:             open_dte = 45
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
                 # KELLY SIZING with conviction-aware "firmness" multiplier.
-                # Per user: high vol + high model conviction → SIZE UP, not down.
+                # Optionally backed by ScenarioDistribution (port item #2).
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, open_dte, 'P')
                     conv_adj = model_conviction(row, z, anomaly) if p.get('kelly_conviction') else 0.0
+                    sd = None
+                    if p.get('use_scenario_dist'):
+                        sd = ScenarioDistribution(spot=spot_u, sigma_annual=iv_use,
+                                                  z_score=z, contango_per_day=-0.001)
                     kelly_q = kelly_qty_short_put(
                         spot_u, K, open_dte, iv_use,
                         cash_available=s['cash'],
                         premium=prem,
                         model_conviction=conv_adj,
+                        scenario_dist=sd,
                     )
                     if p.get('kelly_firmness'):
                         firm = firmness_multiplier(row, z, anomaly)
@@ -1730,6 +1736,20 @@ STRATEGIES = {
         'vol_aware_sizing': True,
         'tail_hedge_floor': 2,
         'pillar_boost': True,
+    },
+    # Kelly backed by ScenarioDistribution (production-port item #2)
+    'kelly_with_sd': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'use_scenario_dist': True,  # use SD kernel instead of BS d2
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
