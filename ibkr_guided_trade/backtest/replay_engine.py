@@ -670,6 +670,19 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
                 divergence = detect_divergence(row, z)
+                # REGIME-AWARE STRIKE: when z says cheap (bullish), lean
+                # CLOSER to ATM puts (higher delta = more income, accept
+                # higher assignment prob since we want shares anyway).
+                # When z says rich (bearish), go FARTHER OTM (safer).
+                # Continuous adjustment by z, replaces fixed otm_put.
+                if p.get('regime_aware_strike'):
+                    # Base 10% OTM, shifts ±5pp by z magnitude
+                    if z > 1.0:   otm_put = 0.02   # extreme cheap → near-ATM
+                    elif z > 0.5: otm_put = 0.05   # cheap → 5% OTM
+                    elif z > 0.0: otm_put = 0.08
+                    elif z > -0.5: otm_put = 0.10  # neutral → standard
+                    elif z > -1.0: otm_put = 0.13  # rich → farther OTM
+                    else:          otm_put = 0.18  # extreme rich → deep OTM (avoid)
                 # Z-scaled sizing — bigger when more cheap.
                 if p.get('z_scaled_sizing'):
                     if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
@@ -771,6 +784,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
+                # REGIME-AWARE CC STRIKE: when z is BEARISH/rich, push CC
+                # strike closer or ITM (force assignment, divest shares).
+                # When z is BULLISH/cheap, push CC FARTHER OTM (preserve
+                # upside, don't sacrifice shares cheaply).
+                if p.get('regime_aware_strike'):
+                    if z > 1.0:    otm_call = 0.15   # extreme cheap → far OTM
+                    elif z > 0.5:  otm_call = 0.10   # cheap → 10% OTM
+                    elif z > 0.0:  otm_call = 0.07
+                    elif z > -0.5: otm_call = 0.05   # neutral → standard 5%
+                    elif z > -1.0: otm_call = 0.00   # rich → ATM
+                    else:          otm_call = -0.05  # extreme rich → 5% ITM
                 # Divergence: when crowd is euphorically buying through rich
                 # signals, sell DEEPER ITM CCs to lock the move via assignment.
                 # Per [[project_fundamental_divergence_alpha]]
@@ -1461,7 +1485,33 @@ STRATEGIES = {
         'kelly_sizing': True,
         'kelly_conviction': True,
         'kelly_firmness': True,
-        'kelly_max_qty': 25,  # higher cap to allow firmness to amplify
+        'kelly_max_qty': 25,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Regime-aware STRIKE (continuous, by z) — flex between OTM/ATM/ITM
+    'regime_aware_strike': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Stack: regime_aware_strike + Kelly + firmness — production-style
+    'fully_dynamic': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_firmness': True,
+        'kelly_max_qty': 25,
         'open_dte': 45,
         'vol_aware_dte': True,
     },
