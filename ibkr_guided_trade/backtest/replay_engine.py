@@ -282,6 +282,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
     p = strategy_params
     use_surprise = p.get('use_surprise_z', False)
+    # Income-mode tracking — rolling 4-week premium income vs target.
+    # Per production's _tp_income_mode pattern. Adjusts strike aggressiveness.
+    target_weekly_income = p.get('target_weekly_income', 1500.0)
+    recent_premium = []  # last N weeks of put+CC credit
 
     for i in range(len(df) - 30):
         idx = df.index[i]
@@ -676,13 +680,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 # When z says rich (bearish), go FARTHER OTM (safer).
                 # Continuous adjustment by z, replaces fixed otm_put.
                 if p.get('regime_aware_strike'):
-                    # Base 10% OTM, shifts ±5pp by z magnitude
-                    if z > 1.0:   otm_put = 0.02   # extreme cheap → near-ATM
-                    elif z > 0.5: otm_put = 0.05   # cheap → 5% OTM
+                    if z > 1.0:   otm_put = 0.02
+                    elif z > 0.5: otm_put = 0.05
                     elif z > 0.0: otm_put = 0.08
-                    elif z > -0.5: otm_put = 0.10  # neutral → standard
-                    elif z > -1.0: otm_put = 0.13  # rich → farther OTM
-                    else:          otm_put = 0.18  # extreme rich → deep OTM (avoid)
+                    elif z > -0.5: otm_put = 0.10
+                    elif z > -1.0: otm_put = 0.13
+                    else:          otm_put = 0.18
+                # INCOME-MODE strike push: if rolling weekly income < 60% of
+                # target, push strike CLOSER to ATM (more income, accept
+                # higher assignment prob). If above 120% of target, push
+                # FARTHER OTM (we have buffer, prefer safety).
+                if p.get('income_mode_strike') and len(recent_premium) >= 4:
+                    avg_weekly = sum(recent_premium[-4:]) / 4
+                    ratio = avg_weekly / target_weekly_income
+                    if ratio < 0.6:    otm_put = max(0.02, otm_put - 0.04)
+                    elif ratio > 1.2:  otm_put = min(0.25, otm_put + 0.04)
                 # Z-scaled sizing — bigger when more cheap.
                 if p.get('z_scaled_sizing'):
                     if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
@@ -878,6 +890,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         s['boxx'] += nb
                         s['cash'] -= nb * 117 + nb * SPREAD_SHARE
 
+        # Track weekly premium for income-mode awareness (every Monday-ish)
+        if i % 7 == 0 and i > 0:
+            # Sum credits in last 7 trades from any opens that fired this cycle
+            recent = trades[-10:]  # rough window
+            wk_credit = sum(t.get('credit', 0) for t in recent
+                           if t.get('type', '').startswith('OPEN_')
+                           and (idx - t.get('date', idx)).days <= 7)
+            recent_premium.append(wk_credit)
+            if len(recent_premium) > 12:
+                recent_premium.pop(0)
         nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117 + s['kold'] * spot_k
         history.append({
             'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
@@ -1512,6 +1534,19 @@ STRATEGIES = {
         'kelly_conviction': True,
         'kelly_firmness': True,
         'kelly_max_qty': 25,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Income-mode strike adjustment + regime-aware (production-style loop)
+    'income_mode_strike': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'income_mode_strike': True,
+        'target_weekly_income': 1500.0,
         'open_dte': 45,
         'vol_aware_dte': True,
     },
