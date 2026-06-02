@@ -567,8 +567,12 @@ def compute_technicals():
     low_120d = float(hist['Low'].iloc[-120:].min())
 
     # Realized volatility
+    # Cycle 20260602: added rv_30 for parity with backtest harness which
+    # found rv-aware TP/DTE/sizing matters. rv_30 used as the vol-regime
+    # signal across the engine.
     rets = hist['Close'].pct_change()
     rv_21 = float(rets.rolling(21).std().iloc[-1] * (252 ** 0.5))
+    rv_30 = float(rets.rolling(30).std().iloc[-1] * (252 ** 0.5))
     rv_63 = float(rets.rolling(63).std().iloc[-1] * (252 ** 0.5))
 
     # VWAP (cumulative approximation)
@@ -710,6 +714,7 @@ def compute_technicals():
         'high_120d': round(high_120d, 2),
         'low_120d': round(low_120d, 2),
         'rv_21': round(rv_21 * 100, 1),
+        'rv_30': round(rv_30 * 100, 1),
         'rv_63': round(rv_63 * 100, 1),
         'vwap': round(vwap, 2),
         'contango_30d': round(contango_30d, 2),
@@ -1891,6 +1896,28 @@ def generate_candidates(portfolio_state, spot, iv, today):
         portfolio_state.get('target_weekly_income', 1500) * 0.6
     )
     _tp_min_profit = TP_MIN_CAPTURE_PCT
+    # vol-aware override: if realized vol is high, capture FAST (small wins
+    # recycled into rich premium). If vol is low (calm), let runners go
+    # further. Backtest curve in feedback_fast_tp_in_high_vol confirmed
+    # this dominates fixed thresholds.
+    #
+    # SEMANTICS: profit_pct > N means we close when N% of premium captured.
+    #   N=30 = close fast (only need 30% capture)
+    #   N=50 = classic
+    #   N=70 = patient (let position run to 70% capture)
+    # Backtest peak was at backtest tp_threshold=0.7 (= close when current
+    # at 70% of entry = capture 30%) → production N=30.
+    try:
+        _tech_for_tp = get_technicals_cached() or {}
+        _rv_30_pct = float(_tech_for_tp.get('rv_30', 0))  # already in %
+        if _rv_30_pct > VOL_HIGH_THRESH * 100:    # high vol → fast capture
+            _tp_min_profit = 30
+        elif _rv_30_pct < VOL_LOW_THRESH * 100:   # low vol → let runners
+            _tp_min_profit = 70
+        else:
+            _tp_min_profit = 50
+    except Exception:
+        pass  # fall back to base TP_MIN_CAPTURE_PCT
     for exp_str_pos, strike, right, qty, avg_cost in positions:
         expiry = datetime.strptime(exp_str_pos, '%Y-%m-%d').date()
         dte = max((expiry - today).days, 0)
