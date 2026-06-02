@@ -230,6 +230,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             days = (idx - sp['entry']).days
             T_left = max(1, sp['dte'] - days) / 365
 
+            # GAMMA-MANAGEMENT FORCE-CLOSE — classic tastytrade 45/21 rule.
+            # Close all positions when remaining DTE drops below threshold,
+            # to avoid the high-gamma zone where small price moves cause
+            # large P&L swings.
+            fcd = p.get('force_close_dte', 0)
+            dte_left = T_left * 365
+            if fcd > 0 and 0 < dte_left <= fcd:
+                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(dte_left), 'P'))
+                pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
+                s['cash'] += pnl
+                trades.append({'date': idx, 'type': 'PUT_GAMMA_CLOSE',
+                               'pnl': pnl, 'dte_left': dte_left, 'K': sp['K']})
+                continue
+
             # Take profit — configurable threshold (default 50% drop).
             # If tp_dynamic enabled, vary by vol regime per
             # [[feedback_fast_tp_in_high_vol]]: TP=70% in high vol, 50% mid,
@@ -302,6 +316,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
             T_left = max(1, sc['dte'] - days) / 365
+            # Gamma force-close for calls (45/21 rule)
+            fcd_c = p.get('force_close_dte', 0)
+            dte_left_c = T_left * 365
+            if fcd_c > 0 and 0 < dte_left_c <= fcd_c:
+                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(dte_left_c), 'C'))
+                pnl = (sc['entry_prem'] - cv) * 100 * sc['qty'] - sc['qty'] * SPREAD_OPTION * 100
+                s['cash'] += pnl
+                trades.append({'date': idx, 'type': 'CALL_GAMMA_CLOSE',
+                               'pnl': pnl, 'dte_left': dte_left_c, 'K': sc['K']})
+                continue
             tp_thresh = None
             if p.get('tp_50'):
                 tp_thresh = p.get('tp_threshold', 0.5)
@@ -577,7 +601,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
-                prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
+                # Tunable open-DTE (default 30; tastytrade rule uses 45)
+                open_dte = p.get('open_dte', 30)
+                prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
                     # Available collateral = current cash + premium received -
@@ -600,7 +626,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         # DTE diversification — per [[feedback_dte_diversification]]:
                         # spread across DTEs not pile at 30. Each DTE gets a slice
                         # sized by 1/N.
-                        dte_ladder = p.get('dte_ladder', [30])
+                        dte_ladder = p.get('dte_ladder', [p.get('open_dte', 30)])
                         n_dtes = len(dte_ladder)
                         per_dte_qty = max(1, put_qty // n_dtes)
                         # Re-margin-check the FULL allocation
@@ -640,11 +666,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, uncovered_shares // 100)
-                prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
+                cc_dte = p.get('open_dte', 30)
+                prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
                 if prem > 0.05:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['cash'] += credit
-                    s['short_calls'].append({'entry': idx, 'K': K, 'dte': 30,
+                    s['short_calls'].append({'entry': idx, 'K': K, 'dte': cc_dte,
                                              'qty': qty, 'entry_prem': prem,
                                              'is_itm_aggressive': use_itm})
                     open_kind = 'OPEN_ITM_CC' if use_itm else 'OPEN_CC'
@@ -1152,6 +1179,34 @@ STRATEGIES = {
     # Price-level-aware standdown: only stop wheel when downtrend STARTS
     # from high prices (UNG > $30). Allows continued operation at low
     # prices per user's "low UNG accumulate" rule.
+    # Classic tastytrade 45/21 rule
+    'tastytrade_45_21': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': False, 'roll_up_calls': False,
+        'bearish_stack': False, 'boxx': True,
+        'open_dte': 45, 'force_close_dte': 21,
+    },
+    # Variant: keep good kernels + 45/21 management
+    'tastytrade_full': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45, 'force_close_dte': 21,
+        'vol_aware_sizing': True,
+    },
+    # Open at 45 only (no force-close — control)
+    'open_45_only': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45,
+        'vol_aware_sizing': True,
+    },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
