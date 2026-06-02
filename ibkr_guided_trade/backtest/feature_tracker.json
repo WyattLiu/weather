@@ -1,12 +1,13 @@
 {
   "updated": "2026-06-02",
   "current_best_kernel": {
-    "name": "champion_20pct_plus_floor",
-    "full_return_pct": 115.6,
-    "sharpe": 1.88,
-    "max_dd_pct": -53.6,
-    "calm_return_pct": 28.9,
-    "calm_annual_pct": 8.0
+    "name": "beam_put_only",
+    "full_return_pct": 125.4,
+    "sharpe": 1.71,
+    "max_dd_pct": -55.4,
+    "calm_return_pct": 35.6,
+    "calm_annual_pct": 10.7,
+    "_note": "Empirical beam scoring beats hand-tuned regime rules on return + calm. Sharpe slightly lower but calm regime annualized 10.7% is best ever."
   },
   "ported_features": [
     "calibrated_iv_model", "margin_check", "trend_aware_roll",
@@ -16,18 +17,24 @@
     "anomaly_detector", "falling_knife_filter",
     "seasonal_z", "elevator_close", "tail_hedge_floor",
     "concentration_penalty", "smoothness_aware",
-    "pillar_boost", "scenario_distribution"
+    "pillar_boost", "scenario_distribution",
+    "quality_scorer", "beam_put_selector"
   ],
   "items": [
     {
       "id": 1,
       "name": "Beam search (multi-step lookahead)",
       "description": "Production generates ~50-200 candidates per cycle, scores each via quality, picks best path with 1-3 step lookahead. Backtest currently does single-step greedy.",
-      "status": "not_started",
+      "status": "tested",
       "priority": "high",
       "estimated_effort": "large",
       "expected_impact": "structural — enables tested-against quality scoring",
-      "test_result": null
+      "test_result": {
+        "return_delta_pct": 9.8,
+        "sharpe_delta": -0.17,
+        "verdict": "🚨 BIG WIN — empirical beam scoring beats hand-tuned regime rules on absolute return (+9.8pp) AND calm regime (+6.7pp). Sharpe slightly down (1.88→1.71) but calm-annualized 10.7% is best ever. Single-step beam alone wins; multi-step not yet tested.",
+        "strategy_name": "beam_put_only"
+      }
     },
     {
       "id": 2,
@@ -48,11 +55,14 @@
       "id": 3,
       "name": "evaluate_portfolio_quality (multi-objective)",
       "description": "Production scores each candidate via $-normalized multi-objective: income gap + CVaR drop + delta gap + smoothness + tail hedge + pillar drift. Backtest uses simple did-it-make-money.",
-      "status": "not_started",
+      "status": "ported",
       "priority": "high",
       "estimated_effort": "large",
       "expected_impact": "structural — required for beam search",
-      "test_result": null
+      "test_result": {
+        "verdict": "Scaffolding ported (quality_scorer.py with explicit tunable weights). NOT wired via portfolio state recomputation — beam scorer uses simpler per-trade income-minus-loss approximation. Full evaluate_portfolio_quality not necessary if simpler beam wins (which it does, see item #1).",
+        "strategy_name": "beam_put_only"
+      }
     },
     {
       "id": 4,

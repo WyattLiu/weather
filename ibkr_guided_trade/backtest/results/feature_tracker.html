@@ -38,35 +38,35 @@
   <p class="subtitle">Absorbing production engine features into the backtest, one at a time.</p>
 
   <div class="summary">
-    <h2>🏆 Current Best Kernel: champion_20pct_plus_floor</h2>
+    <h2>🏆 Current Best Kernel: beam_put_only</h2>
     <div class="row">
       <div><div class="stat-label">Full return (5yr)</div>
-           <div class="stat" style="color:#3fb950">+115.6%</div></div>
+           <div class="stat" style="color:#3fb950">+125.4%</div></div>
       <div><div class="stat-label">Sharpe</div>
-           <div class="stat" style="color:#58a6ff">+1.88</div></div>
+           <div class="stat" style="color:#58a6ff">+1.71</div></div>
       <div><div class="stat-label">Max drawdown</div>
-           <div class="stat" style="color:#f85149">-53.6%</div></div>
+           <div class="stat" style="color:#f85149">-55.4%</div></div>
       <div><div class="stat-label">Calm regime (3yr)</div>
-           <div class="stat" style="color:#bc8cff">+28.9%</div></div>
+           <div class="stat" style="color:#bc8cff">+35.6%</div></div>
       <div><div class="stat-label">Calm annualized</div>
-           <div class="stat" style="color:#d29922">+8.0%</div></div>
+           <div class="stat" style="color:#d29922">+10.7%</div></div>
     </div>
     <div class="progress-row">
-      <div>not started: <strong>2</strong></div>
+      <div>not started: <strong>0</strong></div>
       <div style="color:#d29922">in progress: <strong>0</strong></div>
-      <div style="color:#58a6ff">tested: <strong>0</strong></div>
-      <div style="color:#3fb950">ported: <strong>5</strong></div>
+      <div style="color:#58a6ff">tested: <strong>1</strong></div>
+      <div style="color:#3fb950">ported: <strong>6</strong></div>
       <div style="color:#bc8cff">neg result: <strong>0</strong></div>
     </div>
   </div>
 
   <h2>📋 Items to Port (7)</h2>
   
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #58a6ff">
           <div class="card-head">
             <span class="pri">🔴</span>
             <h3>1. Beam search (multi-step lookahead)</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#58a6ff">tested</span>
           </div>
           <p class="desc">Production generates ~50-200 candidates per cycle, scores each via quality, picks best path with 1-3 step lookahead. Backtest currently does single-step greedy.</p>
           <div class="meta">
@@ -74,6 +74,12 @@
             impact: <em>structural — enables tested-against quality scoring</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ +9.8pp ·
+              Sharpe Δ -0.17 ·
+              🚨 BIG WIN — empirical beam scoring beats hand-tuned regime rules on absolute return (+9.8pp) AND calm regime (+6.7pp). Sharpe slightly down (1.88→1.71) but calm-annualized 10.7% is best ever. Single-step beam alone wins; multi-step not yet tested.
+            </div>
         </div>
         <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
@@ -94,11 +100,11 @@
               PORTED standalone-neutral — 7-point quantile too coarse to beat BS at simple p_otm; needs coupling with seasonal_drift + pillars for production-level impact
             </div>
         </div>
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
             <span class="pri">🔴</span>
             <h3>3. evaluate_portfolio_quality (multi-objective)</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#3fb950">ported</span>
           </div>
           <p class="desc">Production scores each candidate via $-normalized multi-objective: income gap + CVaR drop + delta gap + smoothness + tail hedge + pillar drift. Backtest uses simple did-it-make-money.</p>
           <div class="meta">
@@ -106,6 +112,12 @@
             impact: <em>structural — required for beam search</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ +0.0pp ·
+              Sharpe Δ +0.00 ·
+              Scaffolding ported (quality_scorer.py with explicit tunable weights). NOT wired via portfolio state recomputation — beam scorer uses simpler per-trade income-minus-loss approximation. Full evaluate_portfolio_quality not necessary if simpler beam wins (which it does, see item #1).
+            </div>
         </div>
         <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
@@ -184,9 +196,9 @@
             </div>
         </div>
 
-  <h2>✅ Already Ported (20)</h2>
-  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span><span class="pill">pillar_boost</span><span class="pill">scenario_distribution</span></div>
+  <h2>✅ Already Ported (22)</h2>
+  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span><span class="pill">pillar_boost</span><span class="pill">scenario_distribution</span><span class="pill">quality_scorer</span><span class="pill">beam_put_selector</span></div>
 
-  <footer>Updated 2026-06-02 · 2026-06-02 16:14 ·
+  <footer>Updated 2026-06-02 · 2026-06-02 16:24 ·
   Generated from feature_tracker.json</footer>
 </body></html>

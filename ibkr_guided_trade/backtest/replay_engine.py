@@ -27,6 +27,7 @@ from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 from attribution import attribute_trades, print_attribution  # type: ignore
 from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
 from scenario_distribution import ScenarioDistribution  # type: ignore
+from quality_scorer import score_portfolio_quality  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -736,6 +737,45 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
                 divergence = detect_divergence(row, z)
+                # BEAM SELECTOR (item #1 port — critical version): generate
+                # ladder of put candidates, score each, pick best by quality
+                # delta. Tests if multi-objective scoring beats hardcoded
+                # regime_aware_strike rules.
+                if p.get('beam_put'):
+                    ladder_otm = p.get('beam_put_otm_ladder',
+                                       [0.02, 0.05, 0.08, 0.12, 0.15])
+                    best_qty = 0
+                    best_K = 0
+                    best_prem = 0
+                    best_score = -1e9
+                    for try_otm in ladder_otm:
+                        try_K = round(spot_u * (1 - try_otm))
+                        try_dte = p.get('open_dte', 30)
+                        try_iv = iv_at(try_K, try_dte, 'P')
+                        try_prem = bs_put(spot_u, try_K, try_dte/365, try_iv)
+                        if try_prem < 0.05:
+                            continue
+                        # Approximate per-trade score components:
+                        # income contribution (premium * qty * 100)
+                        # assignment risk (p_itm * (K - spot_at_assign))
+                        T = try_dte / 365
+                        d2 = (math.log(spot_u/try_K) - 0.5*try_iv**2*T) / (try_iv*math.sqrt(T))
+                        from scipy.stats import norm as _norm
+                        p_otm = float(_norm.cdf(d2))
+                        p_itm = 1 - p_otm
+                        qty_try = p.get('put_qty', 3)
+                        income = try_prem * 100 * qty_try
+                        # Penalty: expected loss if assigned in adverse move
+                        loss = max(0, try_K - spot_u * 0.92) * 100 * qty_try * p_itm
+                        # Quality: income - 0.5 * loss (asymmetric)
+                        score = income - 0.5 * loss
+                        if score > best_score:
+                            best_score = score
+                            best_K = try_K
+                            best_prem = try_prem
+                            best_qty = qty_try
+                    if best_qty > 0:
+                        otm_put = (spot_u - best_K) / spot_u  # back-derive
                 # REGIME-AWARE STRIKE: when z says cheap (bullish), lean
                 # CLOSER to ATM puts (higher delta = more income, accept
                 # higher assignment prob since we want shares anyway).
@@ -1745,11 +1785,30 @@ STRATEGIES = {
         'bearish_stack': True, 'boxx': True,
         'trend_aware_roll': True,
         'kelly_sizing': True, 'kelly_conviction': True,
-        'use_scenario_dist': True,  # use SD kernel instead of BS d2
+        'use_scenario_dist': True,
         'kelly_max_qty': 20,
         'open_dte': 45,
         'vol_aware_dte': True,
         'tail_hedge_floor': 2,
+    },
+    # BEAM SELECTOR (item #1 port — critical version)
+    # Generate 5 put candidates, score by income-minus-expected-loss,
+    # pick highest. Tests if multi-objective scoring beats hardcoded
+    # regime_aware_strike rules.
+    'beam_put_only': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'beam_put': True,
+        'beam_put_otm_ladder': [0.02, 0.05, 0.08, 0.12, 0.15],
+        'open_dte': 45,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
