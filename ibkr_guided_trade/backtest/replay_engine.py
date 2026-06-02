@@ -152,6 +152,81 @@ def detect_anomaly(row) -> str:
     return 'NORMAL'
 
 
+def model_conviction(row, z: float, anomaly: str) -> float:
+    """Returns p_otm adjustment in [-0.20, +0.20]. Small effect on Kelly."""
+    conv = 0.0
+    z_surp = float(row.get('storage_surprise_z') or 0)
+    if z_surp > 1.0:    conv += 0.08
+    elif z_surp > 0.5:  conv += 0.04
+    elif z_surp < -1.0: conv -= 0.08
+    elif z_surp < -0.5: conv -= 0.04
+    if z > 0.5:   conv += 0.04
+    elif z < -0.5: conv -= 0.04
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    if mom5 > 0.05:    conv += 0.04
+    elif mom5 > 0.02:  conv += 0.02
+    elif mom5 < -0.05: conv -= 0.04
+    if falling_knife(row): conv -= 0.05
+    if anomaly != 'NORMAL':
+        conv *= 0.4
+    return max(-0.20, min(0.20, conv))
+
+
+def firmness_multiplier(row, z: float, anomaly: str) -> float:
+    """Per user: 'when extreme volatility happens, based on history and
+    modeling, the firmness of confidence will get a higher [sizing]'.
+
+    Returns a MULTIPLIER on Kelly qty in [0.5, 2.5]. Activates strongest
+    when HIGH VOL + multiple model signals align. The intuition: rich
+    premium AND high conviction is rare — when both happen, size up hard.
+    Default 1.0 (neutral). 0.5 (de-risk) when anomaly conflicts with model.
+
+    Signal stack:
+      vol regime (rv_30):  amplifies confidence interpretation
+      z direction:         is model bullish or bearish?
+      momentum direction:  confirms or contradicts?
+      seasonal:            (encoded via z_surprise already)
+      anomaly:             damp during true 2022-style events
+    """
+    rv30 = float(row.get('rv_30') or 0.5)
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    z_surp = float(row.get('storage_surprise_z') or 0)
+    # Count aligned bullish signals
+    bullish_signals = 0
+    if z > 0.5:        bullish_signals += 1
+    if z_surp > 0.5:   bullish_signals += 1
+    if mom5 > 0.02 and not falling_knife(row): bullish_signals += 1
+    # Count aligned bearish signals
+    bearish_signals = 0
+    if z < -0.5:        bearish_signals += 1
+    if z_surp < -0.5:   bearish_signals += 1
+    if mom5 < -0.03 or falling_knife(row): bearish_signals += 1
+
+    # Base multiplier
+    mult = 1.0
+    if bullish_signals >= 2:
+        # Multi-signal bullish alignment → size UP
+        if rv30 > 0.80:  mult = 2.0   # HIGH VOL + confirmed → max conviction (rare gold)
+        elif rv30 > 0.60: mult = 1.6
+        else:             mult = 1.3
+    elif bearish_signals >= 2:
+        # Multi-signal bearish → size DOWN
+        if rv30 > 0.80:  mult = 0.5
+        elif rv30 > 0.60: mult = 0.7
+        else:             mult = 0.9
+
+    # Anomaly damp: even if model says go big, anomaly says be careful.
+    # ANOMALY_UP (parabolic up) is the dangerous one — don't sell more
+    # puts into a melting rally. ANOMALY_DOWN — can be opportunity if
+    # model agrees, but capped.
+    if anomaly == 'ANOMALY_UP':
+        mult = min(mult, 0.7)   # never size up in parabolic up
+    elif anomaly == 'ANOMALY_DOWN':
+        mult = min(mult, 1.3)   # cap during true panic
+
+    return max(0.5, min(2.5, mult))
+
+
 def falling_knife(row) -> bool:
     """True if UNG is in active downtrend — don't accumulate here.
     Per [[feedback_no_falling_knife_anomaly]]."""
@@ -632,15 +707,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if rv30 > 0.80:   open_dte = 60
                     else:             open_dte = 45
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
-                # KELLY SIZING — override fixed put_qty with conviction-weighted
-                # sizing (ports production's compute_kelly philosophy via BS proxy)
+                # KELLY SIZING with conviction-aware "firmness" multiplier.
+                # Per user: high vol + high model conviction → SIZE UP, not down.
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, open_dte, 'P')
+                    conv_adj = model_conviction(row, z, anomaly) if p.get('kelly_conviction') else 0.0
                     kelly_q = kelly_qty_short_put(
                         spot_u, K, open_dte, iv_use,
                         cash_available=s['cash'],
                         premium=prem,
+                        model_conviction=conv_adj,
                     )
+                    if p.get('kelly_firmness'):
+                        firm = firmness_multiplier(row, z, anomaly)
+                        kelly_q = int(kelly_q * firm)
                     put_qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
@@ -710,14 +790,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if rv30 > 0.80:   cc_dte = 60
                     else:             cc_dte = 45
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
-                # KELLY SIZING for CCs
+                # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, cc_dte, 'C')
+                    conv_adj = model_conviction(row, z, anomaly) if p.get('kelly_conviction') else 0.0
                     kelly_q = kelly_qty_covered_call(
                         spot_u, K, cc_dte, iv_use,
                         uncovered_shares=uncovered_shares,
                         premium=prem,
+                        model_conviction=conv_adj,
                     )
+                    if p.get('kelly_firmness'):
+                        # For CCs, firmness is inverted — bearish alignment
+                        # = sell MORE CCs, bullish = fewer.
+                        firm = firmness_multiplier(row, z, anomaly)
+                        # Invert: 2.0 (bullish) → 0.5 (sell few CCs)
+                        cc_firm = 1.0 / max(0.5, min(2.5, firm))
+                        kelly_q = int(kelly_q * cc_firm)
                     qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
@@ -1343,6 +1432,36 @@ STRATEGIES = {
         'trend_aware_roll': True,
         'kelly_sizing': True,
         'kelly_max_qty': 15,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Per user (cycle 20260602): "when extreme volatility happens, based on
+    # history and modeling, the firmness of confidence will get a higher".
+    # Kelly + conviction adjustment to BS p_otm based on aligned signals.
+    'kelly_firm': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Full firmness — multiplier-based, scales kelly qty up to 2x at high
+    # conviction + high vol, down to 0.5x when signals conflict.
+    'kelly_firmness': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_firmness': True,
+        'kelly_max_qty': 25,  # higher cap to allow firmness to amplify
         'open_dte': 45,
         'vol_aware_dte': True,
     },

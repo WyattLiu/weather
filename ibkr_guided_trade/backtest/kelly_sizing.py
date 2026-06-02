@@ -14,7 +14,8 @@ from scipy.stats import norm
 def kelly_qty_short_put(spot: float, strike: float, dte: int, iv: float,
                        cash_available: float, premium: float,
                        max_frac: float = 0.25,
-                       kelly_safety: float = 0.5) -> int:
+                       kelly_safety: float = 0.5,
+                       model_conviction: float = 0.0) -> int:
     """Kelly-sized qty for a short cash-secured put.
 
     Args:
@@ -36,14 +37,18 @@ def kelly_qty_short_put(spot: float, strike: float, dte: int, iv: float,
     T = dte / 365.0
     # P(spot_T < strike) via BS — assumes lognormal, zero drift, no contango.
     d2 = (math.log(spot / strike) - 0.5 * iv ** 2 * T) / (iv * math.sqrt(T))
-    p_otm = float(norm.cdf(d2))   # prob spot > strike (put expires OTM)
+    p_otm_bs = float(norm.cdf(d2))   # prob spot > strike per BS
 
-    # CONVICTION-WEIGHTED SIZING for the wheel: assignment is approximately
-    # neutral (we wanted shares at this strike); the loss tail only matters
-    # at deep ITM. Use a conviction proxy = 2*(p_otm - 0.5), where 0.5 = no
-    # edge, 1.0 = full conviction. Scale by safety + max_frac.
+    # CONVICTION ADJUSTMENT (the "firmness" the user asked for):
+    # BS assumes zero-drift random walk. In reality, when model conviction
+    # is high (storage Z cheap + momentum bouncing + seasonality favorable),
+    # the drift IS bullish for NG → puts more likely to expire OTM than BS
+    # predicts. model_conviction ∈ [-0.20, +0.20] adds directly to p_otm.
+    # Positive = bullish drift (sell more puts), negative = bearish (less).
+    p_otm = max(0.01, min(0.99, p_otm_bs + model_conviction))
+
     if p_otm < 0.5:
-        return 0  # ITM puts — wheel philosophy says skip
+        return 0  # ITM puts (or strongly bearish model) — skip
     conviction = (p_otm - 0.5) * 2.0   # 0 to 1
     f = max(0.0, min(conviction * kelly_safety, max_frac))
 
@@ -59,7 +64,8 @@ def kelly_qty_short_put(spot: float, strike: float, dte: int, iv: float,
 def kelly_qty_covered_call(spot: float, strike: float, dte: int, iv: float,
                           uncovered_shares: int, premium: float,
                           max_frac: float = 0.5,
-                          kelly_safety: float = 0.5) -> int:
+                          kelly_safety: float = 0.5,
+                          model_conviction: float = 0.0) -> int:
     """Kelly-sized qty for a covered call.
 
     For CC: collateral is shares (not cash). Constraint is uncovered_shares
@@ -73,10 +79,13 @@ def kelly_qty_covered_call(spot: float, strike: float, dte: int, iv: float,
 
     T = dte / 365.0
     d2 = (math.log(spot / strike) - 0.5 * iv ** 2 * T) / (iv * math.sqrt(T))
-    p_otm = float(norm.cdf(d2))   # prob spot < strike (call expires OTM)
+    p_otm_bs = float(norm.cdf(d2))   # prob spot < strike per BS
 
-    # Same conviction approach as puts: scale qty by how far OTM the call is.
-    # Above 0.5 → write CCs; below → skip ITM CCs.
+    # CONVICTION ADJUSTMENT: for CCs, bullish model conviction means we
+    # think shares will go UP → call is more likely to be ITM → p_otm DOWN.
+    # So we subtract model_conviction (opposite sign vs puts).
+    p_otm = max(0.01, min(0.99, p_otm_bs - model_conviction))
+
     if p_otm < 0.5:
         # Allow if explicitly aggressive ITM CC (force-assignment trade)
         if premium < 0.05:
