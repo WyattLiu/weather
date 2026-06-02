@@ -242,6 +242,29 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 s['cash'] += pnl
                 trades.append({'date': idx, 'type': 'PUT_GAMMA_CLOSE',
                                'pnl': pnl, 'dte_left': dte_left, 'K': sp['K']})
+                # IMMEDIATE RE-OPEN at fresh open_dte (continuous-roll variant
+                # of the tastytrade rule). Maintains theta capture while
+                # preserving gamma protection. Re-opens at same OTM% as
+                # original, fresh strike vs current spot.
+                if p.get('roll_on_gamma_close'):
+                    new_dte = p.get('open_dte', 45)
+                    otm_orig = p.get('otm_put', 0.10)
+                    new_K = round(spot_u * (1 - otm_orig))
+                    new_prem = bs_put(spot_u, new_K, new_dte/365,
+                                      iv_at(new_K, new_dte, 'P'))
+                    if new_prem > 0.05:
+                        new_qty = sp['qty']
+                        # Quick margin check
+                        existing_coll = sum(spx['K']*100*spx['qty'] for spx in s['short_puts'])
+                        if s['cash'] + new_prem*100*new_qty >= existing_coll + new_K*100*new_qty:
+                            s['cash'] += new_prem*100*new_qty - new_qty*SPREAD_OPTION*100
+                            s['short_puts'].append({
+                                'entry': idx, 'K': new_K, 'dte': new_dte,
+                                'qty': new_qty, 'entry_prem': new_prem,
+                            })
+                            trades.append({'date': idx, 'type': 'PUT_GAMMA_REOPEN',
+                                           'pnl': 0.0, 'K': new_K, 'qty': new_qty,
+                                           'dte': new_dte})
                 continue
 
             # Take profit — configurable threshold (default 50% drop).
@@ -601,8 +624,18 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
-                # Tunable open-DTE (default 30; tastytrade rule uses 45)
+                # Tunable open-DTE (default 30; tastytrade rule uses 45).
+                # Regime-aware: in sharp move regime (rv > 80%), open LONGER
+                # DTE — more time for position to settle, more premium per
+                # trade in the rich-vol window.
                 open_dte = p.get('open_dte', 30)
+                if p.get('vol_aware_dte'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    # Empirically: longer DTE wins in both spike + calm.
+                    # Sharp move → 60 (more premium per trade in rich vol).
+                    # Otherwise default to 45 (proven calm-optimal too).
+                    if rv30 > 0.80:   open_dte = 60
+                    else:             open_dte = 45
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
@@ -667,6 +700,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, uncovered_shares // 100)
                 cc_dte = p.get('open_dte', 30)
+                if p.get('vol_aware_dte'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    if rv30 > 0.80:   cc_dte = 60
+                    else:             cc_dte = 45
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
                 if prem > 0.05:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
@@ -1205,6 +1242,72 @@ STRATEGIES = {
         'bearish_stack': True, 'boxx': True,
         'trend_aware_roll': True,
         'open_dte': 45,
+        'vol_aware_sizing': True,
+    },
+    # 45/21 with immediate re-roll (user-suggested fix)
+    'tt_45_21_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45, 'force_close_dte': 21,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # User's 37/14 suggestion
+    'tt_37_14_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 37, 'force_close_dte': 14,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Longer pair — 60/30
+    'tt_60_30_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 60, 'force_close_dte': 30,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Shorter pair — 30/14
+    'tt_30_14_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 30, 'force_close_dte': 14,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Very short — 21/7
+    'tt_21_7_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 21, 'force_close_dte': 7,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # REGIME-AWARE DTE — sharp move → longer DTE, calm → shorter
+    # rv > 80% → 60d, rv 60-80% → 45d, rv 40-60% → 30d, rv <40% → 21d
+    'regime_dte': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'vol_aware_dte': True,
         'vol_aware_sizing': True,
     },
     'champion_robust_pricedt': {
