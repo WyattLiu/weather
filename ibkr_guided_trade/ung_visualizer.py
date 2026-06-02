@@ -1486,20 +1486,9 @@ def generate_candidates(portfolio_state, spot, iv, today):
         portfolio_state.get('avg_weekly_theta', 0) <
         portfolio_state.get('target_weekly_income', 1500) * 0.6
     )
-    # CORRECTION 20260602: production-side bug found via backtest comparison.
-    # OLD: _dte_floor = 7 if income_mode else 14
-    # Backtest DTE sweep on same chassis:
-    #   DTE  7: ret +74.3% / Sharpe 1.20
-    #   DTE 10: ret +73.3% / Sharpe 1.36  ← production picked this
-    #   DTE 14: ret +87.2% / Sharpe 1.57
-    #   DTE 30: ret +115.6% / Sharpe 1.88
-    #   DTE 45: ret +122.2% / Sharpe 1.71
-    # 30 DTE Pareto-dominates 10 DTE on BOTH return and Sharpe.
-    # Income-mode reasoning was "we need theta NOW, pick short DTE" but
-    # shorter DTE has LESS total premium per trade. The fix: same floor
-    # in both modes. Per-trade income > per-day theta rate when wheel
-    # cycles continuously anyway.
-    _dte_floor = 14    # was 7 in income_mode, 14 in normal
+    # Reverted to original — DTE floor is the wrong knob. Real fix is in
+    # scoring (see theta_rate_bonus adjustment below).
+    _dte_floor = 7 if _ve_income_mode else 14
     _dte_ceiling = 60 if _ve_income_mode else 45
     valid_expiries = []
     for exp_str in sorted(available.keys()):
