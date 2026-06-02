@@ -52,10 +52,10 @@
            <div class="stat" style="color:#d29922">+8.0%</div></div>
     </div>
     <div class="progress-row">
-      <div>not started: <strong>4</strong></div>
+      <div>not started: <strong>3</strong></div>
       <div style="color:#d29922">in progress: <strong>0</strong></div>
       <div style="color:#58a6ff">tested: <strong>0</strong></div>
-      <div style="color:#3fb950">ported: <strong>3</strong></div>
+      <div style="color:#3fb950">ported: <strong>4</strong></div>
       <div style="color:#bc8cff">neg result: <strong>0</strong></div>
     </div>
   </div>
@@ -139,11 +139,11 @@
               WIN — Sharpe ATH 1.49; continuous tail insurance net positive
             </div>
         </div>
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
             <span class="pri">🟡</span>
             <h3>6. Pillar scores (tech/fund/yoy)</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#3fb950">ported</span>
           </div>
           <p class="desc">Production has 3-pillar scoring: technical, fundamental, year-over-year. Each contributes to composite z and quality. Backtest uses simpler 5-factor z.</p>
           <div class="meta">
@@ -151,6 +151,12 @@
             impact: <em>improves z signal quality ~5-10%</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ +6.5pp ·
+              Sharpe Δ -0.62 ·
+              PORTED but NEGATIVE — pillar boost amplifies z too much, triggers more aggressive ITM CC at wrong times. Calm regime crashed 28.9→8.6.
+            </div>
         </div>
         <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
@@ -175,6 +181,6 @@
   <h2>✅ Already Ported (18)</h2>
   <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span></div>
 
-  <footer>Updated 2026-06-02 · 2026-06-02 15:12 ·
+  <footer>Updated 2026-06-02 · 2026-06-02 15:51 ·
   Generated from feature_tracker.json</footer>
 </body></html>

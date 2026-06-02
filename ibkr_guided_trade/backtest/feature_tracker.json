@@ -82,11 +82,16 @@
       "id": 6,
       "name": "Pillar scores (tech/fund/yoy)",
       "description": "Production has 3-pillar scoring: technical, fundamental, year-over-year. Each contributes to composite z and quality. Backtest uses simpler 5-factor z.",
-      "status": "not_started",
+      "status": "ported",
       "priority": "medium",
       "estimated_effort": "medium",
       "expected_impact": "improves z signal quality ~5-10%",
-      "test_result": null
+      "test_result": {
+        "return_delta_pct": 6.5,
+        "sharpe_delta": -0.62,
+        "verdict": "PORTED but NEGATIVE — pillar boost amplifies z too much, triggers more aggressive ITM CC at wrong times. Calm regime crashed 28.9→8.6.",
+        "strategy_name": "best_plus_pillars"
+      }
     },
     {
       "id": 7,

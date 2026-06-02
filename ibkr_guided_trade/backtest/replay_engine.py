@@ -235,6 +235,60 @@ def falling_knife(row) -> bool:
     return at_low and mom5 < -0.03
 
 
+def compute_pillar_score(row, spot: float) -> dict:
+    """Production-port (item #6): compute tech/fund/yoy pillar scores.
+
+    Each pillar in [-1, +1], + = bullish for NG.
+      tech: price band (near 120d low → bullish) + MA tilt (20 > 50 → bullish)
+      fund: storage surprise (cheap = bullish)
+      yoy: year-over-year price ratio (well below = bullish)
+
+    Returns dict with each pillar score + sum.
+    Sum can be added to composite z for amplified conviction.
+    """
+    out = {'tech': 0.0, 'fund': 0.0, 'yoy': 0.0, 'sum': 0.0}
+    if spot <= 0:
+        return out
+    # Tech pillar
+    lo_252 = float(row.get('ung_252d_mean') or 0)
+    try:
+        std_252 = float(row.get('ung_252d_std') or 1)
+        if lo_252 > 0 and std_252 > 0:
+            # Distance from mean in std units, inverted so low = bullish
+            band = (spot - lo_252) / std_252
+            tech = max(-1.0, min(1.0, -band * 0.5))
+        else:
+            tech = 0.0
+        # Add MA tilt: 50d > 200d = bullish, but UNG rarely has this
+        ma_50 = float(row.get('ung_50d_ma') or 0)
+        ma_200 = float(row.get('ung_200d_ma') or 0)
+        if ma_50 > 0 and ma_200 > 0:
+            ma_diff = (ma_50 - ma_200) / ma_200
+            tech += max(-0.3, min(0.3, ma_diff * 5.0))
+        out['tech'] = max(-1.0, min(1.0, tech))
+    except Exception:
+        pass
+    # Fund pillar — storage surprise z (already detrended)
+    try:
+        z_surp = float(row.get('storage_surprise_z') or 0)
+        out['fund'] = max(-1.0, min(1.0, z_surp * 0.5))
+    except Exception:
+        pass
+    # YoY pillar — vs 252d ago (rough proxy; we don't have exact 1yr lookback)
+    try:
+        # Use the long-term mean as a proxy: if spot < 70% of mean, very cheap
+        if lo_252 > 0:
+            ratio = spot / lo_252
+            # ratio < 0.7 → very bullish (well below avg)
+            # ratio > 1.3 → very bearish
+            yoy = max(-1.0, min(1.0, (1.0 - ratio) * 2.0))
+            out['yoy'] = yoy
+    except Exception:
+        pass
+    out['sum'] = out['tech'] + out['fund'] + out['yoy']
+    return out
+
+
 def detect_divergence(row, z: float) -> str:
     """Return ALIGNED / PANIC_BUY_OPP / EUPHORIC_SELL_OPP.
     Per [[project_fundamental_divergence_alpha]]: trade fundamental vs crowd
@@ -302,6 +356,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         def iv_at(K, dte, right='C'):
             return iv_for_quote(row, K, spot_u, dte, right)
         z = compute_historical_z(row, use_surprise=use_surprise)
+        # Pillar boost: if enabled, add scaled pillar sum to composite z.
+        # Production uses pillar_drift to nudge the scenario distribution;
+        # backtest just adds it to z for similar effect on regime/sizing.
+        if p.get('pillar_boost'):
+            pillars = compute_pillar_score(row, spot_u)
+            # Pillars in [-1, +1] each, sum in [-3, +3]. Scale to ±0.5 z adj.
+            z = z + pillars['sum'] * 0.15
         r = regime(z)
 
         # Expire short puts
@@ -1652,9 +1713,23 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
         'tail_hedge_floor': 2,
-        'income_mode_strike': True,  # needs recent_premium tracking
+        'income_mode_strike': True,
         'target_weekly_income': 1500.0,
         'smoothness_aware': True,
+    },
+    # Best + pillar boost (production-port item #6)
+    'best_plus_pillars': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'pillar_boost': True,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
