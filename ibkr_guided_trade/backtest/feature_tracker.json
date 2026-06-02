@@ -1,0 +1,96 @@
+{
+  "updated": "2026-06-02",
+  "current_best_kernel": {
+    "name": "best_plus_tail_floor",
+    "full_return_pct": 106.7,
+    "sharpe": 1.49,
+    "max_dd_pct": -51.5,
+    "calm_return_pct": 18.8,
+    "calm_annual_pct": 5.3
+  },
+  "ported_features": [
+    "calibrated_iv_model", "margin_check", "trend_aware_roll",
+    "min_roll_dte", "vol_aware_dte", "vol_aware_sizing",
+    "kelly_sizing", "model_conviction", "firmness_multiplier",
+    "regime_aware_strike", "income_mode_strike",
+    "anomaly_detector", "falling_knife_filter",
+    "seasonal_z", "elevator_close", "tail_hedge_floor"
+  ],
+  "items": [
+    {
+      "id": 1,
+      "name": "Beam search (multi-step lookahead)",
+      "description": "Production generates ~50-200 candidates per cycle, scores each via quality, picks best path with 1-3 step lookahead. Backtest currently does single-step greedy.",
+      "status": "not_started",
+      "priority": "high",
+      "estimated_effort": "large",
+      "expected_impact": "structural — enables tested-against quality scoring",
+      "test_result": null
+    },
+    {
+      "id": 2,
+      "name": "ScenarioDistribution (quantile kernel)",
+      "description": "Production uses 7-point quantile kernel covering ±2σ + 0, with seasonal_drift + supply_regime + pillars baked in. Backtest Kelly uses simple BS d2 for p_itm.",
+      "status": "not_started",
+      "priority": "high",
+      "estimated_effort": "medium",
+      "expected_impact": "improves Kelly accuracy ~10-20pp",
+      "test_result": null
+    },
+    {
+      "id": 3,
+      "name": "evaluate_portfolio_quality (multi-objective)",
+      "description": "Production scores each candidate via $-normalized multi-objective: income gap + CVaR drop + delta gap + smoothness + tail hedge + pillar drift. Backtest uses simple did-it-make-money.",
+      "status": "not_started",
+      "priority": "high",
+      "estimated_effort": "large",
+      "expected_impact": "structural — required for beam search",
+      "test_result": null
+    },
+    {
+      "id": 4,
+      "name": "Concentration penalty",
+      "description": "Production beam penalizes putting too many contracts at one strike/expiry. Backtest currently lets 25+ contracts go at the same strike.",
+      "status": "not_started",
+      "priority": "medium",
+      "estimated_effort": "small",
+      "expected_impact": "reduces tail risk; minor return impact",
+      "test_result": null
+    },
+    {
+      "id": 5,
+      "name": "Tail-hedge floor enforcement",
+      "description": "Production maintains a minimum count of LONG_PUT positions (default 2) as catastrophic hedge. Backtest only has bearish_stack which fires occasionally.",
+      "status": "ported",
+      "priority": "medium",
+      "estimated_effort": "small",
+      "expected_impact": "lower max DD by 5-10pp in spike scenarios",
+      "test_result": {
+        "return_delta_pct": 7.5,
+        "sharpe_delta": 0.08,
+        "verdict": "WIN — Sharpe ATH 1.49; continuous tail insurance net positive",
+        "strategy_name": "best_plus_tail_floor"
+      }
+    },
+    {
+      "id": 6,
+      "name": "Pillar scores (tech/fund/yoy)",
+      "description": "Production has 3-pillar scoring: technical, fundamental, year-over-year. Each contributes to composite z and quality. Backtest uses simpler 5-factor z.",
+      "status": "not_started",
+      "priority": "medium",
+      "estimated_effort": "medium",
+      "expected_impact": "improves z signal quality ~5-10%",
+      "test_result": null
+    },
+    {
+      "id": 7,
+      "name": "Smoothness metric in objective",
+      "description": "Production penalizes jagged weekly theta distribution (income spikes followed by drops). Backtest has smoothness in state but doesn't optimize for it.",
+      "status": "not_started",
+      "priority": "low",
+      "estimated_effort": "small",
+      "expected_impact": "reduces NAV variance; small return impact",
+      "test_result": null
+    }
+  ]
+}

@@ -867,6 +867,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'OPEN_LONG_PUT',
                                    'pnl': -debit, 'K': Kp, 'qty': qty})
 
+            # TAIL-HEDGE FLOOR (production-port #5) — maintain minimum long
+            # put count regardless of regime. Production default = 2 LEAPS.
+            # Backtest uses 90 DTE puts as proxy.
+            tail_floor = p.get('tail_hedge_floor', 0)
+            existing_long_qty = sum(lp.get('qty', 0) for lp in s['long_puts'])
+            if tail_floor > 0 and existing_long_qty < tail_floor:
+                # Add to floor — pick OTM strike, 90 DTE
+                need = tail_floor - existing_long_qty
+                Kp = round(spot_u * 0.92)
+                cost = bs_put(spot_u, Kp, 90/365, iv_at(Kp, 90, 'P'))
+                debit = cost * 100 * need + need * SPREAD_OPTION * 100
+                if s['cash'] > debit + 1000:  # leave $1K buffer
+                    s['cash'] -= debit
+                    s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90,
+                                           'qty': need, 'cost': cost})
+                    trades.append({'date': idx, 'type': 'OPEN_LONG_PUT_FLOOR',
+                                   'pnl': -debit, 'K': Kp, 'qty': need})
+
                 # Guard against NaN spot_k or NaN nav
                 if s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
                     nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117
@@ -1549,6 +1567,20 @@ STRATEGIES = {
         'target_weekly_income': 1500.0,
         'open_dte': 45,
         'vol_aware_dte': True,
+    },
+    # Best kernel + tail-hedge floor (production-port item #5)
+    'best_plus_tail_floor': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'income_mode_strike': True,
+        'target_weekly_income': 1500.0,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,  # always keep 2 long puts
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
