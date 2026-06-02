@@ -1,12 +1,12 @@
 {
   "updated": "2026-06-02",
   "current_best_kernel": {
-    "name": "best_plus_tail_floor",
-    "full_return_pct": 106.7,
-    "sharpe": 1.49,
-    "max_dd_pct": -51.5,
-    "calm_return_pct": 18.8,
-    "calm_annual_pct": 5.3
+    "name": "champion_20pct_plus_floor",
+    "full_return_pct": 115.6,
+    "sharpe": 1.88,
+    "max_dd_pct": -53.6,
+    "calm_return_pct": 28.9,
+    "calm_annual_pct": 8.0
   },
   "ported_features": [
     "calibrated_iv_model", "margin_check", "trend_aware_roll",

@@ -1580,7 +1580,20 @@ STRATEGIES = {
         'target_weekly_income': 1500.0,
         'open_dte': 45,
         'vol_aware_dte': True,
-        'tail_hedge_floor': 2,  # always keep 2 long puts
+        'tail_hedge_floor': 2,
+    },
+    # Champion_dyn_itm_20pct chassis (Sharpe 1.77 post-refresh) + tail floor
+    'champion_20pct_plus_floor': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
