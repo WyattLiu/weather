@@ -14,7 +14,8 @@
     "kelly_sizing", "model_conviction", "firmness_multiplier",
     "regime_aware_strike", "income_mode_strike",
     "anomaly_detector", "falling_knife_filter",
-    "seasonal_z", "elevator_close", "tail_hedge_floor"
+    "seasonal_z", "elevator_close", "tail_hedge_floor",
+    "concentration_penalty", "smoothness_aware"
   ],
   "items": [
     {
@@ -51,11 +52,16 @@
       "id": 4,
       "name": "Concentration penalty",
       "description": "Production beam penalizes putting too many contracts at one strike/expiry. Backtest currently lets 25+ contracts go at the same strike.",
-      "status": "not_started",
+      "status": "ported",
       "priority": "medium",
       "estimated_effort": "small",
       "expected_impact": "reduces tail risk; minor return impact",
-      "test_result": null
+      "test_result": {
+        "return_delta_pct": 0.0,
+        "sharpe_delta": 0.01,
+        "verdict": "PORTED but DORMANT — cap fires only 1x in 5yr because weekly rolls move to new strikes",
+        "strategy_name": "best_plus_concentration"
+      }
     },
     {
       "id": 5,
@@ -86,11 +92,16 @@
       "id": 7,
       "name": "Smoothness metric in objective",
       "description": "Production penalizes jagged weekly theta distribution (income spikes followed by drops). Backtest has smoothness in state but doesn't optimize for it.",
-      "status": "not_started",
+      "status": "ported",
       "priority": "low",
       "estimated_effort": "small",
       "expected_impact": "reduces NAV variance; small return impact",
-      "test_result": null
+      "test_result": {
+        "return_delta_pct": -1.2,
+        "sharpe_delta": 0.0,
+        "verdict": "PORTED neutral — slight calm improvement, slight full give-up, MDD better",
+        "strategy_name": "best_plus_smoothness"
+      }
     }
   ]
 }

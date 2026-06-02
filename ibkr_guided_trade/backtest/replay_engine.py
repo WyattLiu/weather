@@ -695,6 +695,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     ratio = avg_weekly / target_weekly_income
                     if ratio < 0.6:    otm_put = max(0.02, otm_put - 0.04)
                     elif ratio > 1.2:  otm_put = min(0.25, otm_put + 0.04)
+                # SMOOTHNESS PENALTY (production-port #7): if the last 4
+                # weeks of income have high variance (std/mean > 0.5),
+                # push strike FARTHER OTM to reduce future variance. The
+                # idea: jagged income → bad operator experience even if
+                # total is high.
+                if p.get('smoothness_aware') and len(recent_premium) >= 4:
+                    recent = recent_premium[-4:]
+                    mean = sum(recent) / 4
+                    if mean > 0:
+                        import statistics
+                        std = statistics.pstdev(recent)
+                        cv = std / mean if mean > 0 else 0
+                        if cv > 0.5:  # jagged income
+                            otm_put = min(0.25, otm_put + 0.02)
                 # Z-scaled sizing — bigger when more cheap.
                 if p.get('z_scaled_sizing'):
                     if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
@@ -766,6 +780,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                            'reason': 'insufficient_buying_power'})
                             put_qty = 0
                     if put_qty > 0:
+                        # CONCENTRATION PENALTY (production-port #4):
+                        # Cap total contracts at any one strike. Production
+                        # beam penalizes via quality scoring; backtest uses
+                        # hard cap for simplicity.
+                        max_conc = p.get('max_concentration_per_strike', 0)
+                        if max_conc > 0:
+                            existing_at_K = sum(sp.get('qty', 0)
+                                               for sp in s['short_puts']
+                                               if abs(sp.get('K', 0) - K) < 0.5)
+                            allowed = max(0, max_conc - existing_at_K)
+                            if put_qty > allowed:
+                                trades.append({'date': idx, 'type': 'CONCENTRATION_CAP',
+                                              'pnl': 0.0, 'K': K,
+                                              'requested': put_qty, 'allowed': allowed})
+                                put_qty = allowed
+                        if put_qty == 0:
+                            continue
                         # DTE diversification — per [[feedback_dte_diversification]]:
                         # spread across DTEs not pile at 30. Each DTE gets a slice
                         # sized by 1/N.
@@ -1594,6 +1625,36 @@ STRATEGIES = {
         'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
         'vol_aware_sizing': True,
         'tail_hedge_floor': 2,
+    },
+    # Best + concentration penalty (production-port item #4)
+    'best_plus_concentration': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'max_concentration_per_strike': 15,
+    },
+    # Best + smoothness penalty (production-port item #7)
+    'best_plus_smoothness': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'income_mode_strike': True,  # needs recent_premium tracking
+        'target_weekly_income': 1500.0,
+        'smoothness_aware': True,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,

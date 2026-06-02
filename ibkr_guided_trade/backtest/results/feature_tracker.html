@@ -52,10 +52,10 @@
            <div class="stat" style="color:#d29922">+8.0%</div></div>
     </div>
     <div class="progress-row">
-      <div>not started: <strong>6</strong></div>
+      <div>not started: <strong>4</strong></div>
       <div style="color:#d29922">in progress: <strong>0</strong></div>
       <div style="color:#58a6ff">tested: <strong>0</strong></div>
-      <div style="color:#3fb950">ported: <strong>1</strong></div>
+      <div style="color:#3fb950">ported: <strong>3</strong></div>
       <div style="color:#bc8cff">neg result: <strong>0</strong></div>
     </div>
   </div>
@@ -101,11 +101,11 @@
           </div>
           
         </div>
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
             <span class="pri">🟡</span>
             <h3>4. Concentration penalty</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#3fb950">ported</span>
           </div>
           <p class="desc">Production beam penalizes putting too many contracts at one strike/expiry. Backtest currently lets 25+ contracts go at the same strike.</p>
           <div class="meta">
@@ -113,6 +113,12 @@
             impact: <em>reduces tail risk; minor return impact</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ +0.0pp ·
+              Sharpe Δ +0.01 ·
+              PORTED but DORMANT — cap fires only 1x in 5yr because weekly rolls move to new strikes
+            </div>
         </div>
         <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
@@ -146,11 +152,11 @@
           </div>
           
         </div>
-        <div class="card" style="border-left: 4px solid #666">
+        <div class="card" style="border-left: 4px solid #3fb950">
           <div class="card-head">
             <span class="pri">🟢</span>
             <h3>7. Smoothness metric in objective</h3>
-            <span class="status" style="background:#666">not started</span>
+            <span class="status" style="background:#3fb950">ported</span>
           </div>
           <p class="desc">Production penalizes jagged weekly theta distribution (income spikes followed by drops). Backtest has smoothness in state but doesn't optimize for it.</p>
           <div class="meta">
@@ -158,11 +164,17 @@
             impact: <em>reduces NAV variance; small return impact</em>
           </div>
           
+            <div class="test-result">
+              <strong>Test:</strong>
+              ret Δ -1.2pp ·
+              Sharpe Δ +0.00 ·
+              PORTED neutral — slight calm improvement, slight full give-up, MDD better
+            </div>
         </div>
 
-  <h2>✅ Already Ported (16)</h2>
-  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span></div>
+  <h2>✅ Already Ported (18)</h2>
+  <div><span class="pill">calibrated_iv_model</span><span class="pill">margin_check</span><span class="pill">trend_aware_roll</span><span class="pill">min_roll_dte</span><span class="pill">vol_aware_dte</span><span class="pill">vol_aware_sizing</span><span class="pill">kelly_sizing</span><span class="pill">model_conviction</span><span class="pill">firmness_multiplier</span><span class="pill">regime_aware_strike</span><span class="pill">income_mode_strike</span><span class="pill">anomaly_detector</span><span class="pill">falling_knife_filter</span><span class="pill">seasonal_z</span><span class="pill">elevator_close</span><span class="pill">tail_hedge_floor</span><span class="pill">concentration_penalty</span><span class="pill">smoothness_aware</span></div>
 
-  <footer>Updated 2026-06-02 · 2026-06-02 14:11 ·
+  <footer>Updated 2026-06-02 · 2026-06-02 15:12 ·
   Generated from feature_tracker.json</footer>
 </body></html>
