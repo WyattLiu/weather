@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from seasonal_z import add_seasonal_factors  # type: ignore
 from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 from attribution import attribute_trades, print_attribution  # type: ignore
+from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -625,18 +626,22 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
                 # Tunable open-DTE (default 30; tastytrade rule uses 45).
-                # Regime-aware: in sharp move regime (rv > 80%), open LONGER
-                # DTE — more time for position to settle, more premium per
-                # trade in the rich-vol window.
                 open_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
                     rv30 = float(row.get('rv_30') or 0.5)
-                    # Empirically: longer DTE wins in both spike + calm.
-                    # Sharp move → 60 (more premium per trade in rich vol).
-                    # Otherwise default to 45 (proven calm-optimal too).
                     if rv30 > 0.80:   open_dte = 60
                     else:             open_dte = 45
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
+                # KELLY SIZING — override fixed put_qty with conviction-weighted
+                # sizing (ports production's compute_kelly philosophy via BS proxy)
+                if p.get('kelly_sizing') and prem > 0.05:
+                    iv_use = iv_at(K, open_dte, 'P')
+                    kelly_q = kelly_qty_short_put(
+                        spot_u, K, open_dte, iv_use,
+                        cash_available=s['cash'],
+                        premium=prem,
+                    )
+                    put_qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
                     # Available collateral = current cash + premium received -
@@ -705,6 +710,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if rv30 > 0.80:   cc_dte = 60
                     else:             cc_dte = 45
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
+                # KELLY SIZING for CCs
+                if p.get('kelly_sizing') and prem > 0.05:
+                    iv_use = iv_at(K, cc_dte, 'C')
+                    kelly_q = kelly_qty_covered_call(
+                        spot_u, K, cc_dte, iv_use,
+                        uncovered_shares=uncovered_shares,
+                        premium=prem,
+                    )
+                    qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['cash'] += credit
@@ -1309,6 +1323,28 @@ STRATEGIES = {
         'trend_aware_roll': True,
         'vol_aware_dte': True,
         'vol_aware_sizing': True,
+    },
+    # PRODUCTION-PORT: Kelly position sizing (replaces fixed qty)
+    'kelly_sized': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_max_qty': 15,
+    },
+    # Kelly + best other features (closer-to-production chassis)
+    'kelly_champion': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_max_qty': 15,
+        'open_dte': 45,
+        'vol_aware_dte': True,
     },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
