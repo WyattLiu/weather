@@ -754,20 +754,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
             return self._send(HTML, 'text/html')
-        if self.path == '/tracker' or self.path == '/feature_tracker':
-            # Regenerate then serve the feature tracker HTML
-            try:
-                import subprocess
-                subprocess.run(['python', os.path.join(os.path.dirname(__file__),
-                                                       'render_tracker.py')],
-                               check=False, capture_output=True, timeout=10)
-            except Exception:
-                pass
-            path = os.path.join(RESULTS_DIR, 'feature_tracker.html')
-            if os.path.exists(path):
-                with open(path) as f:
-                    return self._send(f.read(), 'text/html')
-            return self._send('<h1>tracker not generated</h1>', 'text/html')
         if self.path == '/api/research':
             rows = load_master_dataset()
             # Use most recent row with UNG data (skip null/weekend rows)

@@ -39,15 +39,6 @@ if [ -n "$(git status --porcelain backtest/results/)" ]; then
         >> "$LOG" 2>&1
 fi
 
-# 4.5) Strategy lifecycle: retire bottom-Sharpe strategies if active set
-# exceeds target + threshold. Marks (not deletes) — strategies stay in code.
-echo "--- retire_stale ---" | tee -a "$LOG"
-$VENV backtest/retire_stale.py 2>&1 | tee -a "$LOG"
-if [ -n "$(git status --porcelain backtest/strategy_lifecycle.json)" ]; then
-    git add backtest/strategy_lifecycle.json
-    git commit -m "Retire stale strategies (cycle $TS)" >> "$LOG" 2>&1
-fi
-
 # 5) Tail summary for the operator (also stays in log)
 echo "--- summary ---"
 $VENV -c "

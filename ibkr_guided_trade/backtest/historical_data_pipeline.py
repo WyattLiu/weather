@@ -40,12 +40,7 @@ def fetch_ung_kold_boil(years=5):
             t = yf.Ticker(sym)
             df = t.history(period=period)
             if not df.empty:
-                # FIX 20260602: normalize index to DATE only (drop time + tz)
-                # yfinance returns different exchanges with different tz which
-                # caused VIX (Chicago) join to UNG (NY) to produce 100% NaN.
-                series = df['Close'].copy()
-                series.index = pd.to_datetime(series.index.date)
-                out[sym.replace('=F', '').replace('-Y.NYB', '_DXY').replace('^', '')] = series
+                out[sym.replace('=F', '').replace('-Y.NYB', '_DXY').replace('^', '')] = df['Close']
                 print(f"  {sym:>10}: {len(df)} bars, ${df['Close'].iloc[-1]:.2f}")
         except Exception as e:
             print(f"  {sym}: failed ({e})")
@@ -147,32 +142,9 @@ def build_master_dataset(years=5):
     df = pd.DataFrame({k: v for k, v in prices.items()})
     df.index = df.index.tz_localize(None) if df.index.tz else df.index
 
-    # IV surface from UNG — start with rv-based proxy as fallback
+    # IV surface from UNG
     iv = compute_realized_iv_surface(df['UNG'])
     df = df.join(iv)
-
-    # OVERRIDE with REAL IBKR-fetched IV30 where available
-    # Source: backtest/fetch_historical_iv.py (run separately or via maintain_iv.sh)
-    real_iv_path = os.path.join(CACHE_DIR, 'ung_historical_iv.csv')
-    if os.path.exists(real_iv_path):
-        real_iv = pd.read_csv(real_iv_path, index_col=0, parse_dates=True)
-        real_iv.index = pd.to_datetime(real_iv.index.date)
-        df.index = pd.to_datetime(df.index.date) if df.index.tz is None else df.index
-        # Merge real IV30 onto df by date; where present, override iv_30d.
-        # Build iv_60d/iv_90d by scaling iv30 by sqrt(T) ratio (mean-reversion
-        # adjustment — long-dated IV typically closer to long-run vol).
-        merged = df.join(real_iv, how='left')
-        mask = merged['iv30'].notna()
-        n_real = int(mask.sum())
-        print(f"[data] Overriding {n_real}/{len(df)} days of iv_30d with real IBKR IV")
-        # Replace iv_30d with real value where available
-        df.loc[mask, 'iv_30d'] = merged.loc[mask, 'iv30'].values
-        # iv_60d and iv_90d: blend real iv30 with long-run vol mean (regress
-        # to median over time). Simple: iv_60d = iv_30d * 0.95, iv_90d = iv_30d * 0.92
-        # (term structure typically slightly downward for moderate-IV symbols).
-        df.loc[mask, 'iv_60d'] = merged.loc[mask, 'iv30'].values * 0.95
-        df.loc[mask, 'iv_90d'] = merged.loc[mask, 'iv30'].values * 0.92
-        df['iv30_real'] = merged['iv30']  # keep original for diagnostics
 
     # EIA monthly — forward fill to daily
     print(f"\n[data] EIA monthly data:")
