@@ -452,6 +452,17 @@ td.neutral { color: var(--blue); }
 
   <div id="error-row"></div>
 
+  <!-- Daily Status Banner (matches production banner) -->
+  <div class="section" id="daily-status-banner" style="border-width:2px;padding:14px 16px">
+    <div style="display:flex;align-items:center;gap:14px">
+      <div id="status-icon" style="font-size:1.8rem">✅</div>
+      <div style="flex:1">
+        <div id="status-headline" style="font-size:1.1rem;font-weight:600">Loading...</div>
+        <div id="status-detail" style="font-size:0.85rem;color:var(--text-dim);margin-top:2px">Fetching live state...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Top summary cards -->
   <div class="summary-row">
     <div class="card">
@@ -500,6 +511,44 @@ td.neutral { color: var(--blue); }
     <div class="rec-why" style="margin-top:8px">
       Each candidate strike scored as <strong>income − P(ITM) × expected_loss</strong> under BSM measure with real PG IV.
       The winner is the best risk-adjusted premium per contract.
+    </div>
+  </div>
+
+  <!-- Position analytics charts (matches production Delta/Theta/PnL panels) -->
+  <div class="section">
+    <h2>📈 P&amp;L Profile at Expiration</h2>
+    <div id="chart-pnl" style="height:300px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Portfolio P&amp;L if held to expiration across UNG range 70%-130% of current spot. Vertical line = current spot.
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="section">
+      <h2>Δ Delta Exposure vs UNG Price</h2>
+      <div id="chart-delta" style="height:280px"></div>
+    </div>
+    <div class="section">
+      <h2>θ Daily Theta by Expiry</h2>
+      <div id="chart-theta-bar" style="height:280px"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>⌛ Theta Decay Waterfall (next 60 days)</h2>
+    <div id="chart-theta-waterfall" style="height:280px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Cumulative theta projected forward, assuming positions held flat. Total = passive income from time decay.
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>🗓 Rolling Calendar Grid (Strike × Expiry)</h2>
+    <div class="scrollable">
+      <table id="calendar-grid-table"></table>
+    </div>
+    <div class="rec-why" style="margin-top:8px">
+      Cell value: net short qty (negative = short, positive = long). Color = C (call) vs P (put).
     </div>
   </div>
 
@@ -699,6 +748,108 @@ async function refresh() {
 
     // Warnings
     $('warnings').innerHTML = (v.warnings || []).map(w => `<div class="warning">⚠ ${w}</div>`).join('');
+
+    // Daily status banner
+    const ds = v.daily_status;
+    if (ds) {
+      const banner = $('daily-status-banner');
+      const icons = {green: '✅', orange: '⚠️', red: '🚨'};
+      const colors = {green: 'var(--green)', orange: 'var(--orange)', red: 'var(--red)'};
+      banner.style.borderColor = colors[ds.color] || 'var(--border)';
+      $('status-icon').innerText = icons[ds.color] || '✅';
+      $('status-headline').innerText = ds.headline;
+      $('status-headline').style.color = colors[ds.color] || 'var(--text)';
+      $('status-detail').innerText = ds.issues && ds.issues.length ? ds.issues.join(' · ') : 'No issues detected.';
+    }
+
+    // P&L Curve at expiration
+    const pnl = v.pnl_curve;
+    if (pnl && pnl.prices) {
+      const layout = {
+        ...PLOTLY_LAYOUT_BASE,
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'P&L $' },
+        xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: 'UNG at expiry $' },
+        shapes: [{type:'line', x0:pnl.spot_now, x1:pnl.spot_now, yref:'paper', y0:0, y1:1,
+                  line:{color:'#58a6ff', width:1, dash:'dash'}}],
+      };
+      const colors = pnl.pnl.map(v => v >= 0 ? '#3fb950' : '#f85149');
+      Plotly.newPlot('chart-pnl', [
+        {x: pnl.prices, y: pnl.pnl, type: 'scatter', mode: 'lines',
+         line: {color: '#58a6ff', width: 2}, fill: 'tozeroy',
+         fillcolor: 'rgba(63,185,80,0.1)'},
+      ], layout, {displayModeBar: false, responsive: true});
+    }
+
+    // Delta curve
+    const dc = v.delta_curve;
+    if (dc && dc.prices) {
+      Plotly.newPlot('chart-delta', [
+        {x: dc.prices, y: dc.deltas, type: 'scatter', mode: 'lines',
+         line: {color: '#bc8cff', width: 2}},
+      ], {
+        ...PLOTLY_LAYOUT_BASE,
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Δ' },
+        xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: 'UNG $' },
+        shapes: [{type:'line', x0:dc.spot_now, x1:dc.spot_now, yref:'paper', y0:0, y1:1,
+                  line:{color:'#58a6ff', width:1, dash:'dash'}}],
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    // Theta by expiry bar
+    const tbe = v.theta_by_expiry;
+    if (tbe && tbe.length) {
+      Plotly.newPlot('chart-theta-bar', [
+        {x: tbe.map(t => t.expiry), y: tbe.map(t => t.theta_per_day),
+         type: 'bar', marker: {color: '#39d2c0'},
+         text: tbe.map(t => '$' + t.theta_per_day.toFixed(0)), textposition: 'outside',
+         textfont: {color: '#e6edf3'}},
+      ], {
+        ...PLOTLY_LAYOUT_BASE,
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$/day' },
+        xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'category', tickangle: -45 },
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    // Theta waterfall
+    const tw = v.theta_waterfall;
+    if (tw && tw.length) {
+      Plotly.newPlot('chart-theta-waterfall', [
+        {x: tw.map(t => t.day), y: tw.map(t => t.cumulative_theta),
+         type: 'scatter', mode: 'lines+markers',
+         line: {color: '#3fb950', width: 2}, fill: 'tozeroy',
+         fillcolor: 'rgba(63,185,80,0.15)', name: 'Cumulative'},
+        {x: tw.map(t => t.day), y: tw.map(t => t.daily_theta * 3),
+         type: 'bar', marker: {color: 'rgba(57,210,192,0.5)'}, name: 'Daily x3', yaxis: 'y2'},
+      ], {
+        ...PLOTLY_LAYOUT_BASE,
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Cumulative $' },
+        yaxis2: { title: '$/3d', overlaying: 'y', side: 'right', gridcolor: 'transparent' },
+        xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: 'days ahead' },
+        legend: { x: 0, y: 1.1, orientation: 'h' },
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    // Calendar grid
+    const cg = v.calendar_grid;
+    if (cg && cg.strikes && cg.expiries) {
+      const head = '<thead><tr><th>Strike\\Expiry</th>' +
+        cg.expiries.map(e => `<th class="mono">${e.slice(5)}</th>`).join('') + '</tr></thead>';
+      const cells = {};
+      cg.cells.forEach(c => { cells[c.strike + '|' + c.expiry] = c; });
+      const body = cg.strikes.map(k => {
+        const itm = (k > cg.spot * 0.95 && k < cg.spot * 1.05) ? 'style="background:rgba(88,166,255,0.05)"' : '';
+        return '<tr ' + itm + '><td class="mono">$' + k.toFixed(1) + '</td>' +
+          cg.expiries.map(e => {
+            const c = cells[k + '|' + e];
+            if (!c) return '<td>–</td>';
+            const parts = [];
+            if (c.C !== 0) parts.push(`<span style="color:${c.C>0?'var(--green)':'var(--red)'}">${c.C>0?'+':''}${c.C}C</span>`);
+            if (c.P !== 0) parts.push(`<span style="color:${c.P>0?'var(--green)':'var(--red)'}">${c.P>0?'+':''}${c.P}P</span>`);
+            return `<td class="mono" style="font-size:0.7rem">${parts.join('<br/>') || '–'}</td>`;
+          }).join('') + '</tr>';
+      }).join('');
+      document.querySelector('#calendar-grid-table').innerHTML = head + '<tbody>' + body + '</tbody>';
+    }
 
     // Portfolio Greeks cards
     const g = v.portfolio_greeks;

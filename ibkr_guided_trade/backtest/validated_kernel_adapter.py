@@ -360,6 +360,12 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     try:
         out['position_analysis'] = _per_position_analysis(positions or [], spot, snap)
         out['portfolio_greeks'] = _portfolio_greeks(positions or [], spot)
+        out['pnl_curve'] = _pnl_curve(positions or [], spot)
+        out['delta_curve'] = _delta_curve(positions or [], spot)
+        out['theta_by_expiry'] = _theta_by_expiry(positions or [], spot)
+        out['theta_waterfall'] = _theta_waterfall(positions or [], spot)
+        out['calendar_grid'] = _calendar_grid(positions or [], spot)
+        out['daily_status'] = _daily_status(out)
     except Exception as e:
         out['position_analysis_error'] = str(e)
 
@@ -470,6 +476,222 @@ def _per_position_analysis(positions, spot, snap):
         })
     results.sort(key=lambda r: (r['dte'], r['right']))
     return results
+
+
+def _intrinsic_value(K, spot, right):
+    if right == 'C':
+        return max(0, spot - K)
+    return max(0, K - spot)
+
+
+def _pnl_curve(positions, spot_now):
+    """P&L profile at expiration across UNG price range."""
+    import math
+    from datetime import date as _date
+    today = _date.today()
+    # Range: 70% to 130% of current spot
+    prices = [spot_now * (0.70 + 0.01 * i) for i in range(61)]
+    pnl = []
+    for s in prices:
+        total = 0.0
+        for p in positions:
+            if p.get('symbol','').upper() != 'UNG': continue
+            qty = int(p.get('quantity', 0) or 0)
+            if qty == 0: continue
+            if p.get('is_option'):
+                K = float(p.get('strike') or 0)
+                right = 'C' if p.get('option_type') == 'CALL' else 'P'
+                intrinsic = _intrinsic_value(K, s, right)
+                # P&L vs current market price (use book value as cost basis proxy)
+                avg = float(p.get('average_price', 0) or 0)
+                # Short: collect avg, pay intrinsic at expiry
+                # Long: paid avg, get intrinsic at expiry
+                if qty < 0:
+                    total += abs(qty) * (avg - intrinsic) * 100
+                else:
+                    total += qty * (intrinsic - avg) * 100
+            else:
+                avg = float(p.get('average_price', 0) or 0)
+                total += qty * (s - avg)
+        pnl.append(round(total, 0))
+    return {
+        'prices': [round(x, 2) for x in prices],
+        'pnl': pnl,
+        'spot_now': spot_now,
+    }
+
+
+def _delta_curve(positions, spot_now):
+    """Total portfolio delta as UNG price varies."""
+    import math
+    from datetime import date as _date
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    today = _date.today()
+    prices = [spot_now * (0.80 + 0.01 * i) for i in range(41)]
+    deltas = []
+    for s in prices:
+        td = 0.0
+        for p in positions:
+            if p.get('symbol','').upper() != 'UNG': continue
+            qty = int(p.get('quantity', 0) or 0)
+            if qty == 0: continue
+            if p.get('is_option'):
+                K = float(p.get('strike') or 0)
+                right = 'C' if p.get('option_type') == 'CALL' else 'P'
+                try:
+                    exp_d = _date.fromisoformat(p.get('expiry', ''))
+                    dte = (exp_d - today).days
+                    if dte <= 0: continue
+                except Exception:
+                    continue
+                iv = None
+                if surf and latest_surf:
+                    iv = iv_from_surface(surf, latest_surf, K, dte, right)
+                if iv is None: iv = 0.50
+                d, _, _, _ = _bs_greeks(s, K, dte/365, 0.045, iv, right)
+                td += d * 100 * qty
+            else:
+                td += qty
+        deltas.append(round(td, 1))
+    return {'prices': [round(x, 2) for x in prices], 'deltas': deltas, 'spot_now': spot_now}
+
+
+def _theta_by_expiry(positions, spot):
+    """Daily theta collection grouped by expiration date."""
+    import math
+    from datetime import date as _date
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    today = _date.today()
+    bucket = {}
+    for p in positions:
+        if p.get('symbol','').upper() != 'UNG': continue
+        if not p.get('is_option'): continue
+        qty = int(p.get('quantity', 0) or 0)
+        if qty == 0: continue
+        K = float(p.get('strike') or 0)
+        right = 'C' if p.get('option_type') == 'CALL' else 'P'
+        try:
+            exp_d = _date.fromisoformat(p.get('expiry', ''))
+            dte = (exp_d - today).days
+            if dte <= 0: continue
+        except Exception:
+            continue
+        iv = None
+        if surf and latest_surf:
+            iv = iv_from_surface(surf, latest_surf, K, dte, right)
+        if iv is None: iv = 0.50
+        _, _, theta, _ = _bs_greeks(spot, K, dte/365, 0.045, iv, right)
+        # Negate: short positions collect theta as positive income
+        contrib = -theta * 100 * qty
+        bucket[p.get('expiry')] = bucket.get(p.get('expiry'), 0.0) + contrib
+    rows = [{'expiry': k, 'theta_per_day': round(v, 2)} for k, v in bucket.items()]
+    rows.sort(key=lambda r: r['expiry'])
+    return rows
+
+
+def _theta_waterfall(positions, spot):
+    """Cumulative theta projection over next 60 days."""
+    import math
+    from datetime import date as _date, timedelta
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    today = _date.today()
+    result = []
+    cumulative = 0.0
+    for d_ahead in range(0, 61, 3):
+        future = today + timedelta(days=d_ahead)
+        # Sum theta collected if positions held flat
+        daily = 0.0
+        for p in positions:
+            if p.get('symbol','').upper() != 'UNG': continue
+            if not p.get('is_option'): continue
+            qty = int(p.get('quantity', 0) or 0)
+            if qty == 0: continue
+            K = float(p.get('strike') or 0)
+            right = 'C' if p.get('option_type') == 'CALL' else 'P'
+            try:
+                exp_d = _date.fromisoformat(p.get('expiry', ''))
+            except Exception:
+                continue
+            dte_remaining = (exp_d - future).days
+            if dte_remaining <= 0: continue
+            iv = None
+            if surf and latest_surf:
+                iv = iv_from_surface(surf, latest_surf, K, dte_remaining, right)
+            if iv is None: iv = 0.50
+            _, _, theta, _ = _bs_greeks(spot, K, dte_remaining/365, 0.045, iv, right)
+            daily += -theta * 100 * qty
+        cumulative += daily * 3  # 3-day step
+        result.append({
+            'day': d_ahead, 'date': future.isoformat(),
+            'daily_theta': round(daily, 2),
+            'cumulative_theta': round(cumulative, 2),
+        })
+    return result
+
+
+def _calendar_grid(positions, spot):
+    """Rolling calendar: strike × expiry → contracts held."""
+    grid = {}
+    strikes = set()
+    expiries = set()
+    for p in positions:
+        if p.get('symbol','').upper() != 'UNG': continue
+        if not p.get('is_option'): continue
+        qty = int(p.get('quantity', 0) or 0)
+        if qty == 0: continue
+        K = float(p.get('strike') or 0)
+        right = 'C' if p.get('option_type') == 'CALL' else 'P'
+        exp = p.get('expiry')
+        strikes.add(K)
+        expiries.add(exp)
+        key = (K, exp)
+        grid.setdefault(key, {'C': 0, 'P': 0})
+        grid[key][right] += qty
+    return {
+        'strikes': sorted(strikes),
+        'expiries': sorted(expiries),
+        'cells': [{'strike': k, 'expiry': e, **grid[(k,e)]}
+                  for (k, e) in grid.keys()],
+        'spot': spot,
+    }
+
+
+def _daily_status(out):
+    """Roll up overall portfolio health into a single banner status."""
+    # Critical: over-leveraged or near-assignment
+    collat_pct = out.get('put_collateral_pct_nav', 0)
+    regime = out.get('regime', 'NEUTRAL')
+    share_delta = out.get('share_delta', 0)
+    z = out.get('z_surprise', 0)
+    issues = []
+    headline = 'All systems nominal'
+    color = 'green'
+    if collat_pct > 0.8:
+        color = 'red'
+        headline = 'OVER-LEVERAGED — do not open new puts'
+        issues.append(f'Put collateral {collat_pct*100:.0f}% of NAV')
+    elif collat_pct > 0.6:
+        color = 'orange'
+        headline = 'Elevated leverage — caution on new exposure'
+        issues.append(f'Put collateral {collat_pct*100:.0f}% of NAV')
+    elif abs(share_delta) >= 800:
+        color = 'orange'
+        headline = f'Share count off target by {abs(share_delta)} — gradual rebalance'
+        issues.append(f'Δ shares: {share_delta:+d}')
+    elif regime in ('RICH', 'EXTREME_RICH'):
+        color = 'orange'
+        headline = f'{regime} regime — favor share-cut over accumulation'
+        issues.append(f'z={z:+.2f}')
+    elif regime == 'NEUTRAL':
+        headline = 'NEUTRAL — premium harvest mode'
+    elif regime in ('CHEAP', 'EXTREME_CHEAP'):
+        headline = f'{regime} — load up if not over-leveraged'
+        color = 'green'
+
+    return {'color': color, 'headline': headline, 'issues': issues}
 
 
 def _portfolio_greeks(positions, spot):
