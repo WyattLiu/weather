@@ -1,5 +1,18 @@
 """Fetch UNG historical option chain + greeks from ThetaData.
 
+CRITICAL CAVEAT (discovered 2026-06-03):
+ThetaData returns UNADJUSTED prices and UNADJUSTED strikes. UNG has had
+multiple reverse splits (Feb 2017, Apr 2022, Apr 2024 — all 1-for-4).
+So adjusted spot $21.76 on 2024-01-03 corresponds to UNADJUSTED ~$5.44.
+A strike "$22" query returns DEEP ITM contracts (put bid $16.50 because
+true market strike was 22 vs $5.44 spot).
+
+To use ThetaData for backtest pricing we MUST first build a split-
+adjustment map: yfinance_adjusted_strike → ThetaData_unadjusted_strike
+per historical date. Until then, use IBKR IV30 (single time-series,
+no strike mapping needed).
+
+
 Per ~/spx_strategies/docs/data_sources/api_reference.md, ThetaData Options
 STANDARD covers full OPRA NBBO + greeks for any underlying, including UNG.
 Terminal at http://127.0.0.1:25503.
@@ -73,29 +86,41 @@ def get_strikes(symbol, expiration):
 def get_quote_eod(symbol, expiration, strike, right, date_str):
     """EOD-ish quote for one option contract on one date.
 
-    Uses /v3/option/history/quote with 1m interval, takes 15:55 ET bar.
+    Uses /v3/option/history/quote with 1h interval, takes any post-noon bar
+    with non-zero quote. Returns mid price or None.
     """
     r = requests.get(f'{THETA_BASE}/v3/option/history/quote', params={
         'symbol': symbol, 'expiration': expiration.replace('-',''),
         'right': right, 'strike': strike,
         'start_date': date_str.replace('-',''),
         'end_date': date_str.replace('-',''),
-        'interval': '1m', 'format': 'json',
+        'interval': '1h', 'format': 'json',
     }, timeout=15)
     if r.status_code != 200:
         return None
-    data = r.json().get('response', [])
+    try:
+        data = r.json().get('response', [])
+    except Exception:
+        return None
     if not data or not data[0].get('data'):
         return None
     bars = data[0]['data']
-    # Pick last bar before 16:00 with non-zero quote
-    for bar in reversed(bars):
+    # Pick any bar from afternoon (12:00+) with valid 2-sided quote
+    best_mid = None
+    for bar in bars:
         ts = bar.get('timestamp', '')
-        if '15:5' in ts or '15:4' in ts:
-            bid, ask = bar.get('bid', 0), bar.get('ask', 0)
-            if bid > 0 and ask > 0:
-                return (bid + ask) / 2
-    return None
+        # ts like '2024-01-08T13:30:00.000'
+        hh = ts.split('T')[1][:2] if 'T' in ts else '00'
+        try:
+            hour = int(hh)
+        except Exception:
+            continue
+        if hour < 12:
+            continue
+        bid, ask = bar.get('bid', 0), bar.get('ask', 0)
+        if bid > 0 and ask > 0 and ask > bid:
+            best_mid = (bid + ask) / 2  # take last valid
+    return best_mid
 
 
 def fetch_iv_surface(symbol='UNG', start_date='2021-06-01', end_date=None,
