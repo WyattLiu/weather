@@ -370,7 +370,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
     """Simpler procedural runner with state dict."""
     s = {
         'cash': initial_cash, 'shares': initial_shares, 'boxx': 0, 'kold': 0,
-        'short_puts': [], 'short_calls': [], 'long_puts': [],
+        'short_puts': [], 'short_calls': [], 'long_puts': [], 'long_calls': [],
+        'upside_call_open': None,
     }
     history = []
     trades = []
@@ -559,6 +560,34 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             target = int(base_shares * mult)
             target = (target // 100) * 100
             current = s['shares']
+            # MOMENTUM OVERRIDE — when shares are about to be TRIMMED (rich
+            # regime) BUT trend is clearly bullish (50/20d MAs ripping),
+            # hold shares anyway. Captures spike runups (2022-style) that
+            # pure z-target would have trimmed too early. Doesn't override
+            # ADD direction — accumulation always proceeds.
+            momentum_override = p.get('momentum_override', False)
+            if momentum_override and target < current and i > 50:
+                try:
+                    win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                    win20 = df['UNG'].iloc[max(0,i-19):i+1]
+                    win5 = df['UNG'].iloc[max(0,i-4):i+1]
+                    ma50 = win50.mean(); ma20 = win20.mean(); ma5 = win5.mean()
+                    # Steep bullish: short MA > med MA > long MA + recent gain
+                    recent_gain = (spot_u / win50.iloc[0] - 1) if win50.iloc[0] > 0 else 0
+                    rip = (ma5 > ma20 * 1.03) and (ma20 > ma50 * 1.03) and (recent_gain > 0.20)
+                    if rip:
+                        # Suspend trim — set target to current
+                        target = current
+                        # Log once per regime turn
+                        if not s.get('_momentum_overriding'):
+                            trades.append({'date': idx, 'type': 'MOMENTUM_OVERRIDE_HOLD',
+                                           'pnl': 0.0, 'spot': spot_u, 'z': z,
+                                           'shares': current})
+                        s['_momentum_overriding'] = True
+                    else:
+                        s['_momentum_overriding'] = False
+                except Exception:
+                    pass
             delta = target - current
             # Cut speed tunable: 0.3 = slow (30% toward target per cadence),
             # 0.5 = balanced (default), 1.0 = full snap. Higher = faster cut.
@@ -959,6 +988,51 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         if s['kold'] > 0 and z > -0.3:
             s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
             s['kold'] = 0
+
+        # LONG OTM CALL UPSIDE TICKET — when EXTREME_CHEAP regime, allocate
+        # tiny NAV % to far-OTM calls. Bounded downside, convex upside.
+        # Fills the "missed 2022 spike" gap on protected variants without
+        # giving up MDD discipline. Premium is small because OTM + cheap
+        # regime depresses IV.
+        upside_ticket_pct = p.get('upside_ticket_pct', 0)
+        if upside_ticket_pct > 0 and z < -1.0 and not s.get('upside_call_open'):
+            # Buy 90d calls 30% OTM — far enough to be cheap, close enough
+            # to pay in a real spike
+            Kc = round(spot_u * 1.30)
+            dte_c = 90
+            cost = bs_call(spot_u, Kc, dte_c/365, iv_at(Kc, dte_c, 'C'))
+            if cost > 0.05:
+                budget = cur_nav * upside_ticket_pct
+                qty_c = int(budget / (cost * 100))
+                if qty_c >= 1 and s['cash'] > qty_c * cost * 100 + 200:
+                    debit = qty_c * cost * 100 + qty_c * SPREAD_OPTION * 100
+                    s['cash'] -= debit
+                    s.setdefault('long_calls', []).append({'entry': idx, 'K': Kc,
+                                                           'dte': dte_c, 'qty': qty_c,
+                                                           'cost': cost})
+                    s['upside_call_open'] = idx
+                    trades.append({'date': idx, 'type': 'OPEN_UPSIDE_TICKET',
+                                   'pnl': -debit, 'K': Kc, 'qty': qty_c,
+                                   'spot': spot_u, 'z': z})
+
+        # Expire / value long calls (upside tickets)
+        if s.get('long_calls'):
+            keep = []
+            for lc in s['long_calls']:
+                days = (idx - lc['entry']).days
+                if days >= lc['dte']:
+                    # Expire — settle vs spot
+                    payoff = max(0, spot_u - lc['K']) * 100 * lc['qty']
+                    s['cash'] += payoff
+                    if payoff > 0:
+                        trades.append({'date': idx, 'type': 'UPSIDE_TICKET_PAYOFF',
+                                       'pnl': payoff - lc['cost']*100*lc['qty'],
+                                       'qty': lc['qty'], 'K': lc['K'], 'spot': spot_u})
+                    if s.get('upside_call_open') == lc['entry']:
+                        s['upside_call_open'] = None
+                else:
+                    keep.append(lc)
+            s['long_calls'] = keep
 
         # SHOULDER-SEASON KOLD HEDGE — March-May and Sept-Nov are NG's
         # structurally weak periods (low HDD/CDD, storage builds). KOLD
@@ -2443,6 +2517,62 @@ STRATEGIES = {
         'cut_and_rebuild_puts': True,
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
+    },
+    # CHAMPION + momentum override (capture spike runs without giving up MDD)
+    'champion_20pct_protected_momentum': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_override': True,
+    },
+    # CHAMPION + upside ticket (fills the 2022-spike-capture gap)
+    'champion_20pct_protected_upside': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_ticket_pct': 0.02,  # 2% NAV in 30% OTM 90DTE calls when EXTREME_CHEAP
+    },
+    'champion_20pct_protected_upside_heavy': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_ticket_pct': 0.04,
     },
     # HIGH-RETURN BASES + protection layer (cut_rebuild + z_target + shoulder)
     # Goal: retain old champion's 140%+ return profile but cap MDD at <-10%
