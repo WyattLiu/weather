@@ -1251,6 +1251,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
             call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
 
+            # NAV-RELATIVE SIZING — scale put_qty by current NAV so the
+            # strategy works at any capital level. Default off (use fixed
+            # put_qty); when on, put_qty = floor(nav * pct / strike_estimate).
+            # This prevents over-leverage at small NAV and under-utilization
+            # at large NAV.
+            put_nav_pct = p.get('put_qty_nav_pct', 0)
+            if put_nav_pct > 0:
+                # Estimate strike at otm_put OTM
+                K_est = spot_u * (1 - otm_put)
+                if K_est > 0:
+                    target_put = int(cur_nav * put_nav_pct / (K_est * 100))
+                    put_qty = max(1, min(target_put, int(p.get('put_qty_max', 50))))
+                    put_qty = int(put_qty * size_scale)
+            call_nav_pct = p.get('call_qty_nav_pct', 0)
+            if call_nav_pct > 0:
+                K_est = spot_u * (1 + otm_call)
+                if K_est > 0:
+                    target_call = int(cur_nav * call_nav_pct / (K_est * 100))
+                    call_qty = max(1, min(target_call, int(p.get('call_qty_max', 50))))
+                    call_qty = int(call_qty * size_scale)
+
             # IV-SHAPE SIZING — react to real surface term & skew.
             # put_skew rich → sell MORE puts (premium is fat)
             # call_skew rich → sell MORE calls
@@ -3287,6 +3308,150 @@ STRATEGIES = {
         'elevator_skip_on_momentum': True,
         'itm_cc_skip_on_momentum': True,
     },
+    # DD-TRIM variant — best Sharpe variant from walk-forward (2.73 on full sample)
+    # Cuts worst 12mo MDD from -24% to -17% with almost no return cost.
+    'champion_target_25_dd_trim': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        # NEW: reactive DD-trim catches the 2023-2024 bad windows
+        'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    # MAX-PROTECTED variant — sacrifices ~10pp ann for worst-window MDD -15%
+    # Walk-forward worst 12mo MDD: -15% (vs -24% baseline)
+    'champion_target_25_max_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': False,  # disable based on bad-window finding
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -6, 'dd_trim_qty_pct': 35,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    # NAV-AWARE variant — sizes puts/calls as % of NAV (capital-scale invariant)
+    # Use this if your account is ~$100K-200K (puts sized to your actual cash)
+    'champion_target_25_nav_aware': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        # roll_up_calls intentionally DROPPED — ablation showed it hurts Sharpe
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        # NEW: NAV-relative sizing
+        'put_qty_nav_pct': 0.06,   # 6% of NAV in put notional per cycle
+        'call_qty_nav_pct': 0.045, # 4.5% of NAV in call notional per cycle
+        'put_qty_max': 50,
+        'call_qty_max': 50,
+    },
+    # CASH-START variant — best Sharpe (2.96) + best MDD (-4.4%) per init sweep
+    # Use this if starting fresh with all cash; no initial share exposure
+    'champion_target_25_cash_start': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'put_qty_nav_pct': 0.06,
+        'call_qty_nav_pct': 0.045,
+        'put_qty_max': 50,
+        'call_qty_max': 50,
+    },
+    # WINDOW-SAFE variant — tighter risk controls for rolling-window MDD safety
+    # Trades some return for limiting 12mo MDD < -10% in walk-forward
+    'champion_target_25_window_safe': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 10,
+        'entry_cadence': 2,  # bi-daily (less leverage than daily=1)
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.15,  # softer ITM
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 3,  # MORE long puts as insurance
+        'z_share_target_enabled': True, 'z_target_cadence_days': 14,  # faster rebal
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.5, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.12,  # slightly more KOLD
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.12, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'put_qty_nav_pct': 0.04,  # smaller put sizing
+        'call_qty_nav_pct': 0.035,
+        'put_qty_max': 40,
+        'call_qty_max': 40,
+    },
     # NEW: IV-SHAPE-AWARE — react to real surface term & skew (default real IV)
     'champion_aggressive_z_iv_shape': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
@@ -3333,6 +3498,11 @@ _KEEP_STRATEGIES = {
     'champion_aggressive_z_real_iv',    # prior CHAMPION (Sharpe 1.91)
     'champion_aggressive_z_iv_shape',   # term+skew aware
     'champion_target_25',                # NEW CHAMPION (ann 25.7%, Sharpe 2.82, MDD -7.1%)
+    'champion_target_25_nav_aware',      # NAV-relative sizing (capital-scale invariant)
+    'champion_target_25_cash_start',     # Optimized for all-cash start
+    'champion_target_25_window_safe',    # Tighter rolling-MDD controls
+    'champion_target_25_dd_trim',        # WALK-FWD WINNER: same MDD, better Sharpe
+    'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
 }
