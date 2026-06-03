@@ -2608,6 +2608,32 @@ STRATEGIES = {
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
     },
+    # NEW HARNESS WINNER: aggressive z-target mults push Sharpe to 1.86
+    # Counter-intuitive: trimming MORE at rich + loading MORE at cheap
+    # IMPROVES everything (Sharpe, return, MDD all better). Cash from
+    # rich trims funds bigger accumulation at lows.
+    'champion_aggressive_z': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
     # CHAMPION + MOMENTUM GATES (preserve spike capture by not forcing
     # ITM assignment / elevator close during confirmed parabolic move)
     'champion_20pct_protected_mom_gated': {

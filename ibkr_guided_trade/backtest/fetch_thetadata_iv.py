@@ -43,6 +43,30 @@ THETA_BASE = 'http://127.0.0.1:25503'
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+# UNG split history (from yfinance .splits): (date, ratio) where ratio < 1
+# means reverse split. Cumulative factor going FORWARD from each date to
+# today, used to convert yfinance-adjusted prices to real market prices.
+UNG_SPLITS = [
+    ('2011-03-09', 0.50),
+    ('2012-02-22', 0.25),
+    ('2018-01-05', 0.25),
+    ('2024-01-24', 0.25),
+]
+
+
+def split_factor_on(date_str):
+    """Cumulative split factor as of a given date.
+
+    adjusted_price_yfinance = real_market_price * factor
+    real_market_price = adjusted_price_yfinance / factor
+    real_strike = adjusted_strike / factor
+    """
+    factor = 1.0
+    for split_date, ratio in UNG_SPLITS:
+        if date_str < split_date:
+            factor /= ratio  # going backward through a 0.25 split = 4x
+    return factor
+
 
 def bs_implied_vol(target_price, S, K, T, r, right):
     """Newton-Raphson IV from BSM mid price. Returns None on failure."""
@@ -145,8 +169,11 @@ def fetch_iv_surface(symbol='UNG', start_date='2021-06-01', end_date=None,
     n_total = len(spot_df)
     t0 = time.time()
     for i, (d, row) in enumerate(spot_df.iterrows()):
-        spot = float(row['UNG'])
+        adj_spot = float(row['UNG'])
         d_str = d.strftime('%Y-%m-%d')
+        # Convert to real market spot for strike matching
+        sf = split_factor_on(d_str)
+        spot = adj_spot / sf
         # Find front-month expiry ≥ dte_target days out
         target_exp = None
         for exp in expirations:
@@ -179,9 +206,15 @@ def fetch_iv_surface(symbol='UNG', start_date='2021-06-01', end_date=None,
                 T = actual_dte / 365
                 iv = bs_implied_vol(mid, spot, K, T, 0.045, right)
                 if iv is not None and 0.05 < iv < 3.0:
+                    # Store ADJUSTED strike so backtest can lookup directly
                     rows.append({'date': d_str, 'expiration': target_exp,
-                                 'dte': actual_dte, 'strike': K, 'right': right,
-                                 'spot': spot, 'mid': mid, 'iv': iv})
+                                 'dte': actual_dte,
+                                 'strike_adj': K * sf,  # back to adjusted space
+                                 'strike_real': K,
+                                 'right': right,
+                                 'spot_adj': adj_spot, 'spot_real': spot,
+                                 'mid': mid, 'iv': iv,
+                                 'split_factor': sf})
 
         if (i+1) % 10 == 0:
             elapsed = time.time() - t0
