@@ -81,17 +81,61 @@ def compute_historical_z(row, use_surprise=False):
         z_components.append(-row['storage_z'])
         weights.append(1.0)
 
-    # All other components removed per IC audit:
-    # - days_supply_z      IC +0.04   (too weak)
-    # - ng_trend           IC +0.024  (also had sign bug — was *-3)
-    # - VIX                IC -0.078  (counterintuitive sign, irrelevant to NG)
-    # - CL/NG ratio        IC +0.086  (diluter when combined)
-    # - rv_30              IC +0.140  (USEFUL but as separate vol regime signal,
-    #                                  not folded into directional z)
+    # Other fundamental signals NOT in z directly (would dilute) but used
+    # via compute_fundamental_health() for sizing modulation + dashboard.
+    # See [[project_z_audit]].
 
     if not z_components:
         return 0.0
     return float(np.average(z_components, weights=weights))
+
+
+def compute_fundamental_health(row) -> dict:
+    """Separate fundamental score — NOT a predictor, but interpretability +
+    sizing modulator + risk context. Each component independently rated
+    in [-1, +1] where + = bullish for NG.
+
+    Returns:
+      dict with each pillar + 'sum' (rough overall health).
+
+    Use cases:
+      - Dashboard display (show operator why z says what it says)
+      - Sizing modulation (down-size when fundamentals weak even if z neutral)
+      - Risk gating (don't sell deep OTM puts when LNG exports dropping)
+    """
+    out = {'storage': 0.0, 'days_supply': 0.0, 'cl_ng_ratio': 0.0,
+           'price_band': 0.0, 'rv_regime': 0.0, 'sum': 0.0}
+    try:
+        # Storage component (low = bullish, signed +)
+        sz = float(row.get('storage_z') or 0)
+        out['storage'] = max(-1, min(1, -sz / 2.0))
+        # Days supply (low = bullish)
+        dz = float(row.get('days_supply_z') or 0)
+        out['days_supply'] = max(-1, min(1, -dz / 2.0))
+        # CL/NG ratio
+        cl = float(row.get('CL') or 0)
+        ng = float(row.get('NG') or 0)
+        if ng > 0:
+            ratio = cl / ng
+            # ~25 typical, > 30 = NG cheap relative
+            out['cl_ng_ratio'] = max(-1, min(1, (ratio - 25) / 10))
+        # Price band (high in 120d range = mean-rev bearish)
+        spot = float(row.get('UNG') or 0)
+        lo = float(row.get('ung_252d_mean') or 0)
+        std = float(row.get('ung_252d_std') or 1)
+        if std > 0 and lo > 0:
+            band = (spot - lo) / std
+            out['price_band'] = max(-1, min(1, -band / 2.0))
+        # Vol regime — high RV is risk caution signal (not bullish/bearish, more "be careful")
+        rv = float(row.get('rv_30') or 0.5)
+        if rv > 0.80:
+            out['rv_regime'] = -0.5   # high vol → cautious
+        elif rv < 0.40:
+            out['rv_regime'] = +0.2   # calm = mild positive
+    except Exception:
+        pass
+    out['sum'] = sum(v for k, v in out.items() if k != 'sum')
+    return out
 
 
 def precompute_factor_z(df):
@@ -862,6 +906,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if p.get('kelly_firmness'):
                         firm = firmness_multiplier(row, z, anomaly)
                         kelly_q = int(kelly_q * firm)
+                    # FUNDAMENTAL SIZE MODULATION — fundamentals don't predict
+                    # direction (per IC audit) but they modulate confidence.
+                    # If fundamentals strongly support the position, size up
+                    # 20%. If they contradict, size down 30%.
+                    if p.get('fundamental_modulation'):
+                        f = compute_fundamental_health(row)
+                        f_sum = f['sum']  # ~[-5, +5]
+                        if f_sum > 1.5:
+                            kelly_q = int(kelly_q * 1.2)
+                        elif f_sum < -1.5:
+                            kelly_q = int(kelly_q * 0.7)
                     put_qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
@@ -1781,6 +1836,20 @@ STRATEGIES = {
         'trend_aware_roll': True,
         'kelly_sizing': True, 'kelly_conviction': True,
         'use_scenario_dist': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Fundamentals back — used as SIZING modulator (not in z)
+    'kelly_fundamental_modulated': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
         'kelly_max_qty': 20,
         'open_dte': 45,
         'vol_aware_dte': True,
