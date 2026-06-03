@@ -81,8 +81,12 @@ def compute_historical_z(row, use_surprise=False):
         weights.append(0.20)
 
     # VIX (market fear) — mildly bearish for NG (demand fear)
-    if 'VIX' in row and not pd.isna(row['VIX']):
-        vix_normed = (row['VIX'] - 20) / 10  # rough z
+    # VIX removed 20260602: it's S&P implied vol, not NG-related. Was a
+    # weak heuristic ("market fear → bearish risk assets") and silently 100%
+    # NaN due to tz join bug. User: "why we care vix?" — we don't.
+    # Will be restored only if a NG-specific volatility signal is added.
+    if False and 'VIX' in row and not pd.isna(row['VIX']):  # disabled
+        vix_normed = (row['VIX'] - 20) / 10
         z_components.append(-vix_normed * 0.5)
         weights.append(0.10)
 

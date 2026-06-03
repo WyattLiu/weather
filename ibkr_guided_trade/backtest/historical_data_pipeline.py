@@ -40,7 +40,12 @@ def fetch_ung_kold_boil(years=5):
             t = yf.Ticker(sym)
             df = t.history(period=period)
             if not df.empty:
-                out[sym.replace('=F', '').replace('-Y.NYB', '_DXY').replace('^', '')] = df['Close']
+                # FIX 20260602: normalize index to DATE only (drop time + tz)
+                # yfinance returns different exchanges with different tz which
+                # caused VIX (Chicago) join to UNG (NY) to produce 100% NaN.
+                series = df['Close'].copy()
+                series.index = pd.to_datetime(series.index.date)
+                out[sym.replace('=F', '').replace('-Y.NYB', '_DXY').replace('^', '')] = series
                 print(f"  {sym:>10}: {len(df)} bars, ${df['Close'].iloc[-1]:.2f}")
         except Exception as e:
             print(f"  {sym}: failed ({e})")

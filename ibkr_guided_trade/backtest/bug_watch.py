@@ -209,7 +209,7 @@ def check_dataset_signals(report: BugReport):
     cache_path = os.path.join(_here, 'cache', 'master_dataset.csv')
     if not os.path.exists(cache_path):
         return
-    df = pd.read_csv(cache_path, parse_dates=['Date'], index_col=0)
+    df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG'])
 
     # Signals that should vary day-to-day in a long sample
@@ -272,7 +272,7 @@ def check_sample_bias(report: BugReport, top_n: int = 5):
     cache_path = os.path.join(_here, 'cache', 'master_dataset.csv')
     if not os.path.exists(cache_path):
         return
-    df = pd.read_csv(cache_path, parse_dates=['Date'], index_col=0)
+    df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG'])
 
     start_dates = ['2021-06', '2021-12', '2022-06', '2022-12', '2023-06']
