@@ -870,7 +870,22 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # AND short call is deep ITM with low extrinsic →
             # buy-to-close call + sell underlying shares to lock the rally
             # gain before mean reversion. Avoids waiting for assignment.
-            if p.get('elevator_close') and T_left > 1/365:
+            # MOMENTUM GATE: if elevator_skip_on_momentum is enabled and
+            # confirmed parabolic uptrend is in progress, SKIP elevator-close.
+            # Holds the spike instead of locking small gains while it runs.
+            skip_elevator = False
+            if p.get('elevator_skip_on_momentum') and i > 200:
+                try:
+                    win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                    win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                    ma50 = win50.mean(); ma200 = win200.mean()
+                    ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                    if ma50 > ma200 * 1.05 and ret90 > 0.30:
+                        skip_elevator = True
+                except Exception:
+                    pass
+
+            if p.get('elevator_close') and T_left > 1/365 and not skip_elevator:
                 deep_itm_thresh = p.get('elevator_itm_pct', 0.05)
                 is_deep_itm = spot_u > sc['K'] * (1 + deep_itm_thresh)
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
@@ -988,6 +1003,46 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         if s['kold'] > 0 and z > -0.3:
             s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
             s['kold'] = 0
+
+        # MOMENTUM CALL LAYER — buy OTM calls during confirmed parabolic
+        # uptrend. Decouples upside capture from share holding (so we still
+        # benefit from z_target's protective trim on the eventual crash).
+        # Trigger: 50d/200d MA cross AND 90d return > momentum_threshold.
+        # Sizing: small NAV % per fire, max stack of N concurrent positions.
+        mom_call_pct = p.get('momentum_call_pct', 0)
+        if mom_call_pct > 0 and i > 200:
+            try:
+                win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                ma50 = win50.mean(); ma200 = win200.mean()
+                ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                mom_threshold = p.get('momentum_call_threshold', 0.20)
+                bullish_cross = ma50 > ma200 * 1.05
+                strong_momentum = ret90 > mom_threshold
+                existing_mom_calls = len([lc for lc in s.get('long_calls', [])
+                                          if lc.get('momentum_call')])
+                max_stack = p.get('momentum_call_max_stack', 3)
+                # Fire monthly cadence to ladder positions through the move
+                if bullish_cross and strong_momentum and existing_mom_calls < max_stack and i % 21 == 0:
+                    Kc = round(spot_u * (1 + p.get('momentum_call_otm_pct', 0.15)))
+                    dte_c = p.get('momentum_call_dte', 90)
+                    cost = bs_call(spot_u, Kc, dte_c/365, iv_at(Kc, dte_c, 'C'))
+                    if cost > 0.05:
+                        budget = cur_nav * mom_call_pct
+                        qty_c = int(budget / (cost * 100))
+                        if qty_c >= 1 and s['cash'] > qty_c * cost * 100 + 200:
+                            debit = qty_c * cost * 100 + qty_c * SPREAD_OPTION * 100
+                            s['cash'] -= debit
+                            s.setdefault('long_calls', []).append({
+                                'entry': idx, 'K': Kc, 'dte': dte_c,
+                                'qty': qty_c, 'cost': cost,
+                                'momentum_call': True,
+                            })
+                            trades.append({'date': idx, 'type': 'OPEN_MOMENTUM_CALL',
+                                           'pnl': -debit, 'K': Kc, 'qty': qty_c,
+                                           'spot': spot_u, 'ret90': ret90})
+            except Exception:
+                pass
 
         # LONG OTM CALL UPSIDE TICKET — when EXTREME_CHEAP regime, allocate
         # tiny NAV % to far-OTM calls. Bounded downside, convex upside.
@@ -1378,6 +1433,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
+                # Disable aggressive ITM CC during confirmed momentum
+                if use_itm and p.get('itm_cc_skip_on_momentum') and i > 200:
+                    try:
+                        win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                        win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                        ma50 = win50.mean(); ma200 = win200.mean()
+                        ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                        if ma50 > ma200 * 1.05 and ret90 > 0.30:
+                            use_itm = False
+                    except Exception:
+                        pass
                 # REGIME-AWARE CC STRIKE: when z is BEARISH/rich, push CC
                 # strike closer or ITM (force assignment, divest shares).
                 # When z is BULLISH/cheap, push CC FARTHER OTM (preserve
@@ -2541,6 +2607,76 @@ STRATEGIES = {
         'cut_and_rebuild_puts': True,
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
+    },
+    # CHAMPION + MOMENTUM GATES (preserve spike capture by not forcing
+    # ITM assignment / elevator close during confirmed parabolic move)
+    'champion_20pct_protected_mom_gated': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        # MOMENTUM GATES — skip pinch-the-spike mechanics during true parabola
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
+    # CHAMPION + MOMENTUM CALL LAYER — buy OTM calls during 2022-style spikes
+    # Decouples upside capture from share holding. Targets the 1-bad-year
+    # (2022) where protected gave up $226K to unprotected.
+    'champion_20pct_protected_momcalls': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_call_pct': 0.02,           # 2% NAV per ladder rung
+        'momentum_call_threshold': 0.20,     # 90d return > 20%
+        'momentum_call_otm_pct': 0.15,       # 15% OTM
+        'momentum_call_dte': 90,
+        'momentum_call_max_stack': 3,        # max 3 concurrent
+    },
+    # More aggressive momentum sizing
+    'champion_20pct_protected_momcalls_aggressive': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_call_pct': 0.04,
+        'momentum_call_threshold': 0.15,
+        'momentum_call_otm_pct': 0.15,
+        'momentum_call_dte': 120,
+        'momentum_call_max_stack': 5,
     },
     # CHAMPION + UPSIDE WING — covered call spread to recapture extreme upside
     # Attach long far-OTM call to each ITM CC so spike-through gets paid
