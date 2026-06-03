@@ -410,15 +410,69 @@ def iv_from_surface(surface, date_str, K, dte, right):
     for r_dte, r_K, r_right, r_iv in rows:
         if r_right != right:
             continue
-        # Normalize: K-dist as %, dte-dist as days*0.001
         dist = abs(r_K - K) / max(K, 1) + abs(r_dte - dte) * 0.001
         if dist < best_dist:
             best_dist = dist
             best = r_iv
-    # Reject if strike too far (>30%) or dte too far (>60d)
     if best is None or best_dist > 0.4:
         return None
     return best
+
+
+def iv_shape_features(surface, date_str, spot_adj):
+    """Extract IV term-structure & skew features from PG surface.
+
+    Returns dict with:
+      atm_iv      — IV at ~ATM strike (proxy for IV30)
+      put_skew    — IV(0.9 OTM put) - IV(ATM)  (positive = put skew rich)
+      call_skew   — IV(1.1 OTM call) - IV(ATM)
+      pc_skew     — put_skew - call_skew (smile asymmetry)
+      term_slope  — IV at long DTE - IV at short DTE (positive = contango)
+    Returns None if surface lacks data for this date.
+    """
+    rows = surface.get(date_str)
+    if not rows or len(rows) < 4:
+        return None
+    # ATM = nearest strike to spot, prefer call
+    atm = sorted(rows, key=lambda r: abs(r[1]-spot_adj))[:6]
+    atm_iv = sum(r[3] for r in atm) / len(atm)
+    # OTM put = strike ~0.9 × spot, right='P'
+    Kp_target = spot_adj * 0.90
+    put_candidates = [r for r in rows if r[2] == 'P']
+    if put_candidates:
+        put_otm = min(put_candidates, key=lambda r: abs(r[1] - Kp_target))
+        put_skew = put_otm[3] - atm_iv
+    else:
+        put_skew = 0.0
+    # OTM call = strike ~1.1 × spot
+    Kc_target = spot_adj * 1.10
+    call_candidates = [r for r in rows if r[2] == 'C']
+    if call_candidates:
+        call_otm = min(call_candidates, key=lambda r: abs(r[1] - Kc_target))
+        call_skew = call_otm[3] - atm_iv
+    else:
+        call_skew = 0.0
+    # Term slope: average IV at high-dte rows - average at low-dte rows
+    if rows:
+        dtes = [r[0] for r in rows]
+        if max(dtes) - min(dtes) > 14:
+            short_dte = [r[3] for r in rows if r[0] <= min(dtes) + 7]
+            long_dte = [r[3] for r in rows if r[0] >= max(dtes) - 7]
+            if short_dte and long_dte:
+                term_slope = sum(long_dte)/len(long_dte) - sum(short_dte)/len(short_dte)
+            else:
+                term_slope = 0.0
+        else:
+            term_slope = 0.0
+    else:
+        term_slope = 0.0
+    return {
+        'atm_iv': atm_iv,
+        'put_skew': put_skew,
+        'call_skew': call_skew,
+        'pc_skew': put_skew - call_skew,
+        'term_slope': term_slope,
+    }
 
 
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
@@ -433,7 +487,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
     p = strategy_params
     use_surprise = p.get('use_surprise_z', False)
-    use_real_iv = p.get('use_real_iv_surface', False)
+    # Real IV from PG ung_iv_surface is now the DEFAULT for all strategies.
+    # Opt out only with use_real_iv_surface=False (e.g., proxy-only diagnostics).
+    use_real_iv = p.get('use_real_iv_surface', True)
     iv_surface = _load_iv_surface() if use_real_iv else None
     target_weekly_income = p.get('target_weekly_income', 1500.0)
     recent_premium = []
@@ -454,14 +510,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # Time-varying IV: per-strike via calibrated model (realized vol +
         # VIX regime + skew + term structure). Falls back to 0.55 only if
         # no realized vol available (first 30 days).
+        d_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
         def iv_at(K, dte, right='C'):
-            # Try real surface first if enabled
             if iv_surface is not None and iv_surface:
-                d_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
                 real = iv_from_surface(iv_surface, d_str, K, dte, right)
                 if real is not None:
                     return real
             return iv_for_quote(row, K, spot_u, dte, right)
+        # Per-day IV shape features (term + skew). None if no surface coverage.
+        iv_shape = iv_shape_features(iv_surface, d_str, spot_u) if iv_surface else None
         z = compute_historical_z(row, use_surprise=use_surprise)
         # DD-aware risk dial — generic protection against any adverse
         # regime (sharp crash or slow decline). Track NAV peak; if
@@ -1193,6 +1250,32 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             otm_call = p.get('otm_call', 0.05)
             put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
             call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
+
+            # IV-SHAPE SIZING — react to real surface term & skew.
+            # put_skew rich → sell MORE puts (premium is fat)
+            # call_skew rich → sell MORE calls
+            # term contango → prefer longer DTE (premium decays slower)
+            # term backwardation (negative slope) → vol spike imminent, reduce
+            if p.get('iv_shape_sizing') and iv_shape:
+                # Skew-based qty scaling
+                ps = iv_shape['put_skew']
+                cs = iv_shape['call_skew']
+                # Reference levels: typical UNG put_skew ~0.02-0.05, rich >0.08
+                if ps > 0.08:
+                    put_qty = int(put_qty * 1.5)
+                elif ps > 0.05:
+                    put_qty = int(put_qty * 1.2)
+                elif ps < 0.01:
+                    put_qty = max(1, int(put_qty * 0.7))
+                if cs > 0.05:
+                    call_qty = int(call_qty * 1.3)
+                elif cs < 0:
+                    call_qty = max(1, int(call_qty * 0.7))
+                # Backwardation = imminent vol spike → cut size
+                ts = iv_shape['term_slope']
+                if ts < -0.05:
+                    put_qty = max(1, int(put_qty * 0.6))
+                    call_qty = max(1, int(call_qty * 0.6))
 
             # VOL-REGIME SIZING: when IV (proxied by rv_30) is high, sell
             # more premium; when depressed, back off. Premium is the alpha
@@ -3179,7 +3262,55 @@ STRATEGIES = {
         'target_shares': 4000,
         'core_shares': 2000,  # never drain below 2000 via elevator
     },
+    # NEW: IV-SHAPE-AWARE — react to real surface term & skew (default real IV)
+    'champion_aggressive_z_iv_shape': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'iv_shape_sizing': True,  # NEW: react to PG surface skew + term
+    },
 }
+
+
+# RETIRE old format. Keep only Pareto winners + key baselines.
+# All remaining strategies default to use_real_iv_surface=True (set in
+# run_strategy_simple). The strategies below are intentionally kept short
+# for clarity; reference ablations live in git history.
+_KEEP_STRATEGIES = {
+    # Sanity / unprotected reference baselines
+    'naive_atm', 'otm_managed', 'champion_20pct_plus_floor',
+    'kelly_firmness', 'beam_put_only',
+    # Diagnostic bases (used by ablation.py / bug_watch sample-bias check)
+    'elevator_close_surprise',
+    # Pareto-frontier protected family
+    'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
+    'champion_cut_rebuild', 'champion_cut_rebuild_slow', 'champion_cut_rebuild_fast',
+    'kelly_z_target_winner', 'kelly_short_dd_balanced', 'kelly_short_dd_minimal',
+    # Winner family
+    'champion_aggressive_z',            # proxy version for ablation
+    'champion_aggressive_z_real_iv',    # CURRENT CHAMPION (Sharpe 1.91)
+    'champion_aggressive_z_iv_shape',   # NEW: term+skew aware
+    'champion_trifecta',                 # diagnostic
+    'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
+}
+STRATEGIES = {k: v for k, v in STRATEGIES.items() if k in _KEEP_STRATEGIES}
 
 
 def compare_strategies():
