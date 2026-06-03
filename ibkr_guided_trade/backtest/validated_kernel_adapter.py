@@ -167,15 +167,144 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     if shape:
         out['iv_shape'] = shape
 
-    # Recommendations
+    # ─── ACTIONABLE: timed, concrete recs with prices/qtys ───────────────
+    # Share rebalance: kernel uses cut_speed=0.5 — only move 50% toward target per cadence
     if abs(out['share_delta']) >= 100:
-        action = 'BUY' if out['share_delta'] > 0 else 'SELL'
+        this_cycle = int(round(out['share_delta'] * 0.5 / 100) * 100)
+        full_delta = out['share_delta']
+        if this_cycle != 0:
+            action = 'BUY' if this_cycle > 0 else 'SELL'
+            # Limit ladder: 50% at mid, 30% lower, 20% lower (or mirror for sells)
+            mid = spot
+            l1 = round(spot * 1.005, 2)  # 0.5% above
+            l2 = round(spot * 0.995, 2)  # 0.5% below
+            l3 = round(spot * 0.985, 2)  # 1.5% below
+            est_cost = abs(this_cycle) * spot
+            out['recommendations'].append({
+                'action': f'{action} {abs(this_cycle)} UNG shares THIS CYCLE',
+                'order_draft': {
+                    'qty': abs(this_cycle), 'side': action.lower(),
+                    'ladder': [
+                        {'price': l1, 'qty': int(this_cycle * 0.5)},
+                        {'price': l2, 'qty': int(this_cycle * 0.3)},
+                        {'price': l3, 'qty': int(this_cycle * 0.2)},
+                    ] if this_cycle > 0 else [
+                        {'price': l3, 'qty': abs(int(this_cycle * 0.5))},
+                        {'price': l2, 'qty': abs(int(this_cycle * 0.3))},
+                        {'price': l1, 'qty': abs(int(this_cycle * 0.2))},
+                    ],
+                },
+                'est_cost_dollar': est_cost,
+                'why': (f'Kernel target {target} - current {current_shares} = {full_delta:+d}. '
+                        f'z_target_cadence_days=21 + cut_speed=0.5 → move 50% per month → '
+                        f'{this_cycle:+d} this cycle, re-check next month'),
+                'priority': 'high',
+                'when': 'this week',
+            })
+
+    # Put-expiration calendar: predict each contract's fate
+    if positions:
+        from datetime import date as _date
+        today = _date.today()
+        upcoming = []
+        for p in positions:
+            if p.get('symbol','').upper() != 'UNG': continue
+            if not p.get('is_option'): continue
+            if p.get('option_type') != 'PUT': continue
+            q = abs(int(p.get('quantity',0) or 0))
+            if q == 0: continue
+            K = float(p.get('strike') or 0)
+            try:
+                exp_d = _date.fromisoformat(p.get('expiry',''))
+            except Exception:
+                continue
+            dte = (exp_d - today).days
+            if dte < 0 or dte > 45: continue
+            collat = q * 100 * K
+            # Outcome estimate
+            if K < spot - 0.05:
+                outcome = 'EXPIRE_OTM'
+                freed = collat
+            elif K > spot + 0.05:
+                outcome = 'ASSIGN'
+                freed = 0
+            else:
+                outcome = 'ATM'
+                freed = collat * 0.5  # ~50% chance
+            upcoming.append({
+                'expiry': p.get('expiry'), 'dte': dte, 'strike': K,
+                'qty': q, 'collateral': collat, 'outcome': outcome,
+                'freed_est': freed,
+            })
+        upcoming.sort(key=lambda x: x['dte'])
+        out['expiration_calendar'] = upcoming
+        total_collat = sum(x['collateral'] for x in upcoming)
+        total_freed_30d = sum(x['freed_est'] for x in upcoming if x['dte'] <= 30)
+        if total_freed_30d >= total_collat * 0.5:
+            out['recommendations'].append({
+                'action': f'WAIT — ${total_freed_30d:,.0f} put collateral frees in 30 days naturally',
+                'why': f'{sum(1 for x in upcoming if x["dte"]<=30 and x["outcome"]=="EXPIRE_OTM")} '
+                       f'puts at strikes below ${spot} will expire OTM. Do NOT add new puts until '
+                       f'collateral drops below 30% of NAV.',
+                'priority': 'medium',
+                'when': 'next 30 days (passive)',
+            })
+
+    # Near-expiry ATM put: opportunity to close cheap
+    if positions:
+        from datetime import date as _date
+        today = _date.today()
+        atm_to_close = []
+        for p in positions:
+            if (p.get('symbol','').upper() == 'UNG' and p.get('is_option')
+                and p.get('option_type') == 'PUT'):
+                K = float(p.get('strike') or 0)
+                if abs(K - spot) <= 0.10:  # ATM ±$0.10
+                    try:
+                        exp_d = _date.fromisoformat(p.get('expiry',''))
+                    except Exception:
+                        continue
+                    dte = (exp_d - today).days
+                    if 0 < dte <= 30:
+                        atm_to_close.append({
+                            'expiry': p.get('expiry'), 'strike': K,
+                            'qty': abs(int(p.get('quantity',0) or 0)),
+                            'dte': dte,
+                            'collat': abs(int(p.get('quantity',0) or 0)) * 100 * K,
+                        })
+        if atm_to_close:
+            total_collat = sum(x['collat'] for x in atm_to_close)
+            out['recommendations'].append({
+                'action': f'OPTIONAL: Close {len(atm_to_close)} ATM put group(s) early to free '
+                          f'${total_collat:,.0f} collateral',
+                'why': f'ATM puts near spot ${spot} have ~50% assignment risk; closing for ~$0.20-0.50 '
+                       f'each unlocks collateral immediately instead of waiting for expiry',
+                'priority': 'low',
+                'when': 'optional, anytime',
+            })
+
+    # CC posture: regime-specific
+    if snap['regime'] in ('RICH', 'EXTREME_RICH'):
+        K_itm = round(spot * 0.95, 2)
         out['recommendations'].append({
-            'action': f'{action} {abs(out["share_delta"])} UNG shares',
-            'why': f'z={snap["z_surprise"]:+.2f} → {snap["regime"]} → target {target} '
-                   f'(× base {base_shares} mult {snap["mult"]})',
-            'priority': 'high',
+            'action': f'Sell ITM CCs at K=${K_itm} (5% ITM) to force-assign at high prices',
+            'why': f'z={snap["z_surprise"]:+.2f} → {snap["regime"]} → aggressive_itm_cc_z fires; '
+                   f'force assignment locks gains via wheel exit',
+            'priority': 'medium',
+            'when': 'this week',
         })
+    elif snap['regime'] == 'NEUTRAL':
+        K_otm = round(spot * 1.05, 2)
+        # Only if there are uncovered shares
+        uncovered = current_shares - current_short_calls * 100
+        if uncovered >= 100:
+            n_ccs = uncovered // 100
+            out['recommendations'].append({
+                'action': f'Sell up to {n_ccs} CCs at K=${K_otm} (5% OTM, 30-45 DTE)',
+                'why': f'NEUTRAL regime; harvest premium on {uncovered} uncovered shares',
+                'priority': 'low',
+                'when': 'this week',
+            })
 
     # CC posture
     if snap['regime'] in ('RICH', 'EXTREME_RICH'):
@@ -218,10 +347,77 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             'priority': 'medium',
         })
 
+    # ─── DEEP BEAM ANALYSIS — multi-strike candidate scoring ──────────────
+    # Same logic as backtest's beam_put_selector: score 5 OTM levels by
+    # income vs expected loss, return all candidates so user can see why
+    # the picked strike won.
+    try:
+        out['beam_analysis'] = _beam_analysis(spot, snap['z_surprise'])
+    except Exception as e:
+        out['beam_analysis_error'] = str(e)
+
     # Walk-forward truth disclosure
     out['warnings'].append('Walk-forward worst 12mo MDD: -17% (full-sample MDD -7% is sample-biased)')
 
     return out
+
+
+def _beam_analysis(spot: float, z: float):
+    """Score multiple OTM put candidates and return ranking with all scores.
+
+    Mirrors backtest's beam_put scoring: income - p_itm * expected_loss.
+    """
+    import math
+    from scipy.stats import norm
+    surf = _load_iv_surface()
+    # Pick a representative DTE (45d) and ladder OTM levels
+    dte = 45
+    T = dte / 365
+    r = 0.045
+    candidates = []
+    for otm in [0.02, 0.05, 0.08, 0.12, 0.15, 0.20]:
+        K = round(spot * (1 - otm), 2)
+        # IV at K
+        iv = None
+        if surf:
+            latest_date = max(surf.keys())
+            iv = iv_from_surface(surf, latest_date, K, dte, 'P')
+        if iv is None:
+            # Fallback to ATM iv shape estimate
+            iv = 0.50
+        # BSM put price
+        d1 = (math.log(spot/K) + (r + 0.5*iv**2)*T) / (iv*math.sqrt(T))
+        d2 = d1 - iv*math.sqrt(T)
+        bsm_put = K*math.exp(-r*T)*norm.cdf(-d2) - spot*norm.cdf(-d1)
+        # Probability ITM at expiry (under BSM measure)
+        p_itm = float(norm.cdf(-d2))
+        # Expected loss if assigned: (K - expected_spot_at_assignment)
+        # Use a simple proxy: half-distance to strike
+        expected_loss_if_itm = max(0, K - spot * 0.95)
+        # Net score per contract per 100 shares
+        income = bsm_put * 100
+        expected_loss = p_itm * expected_loss_if_itm * 100
+        score = income - expected_loss
+        candidates.append({
+            'strike': K,
+            'otm_pct': round(otm * 100, 1),
+            'iv': round(iv, 4),
+            'iv_source': 'PG_real' if surf else 'fallback',
+            'premium': round(bsm_put, 3),
+            'p_itm_pct': round(p_itm * 100, 1),
+            'income_per_contract': round(income, 1),
+            'expected_loss_per_contract': round(expected_loss, 1),
+            'net_score': round(score, 1),
+            'dte': dte,
+        })
+    candidates.sort(key=lambda c: c['net_score'], reverse=True)
+    return {
+        'spot': spot,
+        'dte': dte,
+        'candidates': candidates,
+        'winner': candidates[0]['strike'] if candidates else None,
+        'method': 'income - p_itm × expected_loss (BSM measure)',
+    }
 
 
 if __name__ == '__main__':

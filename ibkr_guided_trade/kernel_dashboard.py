@@ -425,11 +425,34 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- Recommendations -->
-  <div class="section">
-    <h2>Validated Kernel Recommendations</h2>
+  <!-- ACTION PLAN: timed concrete recommendations -->
+  <div class="section" style="border-color:var(--blue); border-width:2px">
+    <h2 style="color:var(--blue)">📋 Action Plan — what to do, when, at what price</h2>
     <div class="rec-list" id="recs">–</div>
     <div id="warnings"></div>
+  </div>
+
+  <!-- Deep beam analysis -->
+  <div class="section">
+    <h2>🎯 Deep Beam Analysis — why this strike?</h2>
+    <div id="beam-content">–</div>
+    <div class="rec-why" style="margin-top:8px">
+      Each candidate strike scored as <strong>income − P(ITM) × expected_loss</strong> under BSM measure with real PG IV.
+      The winner is the best risk-adjusted premium per contract.
+    </div>
+  </div>
+
+  <!-- 30-day put expiration calendar -->
+  <div class="section">
+    <h2>🗓 Next 45 days — put expiration calendar</h2>
+    <table id="expiry-calendar">
+      <thead><tr>
+        <th>Expiry</th><th>DTE</th><th>Strike</th><th>Qty</th>
+        <th>Collateral</th><th>Outcome</th><th>$ freed</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="rec-why" style="margin-top:8px" id="calendar-summary">–</div>
   </div>
 
   <!-- IV Shape + Account -->
@@ -553,18 +576,81 @@ async function refresh() {
     cv.className = 'card-value ' + (cp>0.8?'negative':cp>0.5?'warn':'positive');
     $('collat-warn').innerText = cp>0.8 ? '⚠ over-leveraged' : cp>0.5 ? 'elevated' : 'healthy';
 
-    // Recommendations
+    // Recommendations — fully actionable
     const recs = (v.recommendations || []).map(r => {
       const p = (r.priority || 'l').charAt(0);
+      const whenLine = r.when ? `<div class="badge" style="background:var(--border);color:var(--text-dim);padding:2px 6px;border-radius:4px;font-size:0.7rem;display:inline-block;margin-left:8px">${r.when}</div>` : '';
+      let ladderHtml = '';
+      if (r.order_draft && r.order_draft.ladder) {
+        const ladder = r.order_draft.ladder.map(l => `<tr><td style="text-align:right" class="mono">${l.qty}</td><td>@</td><td class="mono">$${l.price}</td></tr>`).join('');
+        ladderHtml = `<div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:4px"><div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">📝 Order ladder (split fills):</div><table style="font-size:0.85rem">${ladder}</table>${r.est_cost_dollar?'<div style="margin-top:4px;font-size:0.75rem;color:var(--text-dim)">est cost: $'+fmt(r.est_cost_dollar,0)+'</div>':''}</div>`;
+      }
       return `<div class="rec rec-${p}">
-        <div class="rec-action">${r.action}<span class="priority priority-${p}">${r.priority||'–'}</span></div>
+        <div class="rec-action">${r.action}<span class="priority priority-${p}">${r.priority||'–'}</span>${whenLine}</div>
         <div class="rec-why">${r.why || ''}</div>
+        ${ladderHtml}
       </div>`;
     }).join('');
     $('recs').innerHTML = recs || '<div class="rec-why">No active recommendations</div>';
 
+    // Expiration calendar (next 45 days)
+    const cal = v.expiration_calendar || [];
+    const calRows = cal.map(c => {
+      const cls = c.outcome === 'EXPIRE_OTM' ? 'positive' : c.outcome === 'ASSIGN' ? 'negative' : 'neutral';
+      return `<tr>
+        <td class="mono">${c.expiry}</td>
+        <td class="mono">${c.dte}d</td>
+        <td class="mono">$${c.strike}</td>
+        <td class="mono">${c.qty}</td>
+        <td class="mono">$${fmt(c.collateral,0)}</td>
+        <td><span class="tag ${c.outcome==='EXPIRE_OTM'?'tag-cheap':c.outcome==='ASSIGN'?'tag-rich':'tag-neutral'}">${c.outcome}</span></td>
+        <td class="mono ${cls}">$${fmt(c.freed_est,0)}</td>
+      </tr>`;
+    }).join('');
+    const calBody = document.querySelector('#expiry-calendar tbody');
+    if (calBody) calBody.innerHTML = calRows || '<tr><td colspan=7 class="rec-why">No upcoming put expirations</td></tr>';
+    const totalCollat = cal.reduce((s,c) => s + c.collateral, 0);
+    const totalFreed30 = cal.filter(c => c.dte <= 30).reduce((s,c) => s + c.freed_est, 0);
+    if ($('calendar-summary')) {
+      $('calendar-summary').innerHTML = cal.length === 0 ? 'No puts expiring in 45 days.' :
+        `<strong>$${fmt(totalCollat,0)}</strong> total put collateral; <strong style="color:var(--green)">$${fmt(totalFreed30,0)}</strong> likely frees in next 30 days at current spot ($${fmt(s.spot,2)}).`;
+    }
+
     // Warnings
     $('warnings').innerHTML = (v.warnings || []).map(w => `<div class="warning">⚠ ${w}</div>`).join('');
+
+    // Deep beam analysis table
+    const beam = v.beam_analysis;
+    if (beam && beam.candidates) {
+      const rows = beam.candidates.map((c, i) => {
+        const isWinner = c.strike === beam.winner;
+        const cls = isWinner ? 'style="background:rgba(63,185,80,0.1)"' : '';
+        return `<tr ${cls}>
+          <td class="mono">${isWinner ? '🏆' : ''} $${c.strike}</td>
+          <td class="mono">${c.otm_pct}%</td>
+          <td class="mono">${(c.iv*100).toFixed(1)}%</td>
+          <td class="mono">$${c.premium}</td>
+          <td class="mono">${c.p_itm_pct}%</td>
+          <td class="mono positive">$${fmt(c.income_per_contract,1)}</td>
+          <td class="mono negative">$${fmt(c.expected_loss_per_contract,1)}</td>
+          <td class="mono ${isWinner?'positive':''}">$${fmt(c.net_score,1)}</td>
+        </tr>`;
+      }).join('');
+      $('beam-content').innerHTML = `
+        <table>
+          <thead><tr>
+            <th>Strike</th><th>OTM%</th><th>IV</th><th>Premium</th>
+            <th>P(ITM)</th><th>Income</th><th>Exp Loss</th><th>Net Score</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:8px;font-size:0.8rem;color:var(--text-dim)">
+          Method: <strong>${beam.method}</strong> · DTE: ${beam.dte}d · Winner: <strong style="color:var(--green)">$${beam.winner}</strong>
+          · IV source: <span class="badge">${beam.candidates[0].iv_source}</span>
+        </div>`;
+    } else {
+      $('beam-content').innerHTML = '<div class="rec-why">No beam analysis available</div>';
+    }
 
     // IV shape
     const iv = v.iv_shape || {};

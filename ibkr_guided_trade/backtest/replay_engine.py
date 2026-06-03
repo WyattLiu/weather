@@ -665,7 +665,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 'extreme_cheap': 1.4, 'cheap': 1.2, 'neutral': 1.0,
                 'rich': 0.7, 'extreme_rich': 0.3,
             })
-            if z < -1.5:    mult = mults['extreme_cheap']
+            # SMOOTH variant: continuous mult via tanh(z) interpolation between
+            # extreme_cheap and extreme_rich endpoints. Eliminates the bucket
+            # discontinuities (e.g. z=0.49 → 1.0× but z=0.51 → 0.4×) and
+            # produces much smoother NAV path (lower daily volatility).
+            if p.get('smooth_z_target'):
+                lo = mults.get('extreme_rich', 0.1)
+                hi = mults.get('extreme_cheap', 2.0)
+                # tanh(z) maps [-3, +3] roughly to [-0.99, 0.99]; convert to [lo,hi]
+                t = math.tanh(z * -0.5)  # negative because cheap = high mult
+                mult = lo + (hi - lo) * (t + 1) / 2
+            elif z < -1.5:    mult = mults['extreme_cheap']
             elif z < -0.5:  mult = mults['cheap']
             elif z < 0.5:   mult = mults['neutral']
             elif z < 1.0:   mult = mults['rich']
@@ -3308,6 +3318,34 @@ STRATEGIES = {
         'elevator_skip_on_momentum': True,
         'itm_cc_skip_on_momentum': True,
     },
+    # SMOOTH variant — continuous tanh-based z-mult eliminates bucket jumps.
+    # Lower daily NAV vol, easier to manage psychologically + operationally.
+    'champion_target_25_smooth': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'smooth_z_target': True,  # tanh continuous interpolation
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
     # DD-TRIM variant — best Sharpe variant from walk-forward (2.73 on full sample)
     # Cuts worst 12mo MDD from -24% to -17% with almost no return cost.
     'champion_target_25_dd_trim': {
@@ -3503,6 +3541,7 @@ _KEEP_STRATEGIES = {
     'champion_target_25_window_safe',    # Tighter rolling-MDD controls
     'champion_target_25_dd_trim',        # WALK-FWD WINNER: same MDD, better Sharpe
     'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
+    'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
 }
