@@ -3548,6 +3548,21 @@ _KEEP_STRATEGIES = {
 STRATEGIES = {k: v for k, v in STRATEGIES.items() if k in _KEEP_STRATEGIES}
 
 
+# ─── STALE FILTER (lifecycle) ────────────────────────────────────────────────
+# Stale strategies remain in code/git but are excluded from cycle runs and
+# dashboard. Managed by backtest/retire_stale.py; state in strategy_lifecycle.json.
+# Each retirement is logged with date + reason — strategies are NEVER deleted,
+# only marked, so we can re-activate or compare retroactively.
+try:
+    import json as _json
+    _LIFECYCLE_PATH = os.path.join(CACHE_DIR, '..', 'strategy_lifecycle.json')
+    if os.path.exists(_LIFECYCLE_PATH):
+        _STALE = set(_json.loads(open(_LIFECYCLE_PATH).read()).get('stale', []))
+        STRATEGIES = {k: v for k, v in STRATEGIES.items() if k not in _STALE}
+except Exception:
+    pass
+
+
 def compare_strategies():
     print(f"=== Loading dataset ===")
     df_path = os.path.join(CACHE_DIR, 'master_dataset.csv')
