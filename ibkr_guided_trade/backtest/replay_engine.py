@@ -163,6 +163,7 @@ def precompute_factor_z(df):
         df['ung_20d_low'] = df['UNG'].rolling(20).min()
         df['ung_at_20d_low'] = df['UNG'] <= df['ung_20d_low'] * 1.005
         df['ung_5d_mom'] = df['UNG'].pct_change(5)
+        df['ung_30d_return'] = df['UNG'].pct_change(30)  # for grind-down detection
         # 60d high (for called-away cycle peak detection)
         df['ung_60d_high'] = df['UNG'].rolling(60).max()
         # 252d (1yr) range — for anomaly detection AND trend
@@ -176,6 +177,21 @@ def precompute_factor_z(df):
         df['ung_downtrend'] = (df['UNG'] < df['ung_200d_ma']) & (df['ung_50d_ma'] < df['ung_200d_ma'])
     df = precompute_realized_vol(df, col='UNG')
     return df
+
+
+def detect_grind_down(row) -> bool:
+    """True when UNG is in a slow grind-down (chronic chronic):
+    - 30-day return < -8% AND
+    - 5-day return < 0 (still falling)
+    Catches the Dec 2023-style multi-week declines that anomaly misses.
+    """
+    r30 = row.get('ung_30d_return', None)
+    r5 = row.get('ung_5d_mom', None)
+    if r30 is None or r5 is None: return False
+    try:
+        return float(r30) < -0.08 and float(r5) < 0
+    except (ValueError, TypeError):
+        return False
 
 
 def detect_anomaly(row) -> str:
@@ -1335,6 +1351,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
                 trades.append({'date': idx, 'type': 'STAND_DOWN_ANOMALY',
                                'pnl': 0.0, 'regime': anomaly})
+            # NEW: Grind-down filter — no new PUTS during slow chronic declines
+            # (catches Dec 2023-style multi-week bleeds the anomaly misses)
+            if p.get('skip_puts_on_grind_down') and detect_grind_down(row):
+                trades.append({'date': idx, 'type': 'STAND_DOWN_GRIND',
+                               'pnl': 0.0, 'r30': float(row.get('ung_30d_return') or 0)})
             # Sustained downtrend gate — skip ALL put-selling when UNG
             # is in confirmed downtrend (price < 200d MA AND 50d < 200d).
             # Catches the slow multi-year grind that anomaly detector misses.
@@ -1396,6 +1417,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 skip_put = True
             if p.get('falling_knife_filter') and falling_knife(row):
                 skip_put = True
+            if p.get('skip_puts_on_grind_down') and detect_grind_down(row):
+                skip_put = True  # multi-week chronic decline — don't add to share-acq risk
                 trades.append({'date': idx, 'type': 'SKIP_PUT_FALLING_KNIFE',
                                'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
@@ -3374,6 +3397,10 @@ STRATEGIES = {
         'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 25,
         'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
         'cc_aware_cut': True,  # close near-DTE CCs first to free shares for cut
+        # NEW: stop adding put exposure during slow chronic declines (Dec 2023-style)
+        # — catches the bad windows that detect_anomaly misses (12 of 15 worst-DD
+        # days were NORMAL anomaly). Marginal: tighter range, -0.7pp avg ann.
+        'skip_puts_on_grind_down': True,
     },
     # DD-TRIM variant — best Sharpe variant from walk-forward (2.73 on full sample)
     # Cuts worst 12mo MDD from -24% to -17% with almost no return cost.
