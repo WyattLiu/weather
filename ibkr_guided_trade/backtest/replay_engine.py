@@ -2234,6 +2234,76 @@ STRATEGIES = {
         'vol_aware_dte': True,
         'tail_hedge_floor': 2,
     },
+    # TRIFECTA CANDIDATES — combining best Sharpe bases with z_target
+    'otm_managed_z_target': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+    },
+    'otm_managed_z_target_shoulder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
+    'regime_aware_z_target': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
+    # CHAMPION TRIFECTA: highest Sharpe in entire harness (1.48)
+    # +90.5% return, -49% MDD, +16% calm, calm Sharpe ~0.3
+    # Mechanics: elevator close (lock spike), shoulder hedge (KOLD in weak
+    # seasons), z-target sizing (proactive), dd-trim safety net
+    'champion_trifecta': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    'elevator_z_target_shoulder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
     # Z-BASED DYNAMIC SHARE TARGETING — proactive wheel sizing.
     # Beats baseline on Sharpe, MDD, AND calm return simultaneously.
     # Sharpe 1.09 (vs 0.69), MDD -51% (vs -69%), calm +46% (vs +31%).
