@@ -365,6 +365,8 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         out['theta_by_expiry'] = _theta_by_expiry(positions or [], spot)
         out['theta_waterfall'] = _theta_waterfall(positions or [], spot)
         out['extrinsic'] = _extrinsic_and_smoothness(positions or [], spot)
+        out['roll_plan'] = _roll_forward_plan(positions or [], spot, snap)
+        out['whatif_matrix'] = _whatif_delta_matrix(positions or [], spot, out.get('portfolio_greeks', {}))
         out['calendar_grid'] = _calendar_grid(positions or [], spot)
         out['daily_status'] = _daily_status(out)
     except Exception as e:
@@ -707,6 +709,217 @@ def _extrinsic_and_smoothness(positions, spot):
         'weekly_theta': [round(w, 0) for w in weekly_theta],
         'smoothness': round(smoothness, 3),
         'avg_weekly_theta': round(sum(weekly_theta) / 4, 0),
+    }
+
+
+def _roll_forward_plan(positions, spot, snap):
+    """For each near-term contract, suggest a roll target + projected smoothness.
+
+    Roll philosophy:
+    - Near-DTE OTM puts → roll to 45d at same strike (let theta decay,
+      then re-write). Only roll if extrinsic > 30% of premium target.
+    - Near-DTE ITM CCs → likely assignment; suggest waiting unless we
+      want to recover cost basis.
+    - Net effect: shifts week-1 theta into week-4 and beyond, raising
+      smoothness toward 0.75 target.
+    """
+    import math
+    from datetime import date as _date, timedelta
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    today = _date.today()
+    roll_actions = []
+    # Project hypothetical post-roll positions
+    rolled_positions = []
+    for p in positions:
+        if p.get('symbol', '').upper() != 'UNG':
+            continue
+        if not p.get('is_option'):
+            rolled_positions.append(p)
+            continue
+        qty = int(p.get('quantity', 0) or 0)
+        if qty == 0:
+            continue
+        K = float(p.get('strike') or 0)
+        right = 'C' if p.get('option_type') == 'CALL' else 'P'
+        try:
+            exp_d = _date.fromisoformat(p.get('expiry', ''))
+            dte = (exp_d - today).days
+        except Exception:
+            continue
+        if dte <= 0:
+            continue
+        moneyness = 'ITM' if ((right == 'C' and K < spot) or (right == 'P' and K > spot)) else \
+                    'ATM' if abs(K - spot) <= 0.10 else 'OTM'
+        # Roll candidates: near-DTE (<= 14d) OTM puts/calls
+        if dte <= 14 and moneyness == 'OTM' and qty < 0:
+            # Suggested target: 45d out, same OTM% from new spot
+            new_dte = 45
+            new_exp = (today + timedelta(days=new_dte)).isoformat()
+            # Keep ~same OTM offset
+            otm_pct = (spot - K) / spot if right == 'P' else (K - spot) / spot
+            new_K = round(spot * (1 - otm_pct) if right == 'P' else spot * (1 + otm_pct), 1)
+            # Estimate new premium
+            iv = None
+            if surf and latest_surf:
+                iv = iv_from_surface(surf, latest_surf, new_K, new_dte, right)
+            if iv is None:
+                iv = 0.50
+            T = new_dte / 365
+            d1 = (math.log(spot/new_K) + (0.045 + 0.5*iv**2)*T) / (iv*math.sqrt(T))
+            d2 = d1 - iv*math.sqrt(T)
+            from scipy.stats import norm
+            if right == 'C':
+                new_prem = spot*norm.cdf(d1) - new_K*math.exp(-0.045*T)*norm.cdf(d2)
+            else:
+                new_prem = new_K*math.exp(-0.045*T)*norm.cdf(-d2) - spot*norm.cdf(-d1)
+            # Close cost of existing position (intrinsic + small extrinsic)
+            old_intrinsic = _intrinsic_value(K, spot, right)
+            old_iv = iv_from_surface(surf, latest_surf, K, max(1, dte), right) if (surf and latest_surf) else 0.50
+            if old_iv is None: old_iv = 0.50
+            T_old = max(1, dte) / 365
+            d1o = (math.log(spot/K) + (0.045 + 0.5*old_iv**2)*T_old) / (old_iv*math.sqrt(T_old))
+            d2o = d1o - old_iv*math.sqrt(T_old)
+            if right == 'C':
+                old_val = spot*norm.cdf(d1o) - K*math.exp(-0.045*T_old)*norm.cdf(d2o)
+            else:
+                old_val = K*math.exp(-0.045*T_old)*norm.cdf(-d2o) - spot*norm.cdf(-d1o)
+            close_cost = old_val * 100 * abs(qty)
+            new_credit = new_prem * 100 * abs(qty)
+            net_credit = new_credit - close_cost
+            roll_actions.append({
+                'old': {'right': right, 'strike': K, 'expiry': p.get('expiry'), 'qty': qty, 'dte': dte},
+                'new': {'right': right, 'strike': new_K, 'expiry': new_exp, 'qty': qty, 'dte': new_dte},
+                'close_cost_per_contract': round(old_val, 3),
+                'new_credit_per_contract': round(new_prem, 3),
+                'net_credit_total': round(net_credit, 0),
+                'rationale': f'Roll {abs(qty)} contract(s) {dte}d→{new_dte}d, K ${K}→${new_K} '
+                             f'({"shifts" if net_credit > 0 else "absorbs"} ${abs(net_credit):.0f} '
+                             f'into future weeks)',
+            })
+            # Synthetic rolled position for smoothness projection
+            rolled_positions.append({
+                **p,
+                'strike': new_K,
+                'expiry': new_exp,
+                'average_price': new_prem,
+            })
+        else:
+            rolled_positions.append(p)
+
+    # Project smoothness assuming all rolls executed
+    projected = _extrinsic_and_smoothness(rolled_positions, spot)
+    return {
+        'rolls': roll_actions,
+        'roll_count': len(roll_actions),
+        'projected_smoothness': projected['smoothness'],
+        'projected_weekly_theta': projected['weekly_theta'],
+        'projected_avg_weekly': projected['avg_weekly_theta'],
+        'net_credit_total': round(sum(r['net_credit_total'] for r in roll_actions), 0),
+    }
+
+
+def _whatif_delta_matrix(positions, spot, current_greeks):
+    """2D what-if grid: for each (strike, DTE), what does selling 1 put OR
+    1 call do to portfolio delta and theta? Surfaces which side (CC vs CSP)
+    is more 'delta-efficient' right now — i.e., maximizes premium per
+    unit of delta exposure added.
+
+    Output: matrix shape (strikes × dtes), two slices (put, call), with
+    delta_change, theta_change, theta_per_delta efficiency per cell.
+    Also computes the AGGREGATE tendency: lean PUT or CALL.
+    """
+    import math
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    # Strike grid: -8% to +8% from spot, 7 levels
+    otm_levels = [-0.08, -0.05, -0.02, 0.0, 0.02, 0.05, 0.08]
+    # DTE grid: 7 / 14 / 30 / 45 / 60
+    dtes = [7, 14, 30, 45, 60]
+    current_delta = current_greeks.get('total_delta', 0)
+    matrix_put = []
+    matrix_call = []
+    best_put = None
+    best_call = None
+    for otm in otm_levels:
+        # Put strike = spot * (1 - |otm|) when otm <= 0 (below spot)
+        # Call strike = spot * (1 + |otm|) when otm >= 0 (above spot)
+        K_put = round(spot * (1 + otm), 2) if otm <= 0 else round(spot * (1 - otm), 2)
+        K_call = round(spot * (1 + otm), 2) if otm >= 0 else round(spot * (1 - otm), 2)
+        row_put = []
+        row_call = []
+        for dte in dtes:
+            iv_p = iv_from_surface(surf, latest_surf, K_put, dte, 'P') if (surf and latest_surf) else 0.50
+            iv_c = iv_from_surface(surf, latest_surf, K_call, dte, 'C') if (surf and latest_surf) else 0.50
+            if iv_p is None: iv_p = 0.50
+            if iv_c is None: iv_c = 0.50
+            # Compute Greeks for selling 1 contract (qty = -1)
+            d_p, _, t_p, _ = _bs_greeks(spot, K_put, dte/365, 0.045, iv_p, 'P')
+            d_c, _, t_c, _ = _bs_greeks(spot, K_call, dte/365, 0.045, iv_c, 'C')
+            # Sold 1 put: position delta = d_p * 100 * -1 = -d_p * 100
+            # (put delta is negative, so -d_p > 0 → adds positive delta)
+            delta_put_chg = -d_p * 100
+            theta_put_chg = t_p * 100 * -1  # short × negative = positive income
+            delta_call_chg = -d_c * 100
+            theta_call_chg = t_c * 100 * -1
+            # Efficiency: $ theta per unit |delta change|
+            eff_put = abs(theta_put_chg) / max(abs(delta_put_chg), 1)
+            eff_call = abs(theta_call_chg) / max(abs(delta_call_chg), 1)
+            put_cell = {
+                'strike': K_put, 'dte': dte,
+                'delta_chg': round(delta_put_chg, 1),
+                'theta_chg': round(theta_put_chg, 2),
+                'eff': round(eff_put, 3),
+                'iv': round(iv_p, 4),
+                'otm_pct': round(otm * 100, 1),
+            }
+            call_cell = {
+                'strike': K_call, 'dte': dte,
+                'delta_chg': round(delta_call_chg, 1),
+                'theta_chg': round(theta_call_chg, 2),
+                'eff': round(eff_call, 3),
+                'iv': round(iv_c, 4),
+                'otm_pct': round(otm * 100, 1),
+            }
+            row_put.append(put_cell)
+            row_call.append(call_cell)
+            # Track best (highest theta per unit delta moved)
+            if best_put is None or put_cell['eff'] > best_put['eff']:
+                best_put = put_cell
+            if best_call is None or call_cell['eff'] > best_call['eff']:
+                best_call = call_cell
+        matrix_put.append(row_put)
+        matrix_call.append(row_call)
+    # Aggregate tendency
+    flat_put = [c for row in matrix_put for c in row]
+    flat_call = [c for row in matrix_call for c in row]
+    avg_eff_put = sum(c['eff'] for c in flat_put) / len(flat_put)
+    avg_eff_call = sum(c['eff'] for c in flat_call) / len(flat_call)
+    # Bias: if portfolio delta is too LONG (positive), favor calls (cuts delta)
+    # If delta is too short (negative), favor puts (raises delta)
+    delta_imbalance = current_delta - 6200  # 6200 = neutral target
+    if delta_imbalance > 500:
+        tendency = 'LEAN_CALL'
+        tendency_reason = f'Portfolio +{delta_imbalance:.0f}Δ above target; selling CCs reduces delta'
+    elif delta_imbalance < -500:
+        tendency = 'LEAN_PUT'
+        tendency_reason = f'Portfolio {delta_imbalance:.0f}Δ below target; selling CSPs raises delta'
+    else:
+        tendency = 'BALANCED'
+        tendency_reason = f'Portfolio Δ within ±500 of target (current {current_delta:.0f}); follow IV richness'
+    return {
+        'otm_levels': [round(x*100, 1) for x in otm_levels],
+        'dtes': dtes,
+        'put_matrix': matrix_put,
+        'call_matrix': matrix_call,
+        'best_put': best_put,
+        'best_call': best_call,
+        'avg_eff_put': round(avg_eff_put, 3),
+        'avg_eff_call': round(avg_eff_call, 3),
+        'tendency': tendency,
+        'tendency_reason': tendency_reason,
+        'current_delta': round(current_delta, 0),
+        'delta_imbalance': round(delta_imbalance, 0),
     }
 
 

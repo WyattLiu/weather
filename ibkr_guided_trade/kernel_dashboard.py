@@ -638,6 +638,41 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
+  <!-- Roll forward planner (kernel's wheel-rhythm projection) -->
+  <div class="section">
+    <h2>🔄 Roll Forward Planner — projected smoothness after rolls</h2>
+    <div class="summary-row" style="margin-bottom:0" id="roll-summary"></div>
+    <div id="roll-theta-comparison" style="height:200px;margin-top:12px"></div>
+    <div class="scrollable" style="margin-top:12px">
+      <table id="roll-table"></table>
+    </div>
+    <div class="rec-why" style="margin-top:8px">
+      For each near-DTE OTM contract (≤14d), planner suggests rolling to ~45 DTE at similar OTM%.
+      Shifts week-1 theta into weeks 3-4, raising smoothness toward 0.75 target.
+    </div>
+  </div>
+
+  <!-- What-If Delta Matrix (strike × DTE for sell-put vs sell-call) -->
+  <div class="section">
+    <h2>⚖️ What-If Effective-Delta Matrix — sell put vs sell call?</h2>
+    <div class="summary-row" style="margin-bottom:0" id="whatif-summary"></div>
+    <div class="grid-2" style="margin-top:12px">
+      <div>
+        <h3 style="font-size:0.95rem;color:var(--red);margin-bottom:8px">📉 Sell PUT (θ per |Δ|)</h3>
+        <div class="scrollable"><table id="whatif-put-table"></table></div>
+      </div>
+      <div>
+        <h3 style="font-size:0.95rem;color:var(--green);margin-bottom:8px">📈 Sell CALL (θ per |Δ|)</h3>
+        <div class="scrollable"><table id="whatif-call-table"></table></div>
+      </div>
+    </div>
+    <div class="rec-why" style="margin-top:8px">
+      Cell value = <strong>theta-$ per |delta-shift|</strong> for selling 1 contract there.
+      Higher = more premium for the delta you take on. Best cells highlighted in green.
+      <strong>Tendency</strong> uses portfolio Δ vs neutral (6,200) to bias call vs put side.
+    </div>
+  </div>
+
   <!-- Position analytics charts (matches production Delta/Theta/PnL panels) -->
   <div class="section">
     <h2>📈 P&amp;L Profile at Expiration</h2>
@@ -977,6 +1012,121 @@ async function refresh() {
           margin: { l: 50, r: 10, t: 10, b: 30 },
         }, {displayModeBar: false, responsive: true});
       }
+    }
+
+    // Roll forward planner
+    const rp = v.roll_plan;
+    if (rp) {
+      const currS = ex ? ex.smoothness : 0;
+      const projS = rp.projected_smoothness;
+      const sDelta = (projS - currS).toFixed(3);
+      $('roll-summary').innerHTML = `
+        <div class="card">
+          <div class="card-label">Rolls Suggested</div>
+          <div class="card-value neutral">${rp.roll_count}</div>
+          <div class="card-sub">near-DTE OTM contracts</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Current Smoothness</div>
+          <div class="card-value ${currS>=0.75?'positive':'warn'}">${currS.toFixed(3)}</div>
+          <div class="card-sub">today</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Projected (post-roll)</div>
+          <div class="card-value ${projS>=0.75?'positive':projS>currS?'neutral':'warn'}">${projS.toFixed(3)}</div>
+          <div class="card-sub">Δ ${sDelta>0?'+':''}${sDelta}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Net Credit (rolls)</div>
+          <div class="card-value ${rp.net_credit_total>0?'positive':'negative'}">$${fmt(rp.net_credit_total,0)}</div>
+          <div class="card-sub">close − re-open</div>
+        </div>`;
+      // Compare current vs projected weekly theta
+      const projWk = rp.projected_weekly_theta || [0,0,0,0];
+      const currWk = ex ? ex.weekly_theta : [0,0,0,0];
+      Plotly.newPlot('roll-theta-comparison', [
+        {x: ['W1','W2','W3','W4'], y: currWk, type:'bar', name:'Current',
+         marker: {color: 'rgba(57,210,192,0.6)'}, text: currWk.map(v=>'$'+fmt(v,0)),
+         textposition: 'outside', textfont: {color: '#e6edf3'}},
+        {x: ['W1','W2','W3','W4'], y: projWk, type:'bar', name:'After rolls',
+         marker: {color: 'rgba(63,185,80,0.7)'}, text: projWk.map(v=>'$'+fmt(v,0)),
+         textposition: 'outside', textfont: {color: '#e6edf3'}},
+      ], {
+        ...PLOTLY_LAYOUT_BASE,
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$ weekly θ' },
+        barmode: 'group',
+        legend: { x: 0, y: 1.15, orientation: 'h' },
+        margin: { l: 50, r: 10, t: 30, b: 30 },
+      }, {displayModeBar: false, responsive: true});
+      // Roll table
+      const rows = (rp.rolls || []).map(r => `
+        <tr>
+          <td><span class="tag ${r.old.right==='C'?'tag-call':'tag-put'}">${r.old.right}</span></td>
+          <td class="mono">$${r.old.strike} <span style="color:var(--text-dim)">→</span> $${r.new.strike}</td>
+          <td class="mono">${r.old.dte}d <span style="color:var(--text-dim)">→</span> ${r.new.dte}d</td>
+          <td class="mono">${r.old.qty}</td>
+          <td class="mono negative">-$${fmt(r.close_cost_per_contract,2)}</td>
+          <td class="mono positive">+$${fmt(r.new_credit_per_contract,2)}</td>
+          <td class="mono ${r.net_credit_total>0?'positive':'negative'}">$${fmt(r.net_credit_total,0)}</td>
+        </tr>`).join('');
+      $('roll-table').innerHTML = `
+        <thead><tr>
+          <th>R</th><th>K (old→new)</th><th>DTE (old→new)</th><th>Qty</th>
+          <th>Close ea</th><th>New ea</th><th>Net Total</th>
+        </tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="rec-why">No near-DTE rolls suggested</td></tr>'}</tbody>`;
+    }
+
+    // What-If delta matrix
+    const wi = v.whatif_matrix;
+    if (wi) {
+      $('whatif-summary').innerHTML = `
+        <div class="card">
+          <div class="card-label">Tendency</div>
+          <div class="card-value ${wi.tendency==='LEAN_CALL'?'neutral':wi.tendency==='LEAN_PUT'?'warn':'positive'}">${wi.tendency}</div>
+          <div class="card-sub">${wi.tendency_reason}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Avg Eff (PUT)</div>
+          <div class="card-value ${wi.avg_eff_put>wi.avg_eff_call?'positive':''}">${wi.avg_eff_put.toFixed(3)}</div>
+          <div class="card-sub">θ per |Δ|</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Avg Eff (CALL)</div>
+          <div class="card-value ${wi.avg_eff_call>wi.avg_eff_put?'positive':''}">${wi.avg_eff_call.toFixed(3)}</div>
+          <div class="card-sub">θ per |Δ|</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Best PUT cell</div>
+          <div class="card-value neutral">$${wi.best_put.strike} / ${wi.best_put.dte}d</div>
+          <div class="card-sub">eff ${wi.best_put.eff.toFixed(3)}, θ +$${fmt(wi.best_put.theta_chg,2)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Best CALL cell</div>
+          <div class="card-value neutral">$${wi.best_call.strike} / ${wi.best_call.dte}d</div>
+          <div class="card-sub">eff ${wi.best_call.eff.toFixed(3)}, θ +$${fmt(wi.best_call.theta_chg,2)}</div>
+        </div>`;
+      // Build matrices
+      const buildTable = (mtx, side) => {
+        const max_eff = Math.max(...mtx.flat().map(c => c.eff));
+        const head = '<thead><tr><th>OTM%</th>' +
+          wi.dtes.map(d => `<th class="mono">${d}d</th>`).join('') + '</tr></thead>';
+        const body = mtx.map(row => {
+          const otm = row[0].otm_pct;
+          const cells = row.map(c => {
+            const isBest = c.eff >= max_eff * 0.95;
+            const bg = isBest ? 'style="background:rgba(63,185,80,0.15)"' : '';
+            return `<td class="mono" ${bg} title="θ $${c.theta_chg}, Δ ${c.delta_chg}, IV ${(c.iv*100).toFixed(1)}%">
+              ${c.eff.toFixed(2)}<br/>
+              <span style="font-size:0.65rem;color:var(--text-dim)">$${c.strike}</span>
+            </td>`;
+          }).join('');
+          return `<tr><td class="mono">${otm>0?'+':''}${otm}%</td>${cells}</tr>`;
+        }).join('');
+        return head + '<tbody>' + body + '</tbody>';
+      };
+      $('whatif-put-table').innerHTML = buildTable(wi.put_matrix, 'P');
+      $('whatif-call-table').innerHTML = buildTable(wi.call_matrix, 'C');
     }
 
     // P&L Curve at expiration
