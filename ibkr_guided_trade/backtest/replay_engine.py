@@ -474,6 +474,30 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'qty': trim_qty, 'spot': spot_u,
                                    'dd_pct': dd_pct, 'shares_after': s['shares']})
 
+                    # CUT-AND-REBUILD: after cutting shares, sell OTM puts
+                    # BELOW spot to (a) capture put-skew premium (richer in
+                    # declines), (b) stay paid while waiting for re-entry,
+                    # (c) get re-acquired at lower strike if assigned. More
+                    # executable than ITM CCs in fast-down markets.
+                    if p.get('cut_and_rebuild_puts', False):
+                        trim_lots = trim_qty // 100
+                        put_otm = p.get('rebuild_put_otm_pct', 0.10)  # 10% below
+                        put_dte = p.get('rebuild_put_dte', 45)
+                        Kp = round(spot_u * (1 - put_otm))
+                        put_prem = bs_put(spot_u, Kp, put_dte/365, iv_at(Kp, put_dte, 'P'))
+                        if put_prem > 0.05:
+                            # Size to match trim lots so re-entry restores
+                            # original share count. Cap at cash-secured limit.
+                            put_qty_rebuild = min(trim_lots, int(s['cash'] / (Kp * 100)))
+                            if put_qty_rebuild >= 1:
+                                credit = put_prem * 100 * put_qty_rebuild - put_qty_rebuild * SPREAD_OPTION * 100
+                                s['cash'] += credit
+                                s['short_puts'].append({'entry': idx, 'K': Kp, 'dte': put_dte,
+                                                        'qty': put_qty_rebuild, 'entry_prem': put_prem})
+                                trades.append({'date': idx, 'type': 'OPEN_REBUILD_PUT',
+                                               'pnl': 0.0, 'credit': credit, 'K': Kp,
+                                               'qty': put_qty_rebuild, 'spot': spot_u, 'dd_pct': dd_pct})
+
         # Z-BASED SHARE TARGETING — proactive (not reactive) wheel sizing.
         # Encode the wheel philosophy directly: accumulate cheap, lighten
         # expensive. Maintain shares = base × z_multiplier. Avoids the
@@ -519,6 +543,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'Z_TARGET_TRIM',
                                    'pnl': 0.0, 'qty': sell_qty, 'spot': spot_u,
                                    'z': z, 'target': target, 'shares_after': s['shares']})
+                    # CUT-AND-REBUILD on z_target trim too
+                    if p.get('cut_and_rebuild_puts', False) and z > -1.0:
+                        # Skip if already very cheap (don't want more shares at bottom)
+                        trim_lots = sell_qty // 100
+                        put_otm = p.get('rebuild_put_otm_pct', 0.10)
+                        put_dte = p.get('rebuild_put_dte', 45)
+                        Kp = round(spot_u * (1 - put_otm))
+                        put_prem = bs_put(spot_u, Kp, put_dte/365, iv_at(Kp, put_dte, 'P'))
+                        if put_prem > 0.05:
+                            put_qty_rebuild = min(trim_lots, int(s['cash'] / (Kp * 100)))
+                            if put_qty_rebuild >= 1:
+                                credit = put_prem * 100 * put_qty_rebuild - put_qty_rebuild * SPREAD_OPTION * 100
+                                s['cash'] += credit
+                                s['short_puts'].append({'entry': idx, 'K': Kp, 'dte': put_dte,
+                                                        'qty': put_qty_rebuild, 'entry_prem': put_prem})
+                                trades.append({'date': idx, 'type': 'OPEN_REBUILD_PUT_Z',
+                                               'pnl': 0.0, 'credit': credit, 'K': Kp,
+                                               'qty': put_qty_rebuild, 'spot': spot_u, 'z': z})
             elif adjust >= 100:  # buying
                 max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
                 max_afford = (max_afford // 100) * 100
@@ -2267,6 +2309,51 @@ STRATEGIES = {
         },
         'z_share_target_base': 6200,
         'kold_shoulder_hedge': 0.05,
+    },
+    # CUT-AND-REBUILD: sell shares + sell OTM puts BELOW to stay paid
+    # while waiting for re-entry. Captures put-skew richness (panic IV
+    # is fattest in declines). More executable than ITM CCs in fast-down
+    # markets where call-side spreads widen.
+    'champion_cut_rebuild': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        # NEW: cut-and-rebuild mechanism
+        'cut_and_rebuild_puts': True,
+        'rebuild_put_otm_pct': 0.10,
+        'rebuild_put_dte': 45,
+    },
+    'champion_cut_rebuild_deep': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True,
+        'rebuild_put_otm_pct': 0.15,  # deeper OTM
+        'rebuild_put_dte': 45,
     },
     # CHAMPION TRIFECTA: highest Sharpe in entire harness (1.48)
     # +90.5% return, -49% MDD, +16% calm, calm Sharpe ~0.3
