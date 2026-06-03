@@ -1437,6 +1437,30 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'credit': credit,
                                    'K': K, 'qty': qty, 'z': z})
 
+                    # UPSIDE WING — when shorting an ITM/ATM CC, buy a far-OTM
+                    # call at K_wing = K * (1 + wing_otm_pct) so if UNG spikes
+                    # through, the wing recovers the capped upside. Net credit
+                    # still positive because wing premium << CC premium when
+                    # wing is deep OTM. Same expiry as CC.
+                    wing_otm = p.get('upside_wing_otm_pct', 0)
+                    wing_always = p.get('upside_wing_always', False)
+                    if wing_otm > 0 and (use_itm or wing_always):
+                        K_wing = round(spot_u * (1 + wing_otm))
+                        wing_cost = bs_call(spot_u, K_wing, cc_dte/365, iv_at(K_wing, cc_dte, 'C'))
+                        if wing_cost > 0.02:
+                            wing_debit = wing_cost * 100 * qty + qty * SPREAD_OPTION * 100
+                            # Only buy wing if wing_debit < 30% of credit (net positive)
+                            if wing_debit < credit * 0.30 and s['cash'] > wing_debit + 500:
+                                s['cash'] -= wing_debit
+                                s.setdefault('long_calls', []).append({
+                                    'entry': idx, 'K': K_wing, 'dte': cc_dte,
+                                    'qty': qty, 'cost': wing_cost,
+                                    'wing_for_cc_K': K,  # link to its CC
+                                })
+                                trades.append({'date': idx, 'type': 'OPEN_UPSIDE_WING',
+                                               'pnl': -wing_debit, 'K': K_wing,
+                                               'qty': qty, 'cc_K': K, 'spot': spot_u})
+
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
                 if not s['long_puts']:
@@ -2517,6 +2541,62 @@ STRATEGIES = {
         'cut_and_rebuild_puts': True,
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
+    },
+    # CHAMPION + UPSIDE WING — covered call spread to recapture extreme upside
+    # Attach long far-OTM call to each ITM CC so spike-through gets paid
+    'champion_20pct_protected_wing': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.30,  # 30% above spot
+    },
+    'champion_20pct_protected_wing_all': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.20, 'upside_wing_always': True,
+    },
+    'champion_20pct_protected_wing_close': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.15,  # closer-in wing
     },
     # CHAMPION + momentum override (capture spike runs without giving up MDD)
     'champion_20pct_protected_momentum': {
