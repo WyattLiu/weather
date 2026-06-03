@@ -238,10 +238,13 @@ def _cached_analytics():
 
 
 # ─── HTML (matches production CSS variables and layout) ──────────────────────
-HTML = r"""<!doctype html>
+HTML = r"""<!DOCTYPE html>
 <html><head>
-<meta charset="utf-8"/>
-<title>UNG Kernel Dashboard</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>UNG Kernel</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
 :root {
@@ -379,6 +382,64 @@ td.neutral { color: var(--blue); }
 .tag-neutral { background: var(--border); color: var(--text); }
 .tag-rich { background: rgba(248,81,73,0.2); color: var(--red); }
 .tag-cheap { background: rgba(63,185,80,0.2); color: var(--green); }
+
+/* MOBILE (matches production breakpoint @ 768px) */
+@media (max-width: 768px) {
+    .container { padding: 8px; }
+    h1 { font-size: 1.2rem; margin-bottom: 4px; }
+    .sub { font-size: 0.75rem; margin-bottom: 12px; }
+    h2 { font-size: 0.95rem; margin-bottom: 8px; }
+
+    .summary-row {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    .card { padding: 10px; }
+    .card-label { font-size: 0.65rem; }
+    .card-value { font-size: 1.1rem; }
+    .card-sub { font-size: 0.65rem; }
+
+    .section { padding: 12px; margin-bottom: 12px; }
+
+    .grid-2 { grid-template-columns: 1fr; gap: 12px; }
+
+    .rec { padding: 10px; }
+    .rec-action { font-size: 0.88rem; }
+    .rec-why { font-size: 0.75rem; }
+    .priority { font-size: 0.6rem; padding: 1px 6px; }
+
+    /* Phone: tables scroll horizontally with momentum */
+    .section table { font-size: 0.75rem; }
+    .section table th, .section table td {
+        padding: 4px 6px;
+    }
+    .scrollable, .section > table, #beam-content, #iv-shape {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        display: block;
+    }
+    #beam-content table, #iv-shape table {
+        min-width: 100%;
+        display: table;
+    }
+
+    /* Charts: shorter on phone to fit more above the fold */
+    #chart-regime { height: 280px !important; }
+    #chart-iv { height: 220px !important; }
+    #chart-equity { height: 300px !important; }
+    #chart-walkforward { height: 280px !important; }
+    #chart-yearly { height: 240px !important; }
+
+    /* Order ladder readable */
+    .rec table { font-size: 0.78rem; }
+    .badge { font-size: 0.65rem !important; }
+    .warning { font-size: 0.78rem; padding: 8px 10px; }
+}
+
+/* Very small phones */
+@media (max-width: 380px) {
+    .summary-row { grid-template-columns: 1fr; }
+}
 </style>
 </head><body>
 <div class="container">
@@ -442,16 +503,36 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
+  <!-- Portfolio Greeks summary -->
+  <div class="section">
+    <h2>📐 Portfolio Greeks</h2>
+    <div class="summary-row" id="greeks-cards" style="margin-bottom:0"></div>
+  </div>
+
+  <!-- Per-position analysis -->
+  <div class="section">
+    <h2>🎯 Per-position action — what to do with each contract</h2>
+    <div class="scrollable">
+      <table>
+        <thead><tr>
+          <th>Right</th><th>K</th><th>Exp</th><th>DTE</th><th>Qty</th><th>Money</th>
+          <th>Δ</th><th>θ/day</th><th>Action</th><th>Detail</th>
+        </tr></thead>
+        <tbody id="position-analysis"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- 30-day put expiration calendar -->
   <div class="section">
     <h2>🗓 Next 45 days — put expiration calendar</h2>
-    <table id="expiry-calendar">
+    <div class="scrollable"><table id="expiry-calendar">
       <thead><tr>
         <th>Expiry</th><th>DTE</th><th>Strike</th><th>Qty</th>
         <th>Collateral</th><th>Outcome</th><th>$ freed</th>
       </tr></thead>
       <tbody></tbody>
-    </table>
+    </table></div>
     <div class="rec-why" style="margin-top:8px" id="calendar-summary">–</div>
   </div>
 
@@ -518,13 +599,13 @@ td.neutral { color: var(--blue); }
   <!-- Positions -->
   <div class="section">
     <h2>UNG Position Detail</h2>
-    <table>
+    <div class="scrollable"><table>
       <thead><tr>
         <th>Type</th><th>Qty</th><th>Strike</th><th>Expiry</th>
         <th>Market Value</th><th>Unrealized P&amp;L</th>
       </tr></thead>
       <tbody id="positions">–</tbody>
-    </table>
+    </table></div>
   </div>
 </div>
 
@@ -618,6 +699,60 @@ async function refresh() {
 
     // Warnings
     $('warnings').innerHTML = (v.warnings || []).map(w => `<div class="warning">⚠ ${w}</div>`).join('');
+
+    // Portfolio Greeks cards
+    const g = v.portfolio_greeks;
+    if (g) {
+      const gradGood = v => v > 0 ? 'positive' : v < 0 ? 'negative' : '';
+      $('greeks-cards').innerHTML = `
+        <div class="card">
+          <div class="card-label">Total Δ (shares-eq)</div>
+          <div class="card-value ${g.total_delta>0?'positive':'negative'}">${fmt(g.total_delta,0)}</div>
+          <div class="card-sub">shares: ${fmt(g.shares_delta)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">$ per 1% UNG</div>
+          <div class="card-value ${g.delta_dollar_per_1pct>0?'positive':'negative'}">$${fmt(g.delta_dollar_per_1pct,0)}</div>
+          <div class="card-sub">linear sensitivity</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Γ (gamma)</div>
+          <div class="card-value neutral">${fmt(g.total_gamma,2)}</div>
+          <div class="card-sub">delta acceleration</div>
+        </div>
+        <div class="card">
+          <div class="card-label">θ / day</div>
+          <div class="card-value ${g.total_theta_per_day>0?'positive':'negative'}">$${fmt(g.total_theta_per_day,1)}</div>
+          <div class="card-sub">passive collection</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Vega</div>
+          <div class="card-value neutral">${fmt(g.total_vega,1)}</div>
+          <div class="card-sub">per 1% IV</div>
+        </div>`;
+    }
+
+    // Per-position analysis table
+    const pa = v.position_analysis || [];
+    const actionClass = (a) => {
+      if (a.includes('CLOSE') || a.includes('ASSIGNMENT') || a.includes('BUYBACK')) return 'tag-rich';
+      if (a.includes('EXPIRE') || a.includes('HOLD')) return 'tag-cheap';
+      return 'tag-neutral';
+    };
+    const paRows = pa.map(r => `
+      <tr>
+        <td><span class="tag ${r.right==='C'?'tag-call':'tag-put'}">${r.right}</span></td>
+        <td class="mono">$${r.strike}</td>
+        <td class="mono">${r.expiry}</td>
+        <td class="mono">${r.dte}d</td>
+        <td class="mono">${r.qty}</td>
+        <td><span class="tag tag-${r.moneyness==='ITM'?'rich':r.moneyness==='OTM'?'cheap':'neutral'}">${r.moneyness}</span></td>
+        <td class="mono ${r.delta>0?'positive':'negative'}">${fmt(r.delta,0)}</td>
+        <td class="mono ${r.theta_per_day>0?'positive':'negative'}">$${fmt(r.theta_per_day,1)}</td>
+        <td><span class="tag ${actionClass(r.action)}">${r.action}</span></td>
+        <td class="rec-why">${r.action_detail || ''}</td>
+      </tr>`).join('');
+    $('position-analysis').innerHTML = paRows || '<tr><td colspan="10" class="rec-why">No UNG options held</td></tr>';
 
     // Deep beam analysis table
     const beam = v.beam_analysis;

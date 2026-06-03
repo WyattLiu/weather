@@ -356,10 +356,168 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     except Exception as e:
         out['beam_analysis_error'] = str(e)
 
+    # ─── PER-POSITION ANALYSIS + GREEKS ──────────────────────────────────
+    try:
+        out['position_analysis'] = _per_position_analysis(positions or [], spot, snap)
+        out['portfolio_greeks'] = _portfolio_greeks(positions or [], spot)
+    except Exception as e:
+        out['position_analysis_error'] = str(e)
+
     # Walk-forward truth disclosure
     out['warnings'].append('Walk-forward worst 12mo MDD: -17% (full-sample MDD -7% is sample-biased)')
 
     return out
+
+
+def _bs_greeks(S, K, T, r, sigma, right='C'):
+    """BS Greeks: delta, gamma, theta (per day), vega (per 1% IV)."""
+    import math
+    from scipy.stats import norm
+    if T <= 0 or sigma <= 0:
+        return 0.0, 0.0, 0.0, 0.0
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    if right == 'C':
+        delta = norm.cdf(d1)
+    else:
+        delta = norm.cdf(d1) - 1.0
+    gamma = norm.pdf(d1) / (S * sigma * math.sqrt(T))
+    theta_call = -(S*norm.pdf(d1)*sigma) / (2*math.sqrt(T)) - r*K*math.exp(-r*T)*norm.cdf(d2)
+    theta_put = -(S*norm.pdf(d1)*sigma) / (2*math.sqrt(T)) + r*K*math.exp(-r*T)*norm.cdf(-d2)
+    theta = (theta_call if right == 'C' else theta_put) / 365
+    vega = S * norm.pdf(d1) * math.sqrt(T) / 100  # per 1% IV change
+    return float(delta), float(gamma), float(theta), float(vega)
+
+
+def _per_position_analysis(positions, spot, snap):
+    """For each UNG option, recommend HOLD/CLOSE/ROLL with concrete details."""
+    from datetime import date as _date
+    import math
+    today = _date.today()
+    results = []
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    for p in positions:
+        if p.get('symbol', '').upper() != 'UNG':
+            continue
+        if not p.get('is_option'):
+            continue
+        qty = int(p.get('quantity', 0) or 0)
+        if qty == 0:
+            continue
+        K = float(p.get('strike') or 0)
+        right = 'C' if p.get('option_type') == 'CALL' else 'P'
+        try:
+            exp_d = _date.fromisoformat(p.get('expiry', ''))
+        except Exception:
+            continue
+        dte = (exp_d - today).days
+        if dte <= 0:
+            continue
+        # IV from surface
+        iv = None
+        if surf and latest_surf:
+            iv = iv_from_surface(surf, latest_surf, K, dte, right)
+        if iv is None:
+            iv = 0.50
+        # Greeks
+        delta, gamma, theta, vega = _bs_greeks(spot, K, dte/365, 0.045, iv, right)
+        # Recommendation logic
+        moneyness = 'ITM' if (right == 'C' and K < spot) or (right == 'P' and K > spot) else \
+                    'ATM' if abs(K - spot) <= 0.10 else 'OTM'
+        action = 'HOLD'
+        action_detail = ''
+        # Short calls
+        if qty < 0 and right == 'C':
+            if moneyness == 'ITM' and dte <= 7:
+                action = 'ACCEPT_ASSIGNMENT'
+                action_detail = f'Near expiry ({dte}d) + ITM — assignment likely; shares called at ${K}'
+            elif moneyness == 'ITM' and dte > 7 and snap['regime'] in ('CHEAP', 'EXTREME_CHEAP'):
+                action = 'CONSIDER_BUYBACK'
+                action_detail = f'ITM CC in cheap regime; closing locks loss but preserves upside'
+            elif moneyness == 'OTM' and dte > 30:
+                action = 'HOLD'
+                action_detail = f'Comfortably OTM; let theta decay work ({-theta*abs(qty)*100:.0f}/day collected)'
+            elif moneyness == 'ATM':
+                action = 'HOLD'
+                action_detail = f'ATM — wait, may go either way. {abs(theta*qty*100):.0f}/day theta'
+            else:
+                action = 'HOLD'
+        # Short puts
+        elif qty < 0 and right == 'P':
+            if moneyness == 'ITM' and dte <= 14:
+                action = 'PREP_FOR_ASSIGNMENT'
+                action_detail = f'Likely assigned at ${K} (acquires {abs(qty)*100} shares for ${K*abs(qty)*100:,.0f})'
+            elif moneyness == 'OTM' and dte <= 7:
+                action = 'LET_EXPIRE'
+                action_detail = f'Far OTM ({(K/spot-1)*100:.1f}%) and {dte}d to expiry — expires worthless'
+            elif moneyness == 'OTM':
+                action = 'HOLD'
+                action_detail = f'OTM; collecting ${-theta*abs(qty)*100:.0f}/day theta'
+            elif moneyness == 'ATM':
+                action = 'OPTIONAL_CLOSE'
+                action_detail = f'ATM — close for ~${0.4*abs(qty)*100:.0f} to free ${K*abs(qty)*100:,.0f} collateral'
+            else:
+                action = 'HOLD'
+        results.append({
+            'right': right, 'strike': K, 'expiry': p.get('expiry'), 'dte': dte,
+            'qty': qty, 'moneyness': moneyness, 'iv': round(iv, 4),
+            'delta': round(delta * 100 * qty, 1),  # shares-equivalent
+            'gamma': round(gamma * 100 * qty, 3),
+            'theta_per_day': round(theta * 100 * qty, 2),  # $/day total
+            'vega': round(vega * 100 * qty, 2),
+            'action': action, 'action_detail': action_detail,
+        })
+    results.sort(key=lambda r: (r['dte'], r['right']))
+    return results
+
+
+def _portfolio_greeks(positions, spot):
+    """Aggregate Greeks across all UNG positions (shares + options)."""
+    total_delta = 0.0
+    total_gamma = 0.0
+    total_theta = 0.0
+    total_vega = 0.0
+    shares = 0
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    from datetime import date as _date
+    today = _date.today()
+    for p in positions:
+        if p.get('symbol', '').upper() != 'UNG':
+            continue
+        qty = int(p.get('quantity', 0) or 0)
+        if p.get('is_option'):
+            K = float(p.get('strike') or 0)
+            right = 'C' if p.get('option_type') == 'CALL' else 'P'
+            try:
+                exp_d = _date.fromisoformat(p.get('expiry', ''))
+            except Exception:
+                continue
+            dte = (exp_d - today).days
+            if dte <= 0:
+                continue
+            iv = None
+            if surf and latest_surf:
+                iv = iv_from_surface(surf, latest_surf, K, dte, right)
+            if iv is None:
+                iv = 0.50
+            d, g, t, v = _bs_greeks(spot, K, dte/365, 0.045, iv, right)
+            total_delta += d * 100 * qty
+            total_gamma += g * 100 * qty
+            total_theta += t * 100 * qty
+            total_vega += v * 100 * qty
+        else:
+            shares += qty
+            total_delta += qty  # shares are delta 1 each
+    return {
+        'shares_delta': shares,
+        'total_delta': round(total_delta, 1),
+        'total_gamma': round(total_gamma, 2),
+        'total_theta_per_day': round(total_theta, 2),
+        'total_vega': round(total_vega, 2),
+        'delta_dollar_per_1pct': round(total_delta * spot * 0.01, 2),  # $ P&L for 1% UNG move
+    }
 
 
 def _beam_analysis(spot: float, z: float):
