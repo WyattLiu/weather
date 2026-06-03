@@ -383,8 +383,117 @@ td.neutral { color: var(--blue); }
 .tag-rich { background: rgba(248,81,73,0.2); color: var(--red); }
 .tag-cheap { background: rgba(63,185,80,0.2); color: var(--green); }
 
+/* ─── PRODUCTION PARITY: daily-banner, expiry-cards, rec-card ─────────── */
+.daily-banner {
+    display: flex; align-items: center; gap: 16px;
+    padding: 18px 24px; border-radius: 8px; margin-bottom: 20px;
+    border: 1px solid var(--border);
+}
+.daily-banner.status-green {
+    background: linear-gradient(135deg, rgba(63,185,80,0.12), rgba(63,185,80,0.04));
+    border-color: rgba(63,185,80,0.4);
+}
+.daily-banner.status-yellow {
+    background: linear-gradient(135deg, rgba(210,153,34,0.15), rgba(210,153,34,0.04));
+    border-color: rgba(210,153,34,0.5);
+}
+.daily-banner.status-red {
+    background: linear-gradient(135deg, rgba(248,81,73,0.15), rgba(248,81,73,0.04));
+    border-color: rgba(248,81,73,0.5);
+}
+.status-icon { font-size: 2rem; flex-shrink: 0; }
+.status-headline { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.02em; }
+.status-green .status-headline { color: var(--green); }
+.status-yellow .status-headline { color: var(--orange); }
+.status-red .status-headline { color: var(--red); }
+.status-detail { font-size: 0.88rem; color: var(--text-dim); margin-top: 4px; }
+
+.expiry-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.expiry-card {
+    background: rgba(13, 17, 23, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    border-left: 4px solid var(--green);
+}
+.expiry-card.critical { border-left-color: var(--red); }
+.expiry-card.warning { border-left-color: var(--orange); }
+.expiry-card.caution { border-left-color: #e3b341; }
+.expiry-card.ok { border-left-color: var(--green); }
+.expiry-card h3 {
+    font-size: 1.05rem; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.expiry-card h3 .e-badge {
+    font-size: 0.72rem; padding: 3px 10px; border-radius: 12px;
+    font-weight: 600; text-transform: uppercase;
+}
+.e-badge-critical { background: var(--red); color: #fff; }
+.e-badge-warning { background: var(--orange); color: #000; }
+.e-badge-caution { background: #e3b341; color: #000; }
+.e-badge-ok { background: rgba(63,185,80,0.2); color: var(--green); }
+.detail-row {
+    font-size: 0.9rem; color: var(--text-dim);
+    padding: 4px 0; line-height: 1.7; word-wrap: break-word;
+}
+.detail-row strong { color: var(--text); }
+.rec-item {
+    display: block; padding: 3px 0 3px 12px;
+    border-left: 2px solid var(--border); margin: 4px 0;
+    font-size: 0.88rem; line-height: 1.6;
+}
+.rec-item.rec-expire { border-left-color: var(--green); }
+.rec-item.rec-assign { border-left-color: var(--orange); }
+.rec-item.rec-roll { border-left-color: var(--cyan); }
+.rec-item.rec-monitor { border-left-color: var(--text-dim); }
+
+.rec-card {
+    padding: 12px 14px; margin-bottom: 10px;
+    background: rgba(13, 17, 23, 0.6);
+    border-radius: 6px; border: 1px solid var(--border);
+}
+.rec-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px; flex-wrap: wrap;
+}
+.rec-rank { font-weight: 700; color: var(--text); font-size: 0.9rem; }
+.rec-type-badge {
+    font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+    background: rgba(88,166,255,0.15); color: var(--blue);
+}
+.rec-urgency-badge {
+    font-size: 0.65rem; padding: 2px 6px; border-radius: 10px;
+    font-weight: 600; text-transform: uppercase;
+}
+.rec-urgency-badge.high { background: var(--red); color: #fff; }
+.rec-urgency-badge.medium { background: var(--orange); color: #000; }
+.rec-urgency-badge.low { background: rgba(139,148,158,0.2); color: #8b949e; }
+.rec-theta {
+    margin-left: auto; color: var(--green); font-weight: 600; font-size: 0.85rem;
+}
+
 /* MOBILE (matches production breakpoint @ 768px) */
 @media (max-width: 768px) {
+    .expiry-cards {
+        grid-template-columns: 1fr !important;
+        gap: 8px;
+    }
+    .expiry-card { padding: 12px 14px; }
+    .expiry-card h3 { font-size: 0.95rem; margin-bottom: 8px; }
+    .expiry-card .detail-row { font-size: 0.82rem; }
+    .expiry-card .rec-item { font-size: 0.8rem; }
+    .rec-card { padding: 10px 12px; }
+    .rec-action { font-size: 0.88rem; }
+    .rec-header { font-size: 0.78rem; }
+    .daily-banner { padding: 12px 14px; gap: 10px; }
+    .status-icon { font-size: 1.5rem; }
+    .status-headline { font-size: 1rem; }
+    .status-detail { font-size: 0.8rem; }
     .container { padding: 8px; }
     h1 { font-size: 1.2rem; margin-bottom: 4px; }
     .sub { font-size: 0.75rem; margin-bottom: 12px; }
@@ -452,14 +561,12 @@ td.neutral { color: var(--blue); }
 
   <div id="error-row"></div>
 
-  <!-- Daily Status Banner (matches production banner) -->
-  <div class="section" id="daily-status-banner" style="border-width:2px;padding:14px 16px">
-    <div style="display:flex;align-items:center;gap:14px">
-      <div id="status-icon" style="font-size:1.8rem">✅</div>
-      <div style="flex:1">
-        <div id="status-headline" style="font-size:1.1rem;font-weight:600">Loading...</div>
-        <div id="status-detail" style="font-size:0.85rem;color:var(--text-dim);margin-top:2px">Fetching live state...</div>
-      </div>
+  <!-- Daily Status Banner (production verbatim) -->
+  <div class="daily-banner status-green" id="daily-status-banner">
+    <div class="status-icon" id="status-icon">✅</div>
+    <div style="flex:1">
+      <div class="status-headline" id="status-headline">Loading...</div>
+      <div class="status-detail" id="status-detail">Fetching live state...</div>
     </div>
   </div>
 
@@ -497,11 +604,17 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- ACTION PLAN: timed concrete recommendations -->
-  <div class="section" style="border-color:var(--blue); border-width:2px">
-    <h2 style="color:var(--blue)">📋 Action Plan — what to do, when, at what price</h2>
-    <div class="rec-list" id="recs">–</div>
+  <!-- Recommendations: production rec-card pattern -->
+  <div class="section">
+    <h2>Recommendations</h2>
+    <div id="recs">–</div>
     <div id="warnings"></div>
+  </div>
+
+  <!-- Expiration timeline: production-style per-expiry cards -->
+  <div class="section">
+    <h2>Expiration Timeline &amp; Roll Planner</h2>
+    <div class="expiry-cards" id="expiry-cards-grid">–</div>
   </div>
 
   <!-- Deep beam analysis -->
@@ -511,6 +624,17 @@ td.neutral { color: var(--blue); }
     <div class="rec-why" style="margin-top:8px">
       Each candidate strike scored as <strong>income − P(ITM) × expected_loss</strong> under BSM measure with real PG IV.
       The winner is the best risk-adjusted premium per contract.
+    </div>
+  </div>
+
+  <!-- Extrinsic + theta smoothness (production quality metrics) -->
+  <div class="section">
+    <h2>Theta Smoothness &amp; Extrinsic Value</h2>
+    <div class="summary-row" style="margin-bottom:0" id="extrinsic-cards"></div>
+    <div id="weekly-theta-bars" style="height:180px;margin-top:12px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Smoothness = <code>1 − σ(weekly_theta) / μ(weekly_theta)</code> across next 4 weeks.
+      Higher = more even income. Production target ≥ 0.75.
     </div>
   </div>
 
@@ -706,22 +830,78 @@ async function refresh() {
     cv.className = 'card-value ' + (cp>0.8?'negative':cp>0.5?'warn':'positive');
     $('collat-warn').innerText = cp>0.8 ? '⚠ over-leveraged' : cp>0.5 ? 'elevated' : 'healthy';
 
-    // Recommendations — fully actionable
-    const recs = (v.recommendations || []).map(r => {
-      const p = (r.priority || 'l').charAt(0);
-      const whenLine = r.when ? `<div class="badge" style="background:var(--border);color:var(--text-dim);padding:2px 6px;border-radius:4px;font-size:0.7rem;display:inline-block;margin-left:8px">${r.when}</div>` : '';
+    // Recommendations — production rec-card pattern with rank/type/urgency badges
+    const recs = (v.recommendations || []).map((r, i) => {
+      const urgency = (r.priority || 'low').toLowerCase();
+      const rank = `#${i+1}`;
+      const typeLabel = r.action.includes('BUY') ? 'ACCUMULATE'
+                       : r.action.includes('SELL') ? 'DIVEST'
+                       : r.action.includes('CC') ? 'CC'
+                       : r.action.includes('CLOSE') ? 'CLOSE'
+                       : r.action.includes('WAIT') ? 'PASSIVE'
+                       : 'ACTION';
       let ladderHtml = '';
       if (r.order_draft && r.order_draft.ladder) {
-        const ladder = r.order_draft.ladder.map(l => `<tr><td style="text-align:right" class="mono">${l.qty}</td><td>@</td><td class="mono">$${l.price}</td></tr>`).join('');
-        ladderHtml = `<div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:4px"><div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">📝 Order ladder (split fills):</div><table style="font-size:0.85rem">${ladder}</table>${r.est_cost_dollar?'<div style="margin-top:4px;font-size:0.75rem;color:var(--text-dim)">est cost: $'+fmt(r.est_cost_dollar,0)+'</div>':''}</div>`;
+        const ladder = r.order_draft.ladder.map(l => `<tr><td class="mono" style="text-align:right">${l.qty}</td><td>@</td><td class="mono">$${l.price}</td></tr>`).join('');
+        ladderHtml = `<div style="margin-top:8px;padding:8px;background:rgba(13,17,23,0.5);border-radius:4px;border-left:2px solid var(--cyan)"><div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">Order ladder (split fills):</div><table style="font-size:0.82rem">${ladder}</table>${r.est_cost_dollar?'<div style="margin-top:4px;font-size:0.72rem;color:var(--text-dim)">est cost: $'+fmt(r.est_cost_dollar,0)+'</div>':''}</div>`;
       }
-      return `<div class="rec rec-${p}">
-        <div class="rec-action">${r.action}<span class="priority priority-${p}">${r.priority||'–'}</span>${whenLine}</div>
+      const whenSpan = r.when ? `<span style="color:var(--text-dim);font-size:0.72rem;margin-left:auto">⏱ ${r.when}</span>` : '';
+      return `<div class="rec-card">
+        <div class="rec-header">
+          <span class="rec-rank">${rank}</span>
+          <span class="rec-type-badge">${typeLabel}</span>
+          <span class="rec-urgency-badge ${urgency}">${r.priority || 'low'}</span>
+          ${whenSpan}
+        </div>
+        <div class="rec-action">${r.action}</div>
         <div class="rec-why">${r.why || ''}</div>
         ${ladderHtml}
       </div>`;
     }).join('');
     $('recs').innerHTML = recs || '<div class="rec-why">No active recommendations</div>';
+
+    // Expiry cards: group positions by expiry, classify card priority
+    const positions = (s.positions || []).filter(p => p.symbol === 'UNG' && p.is_option);
+    const byExpiry = {};
+    positions.forEach(p => {
+      if (!byExpiry[p.expiry]) byExpiry[p.expiry] = [];
+      byExpiry[p.expiry].push(p);
+    });
+    const today = new Date();
+    const exCards = Object.keys(byExpiry).sort().map(exp => {
+      const ps = byExpiry[exp];
+      const expDate = new Date(exp);
+      const dte = Math.round((expDate - today) / 86400000);
+      // Classify card priority
+      let cls = 'ok', badge = 'OK', badgeCls = 'e-badge-ok';
+      if (dte <= 3) { cls = 'critical'; badge = `${dte}D LEFT`; badgeCls = 'e-badge-critical'; }
+      else if (dte <= 7) { cls = 'warning'; badge = `${dte}D`; badgeCls = 'e-badge-warning'; }
+      else if (dte <= 14) { cls = 'caution'; badge = `${dte}D`; badgeCls = 'e-badge-caution'; }
+      else { badge = `${dte}D`; }
+      const calls = ps.filter(p => p.option_type === 'CALL').map(p => ({K: p.strike, qty: p.quantity, mv: p.market_value}));
+      const puts = ps.filter(p => p.option_type === 'PUT').map(p => ({K: p.strike, qty: p.quantity, mv: p.market_value}));
+      const callsHtml = calls.map(c => {
+        const itm = c.K < s.spot;
+        const cls2 = itm ? 'rec-assign' : 'rec-expire';
+        return `<div class="rec-item ${cls2}"><strong>${c.qty}C</strong> @ $${c.K} ${itm?'(ITM)':'(OTM)'}</div>`;
+      }).join('');
+      const putsHtml = puts.map(p => {
+        const itm = p.K > s.spot;
+        const cls2 = itm ? 'rec-assign' : 'rec-expire';
+        return `<div class="rec-item ${cls2}"><strong>${p.qty}P</strong> @ $${p.K} ${itm?'(ITM)':'(OTM)'}</div>`;
+      }).join('');
+      // Total notional (collateral for puts, share-coverage for calls)
+      const put_collat = puts.reduce((sum, p) => sum + Math.abs(p.qty) * p.K * 100, 0);
+      const call_lots = calls.reduce((sum, c) => sum + Math.abs(c.qty), 0);
+      return `<div class="expiry-card ${cls}">
+        <h3>${exp} <span class="e-badge ${badgeCls}">${badge}</span></h3>
+        <div class="detail-row"><strong>${ps.length}</strong> contracts: ${calls.length}C / ${puts.length}P</div>
+        ${put_collat > 0 ? `<div class="detail-row">Put collateral: <strong>$${fmt(put_collat, 0)}</strong></div>` : ''}
+        ${call_lots > 0 ? `<div class="detail-row">Calls cover: <strong>${call_lots*100}</strong> shares</div>` : ''}
+        ${callsHtml}${putsHtml}
+      </div>`;
+    }).join('');
+    $('expiry-cards-grid').innerHTML = exCards || '<div class="rec-why" style="grid-column:1/-1">No UNG options expiring</div>';
 
     // Expiration calendar (next 45 days)
     const cal = v.expiration_calendar || [];
@@ -749,17 +929,54 @@ async function refresh() {
     // Warnings
     $('warnings').innerHTML = (v.warnings || []).map(w => `<div class="warning">⚠ ${w}</div>`).join('');
 
-    // Daily status banner
+    // Daily status banner (production status-green/yellow/red classes)
     const ds = v.daily_status;
     if (ds) {
       const banner = $('daily-status-banner');
       const icons = {green: '✅', orange: '⚠️', red: '🚨'};
-      const colors = {green: 'var(--green)', orange: 'var(--orange)', red: 'var(--red)'};
-      banner.style.borderColor = colors[ds.color] || 'var(--border)';
+      const cls = {green: 'status-green', orange: 'status-yellow', red: 'status-red'};
+      banner.className = 'daily-banner ' + (cls[ds.color] || 'status-green');
       $('status-icon').innerText = icons[ds.color] || '✅';
       $('status-headline').innerText = ds.headline;
-      $('status-headline').style.color = colors[ds.color] || 'var(--text)';
       $('status-detail').innerText = ds.issues && ds.issues.length ? ds.issues.join(' · ') : 'No issues detected.';
+    }
+
+    // Extrinsic + smoothness cards
+    const ex = v.extrinsic;
+    if (ex) {
+      $('extrinsic-cards').innerHTML = `
+        <div class="card">
+          <div class="card-label">Smoothness</div>
+          <div class="card-value ${ex.smoothness>=0.75?'positive':ex.smoothness>=0.5?'warn':'negative'}">${ex.smoothness.toFixed(3)}</div>
+          <div class="card-sub">target ≥ 0.75</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Total Extrinsic</div>
+          <div class="card-value ${ex.total_extrinsic>0?'positive':'negative'}">$${fmt(ex.total_extrinsic,0)}</div>
+          <div class="card-sub">time value remaining</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Avg Weekly θ</div>
+          <div class="card-value neutral">$${fmt(ex.avg_weekly_theta,0)}</div>
+          <div class="card-sub">across next 4 weeks</div>
+        </div>
+        <div class="card">
+          <div class="card-label">30d Decay Est</div>
+          <div class="card-value ${ex.extrinsic_decay_30d_est>0?'positive':'negative'}">$${fmt(ex.extrinsic_decay_30d_est,0)}</div>
+          <div class="card-sub">expected to realize</div>
+        </div>`;
+      // Weekly theta bars
+      if (ex.weekly_theta) {
+        Plotly.newPlot('weekly-theta-bars', [
+          {x: ['Week 1','Week 2','Week 3','Week 4'], y: ex.weekly_theta, type:'bar',
+           marker: {color: '#39d2c0'}, text: ex.weekly_theta.map(v=>'$'+fmt(v,0)),
+           textposition: 'outside', textfont: {color: '#e6edf3'}},
+        ], {
+          ...PLOTLY_LAYOUT_BASE,
+          yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$' },
+          margin: { l: 50, r: 10, t: 10, b: 30 },
+        }, {displayModeBar: false, responsive: true});
+      }
     }
 
     // P&L Curve at expiration

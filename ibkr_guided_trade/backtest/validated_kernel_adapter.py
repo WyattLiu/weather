@@ -364,6 +364,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         out['delta_curve'] = _delta_curve(positions or [], spot)
         out['theta_by_expiry'] = _theta_by_expiry(positions or [], spot)
         out['theta_waterfall'] = _theta_waterfall(positions or [], spot)
+        out['extrinsic'] = _extrinsic_and_smoothness(positions or [], spot)
         out['calendar_grid'] = _calendar_grid(positions or [], spot)
         out['daily_status'] = _daily_status(out)
     except Exception as e:
@@ -584,7 +585,7 @@ def _theta_by_expiry(positions, spot):
         if iv is None: iv = 0.50
         _, _, theta, _ = _bs_greeks(spot, K, dte/365, 0.045, iv, right)
         # Negate: short positions collect theta as positive income
-        contrib = -theta * 100 * qty
+        contrib = theta * 100 * qty  # short pos (qty<0) × theta_bsm (neg) = positive income
         bucket[p.get('expiry')] = bucket.get(p.get('expiry'), 0.0) + contrib
     rows = [{'expiry': k, 'theta_per_day': round(v, 2)} for k, v in bucket.items()]
     rows.sort(key=lambda r: r['expiry'])
@@ -592,7 +593,7 @@ def _theta_by_expiry(positions, spot):
 
 
 def _theta_waterfall(positions, spot):
-    """Cumulative theta projection over next 60 days."""
+    """Cumulative theta projection over next 60 days + smoothness quality."""
     import math
     from datetime import date as _date, timedelta
     surf = _load_iv_surface()
@@ -602,7 +603,6 @@ def _theta_waterfall(positions, spot):
     cumulative = 0.0
     for d_ahead in range(0, 61, 3):
         future = today + timedelta(days=d_ahead)
-        # Sum theta collected if positions held flat
         daily = 0.0
         for p in positions:
             if p.get('symbol','').upper() != 'UNG': continue
@@ -622,14 +622,92 @@ def _theta_waterfall(positions, spot):
                 iv = iv_from_surface(surf, latest_surf, K, dte_remaining, right)
             if iv is None: iv = 0.50
             _, _, theta, _ = _bs_greeks(spot, K, dte_remaining/365, 0.045, iv, right)
-            daily += -theta * 100 * qty
-        cumulative += daily * 3  # 3-day step
+            daily += theta * 100 * qty  # short × neg = positive
+        cumulative += daily * 3
         result.append({
             'day': d_ahead, 'date': future.isoformat(),
             'daily_theta': round(daily, 2),
             'cumulative_theta': round(cumulative, 2),
         })
     return result
+
+
+def _extrinsic_and_smoothness(positions, spot):
+    """Expected extrinsic-value decay + smoothness quality (production metric).
+
+    Smoothness = 1 - std(weekly_theta)/mean(weekly_theta), 4-week horizon.
+    Higher = more even income across weeks. Production uses this as a
+    quality gauge for the wheel's income stream.
+    """
+    import math
+    from datetime import date as _date
+    surf = _load_iv_surface()
+    latest_surf = max(surf.keys()) if surf else None
+    today = _date.today()
+    total_extrinsic = 0.0
+    extrinsic_30d_realized = 0.0  # expected to decay within 30d (short pos = profit)
+    weekly_theta = [0.0, 0.0, 0.0, 0.0]  # next 4 weeks
+    for p in positions:
+        if p.get('symbol','').upper() != 'UNG': continue
+        if not p.get('is_option'): continue
+        qty = int(p.get('quantity', 0) or 0)
+        if qty == 0: continue
+        K = float(p.get('strike') or 0)
+        right = 'C' if p.get('option_type') == 'CALL' else 'P'
+        try:
+            exp_d = _date.fromisoformat(p.get('expiry', ''))
+            dte = (exp_d - today).days
+            if dte <= 0: continue
+        except Exception:
+            continue
+        avg_prem = float(p.get('average_price', 0) or 0)
+        intrinsic = _intrinsic_value(K, spot, right)
+        # Current premium estimate
+        iv = None
+        if surf and latest_surf:
+            iv = iv_from_surface(surf, latest_surf, K, dte, right)
+        if iv is None: iv = 0.50
+        # Use BSM to estimate current value
+        T = dte / 365
+        d1 = (math.log(spot/K) + (0.045 + 0.5*iv**2)*T) / (iv*math.sqrt(T))
+        d2 = d1 - iv*math.sqrt(T)
+        from scipy.stats import norm
+        if right == 'C':
+            current_value = spot*norm.cdf(d1) - K*math.exp(-0.045*T)*norm.cdf(d2)
+        else:
+            current_value = K*math.exp(-0.045*T)*norm.cdf(-d2) - spot*norm.cdf(-d1)
+        # Extrinsic = current value − intrinsic, attributed to position
+        extrinsic = max(0, current_value - intrinsic)
+        contrib = extrinsic * 100 * abs(qty)
+        total_extrinsic += contrib * (1 if qty < 0 else -1)  # short = we receive, long = we paid
+        # Portion that decays in 30 days: theta over 30 days = ~30 * current theta
+        _, _, theta, _ = _bs_greeks(spot, K, T, 0.045, iv, right)
+        decay_30d = theta * 100 * qty * min(30, dte)  # short × neg = positive collection
+        extrinsic_30d_realized += decay_30d
+        # Weekly buckets
+        for wk in range(4):
+            wk_start = wk * 7
+            wk_end = (wk + 1) * 7
+            if dte < wk_start: continue
+            days_in_wk = min(wk_end, dte) - wk_start
+            if days_in_wk > 0:
+                weekly_theta[wk] += theta * 100 * qty * days_in_wk  # short × neg = positive
+    # Smoothness — production formula
+    active = [w for w in weekly_theta if w > 0]
+    if len(active) >= 2:
+        import statistics
+        mean_wt = sum(active) / len(active)
+        std_wt = statistics.stdev(active) if len(active) > 1 else 0
+        smoothness = max(0.0, 1.0 - std_wt / mean_wt) if mean_wt > 0 else 0
+    else:
+        smoothness = 0.0
+    return {
+        'total_extrinsic': round(total_extrinsic, 0),
+        'extrinsic_decay_30d_est': round(extrinsic_30d_realized, 0),
+        'weekly_theta': [round(w, 0) for w in weekly_theta],
+        'smoothness': round(smoothness, 3),
+        'avg_weekly_theta': round(sum(weekly_theta) / 4, 0),
+    }
 
 
 def _calendar_grid(positions, spot):
