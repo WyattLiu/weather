@@ -366,6 +366,61 @@ def regime(z_val):
     return 'EXTREME_RICH'
 
 
+_IV_SURFACE_CACHE = None  # lazy-loaded once per process
+
+
+def _load_iv_surface():
+    """Load full UNG IV surface from Postgres into a fast in-memory lookup.
+
+    Returns dict keyed by date_str → list of (dte, strike_adj, right, iv).
+    Returns None if PG unavailable; caller falls back to parametric model.
+    """
+    global _IV_SURFACE_CACHE
+    if _IV_SURFACE_CACHE is not None:
+        return _IV_SURFACE_CACHE
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host='192.168.1.172', port=5432, database='market_scanner',
+            user='postgres', password='shinobi2025', connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute('SELECT date, dte, strike_adj, option_right, iv FROM ung_iv_surface')
+        rows = cur.fetchall()
+        conn.close()
+        surface = {}
+        for d, dte, K, right, iv in rows:
+            d_str = d.isoformat()
+            surface.setdefault(d_str, []).append((int(dte), float(K), right, float(iv)))
+        _IV_SURFACE_CACHE = surface
+        return surface
+    except Exception:
+        _IV_SURFACE_CACHE = {}
+        return {}
+
+
+def iv_from_surface(surface, date_str, K, dte, right):
+    """Nearest-neighbor IV lookup. Returns None if no data within tolerance."""
+    rows = surface.get(date_str)
+    if not rows:
+        return None
+    # Filter by right; find closest (K, dte) jointly
+    best = None
+    best_dist = float('inf')
+    for r_dte, r_K, r_right, r_iv in rows:
+        if r_right != right:
+            continue
+        # Normalize: K-dist as %, dte-dist as days*0.001
+        dist = abs(r_K - K) / max(K, 1) + abs(r_dte - dte) * 0.001
+        if dist < best_dist:
+            best_dist = dist
+            best = r_iv
+    # Reject if strike too far (>30%) or dte too far (>60d)
+    if best is None or best_dist > 0.4:
+        return None
+    return best
+
+
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
     """Simpler procedural runner with state dict."""
     s = {
@@ -378,6 +433,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
     p = strategy_params
     use_surprise = p.get('use_surprise_z', False)
+    use_real_iv = p.get('use_real_iv_surface', False)
+    iv_surface = _load_iv_surface() if use_real_iv else None
     target_weekly_income = p.get('target_weekly_income', 1500.0)
     recent_premium = []
     # Drawdown-aware risk dial — single parameter that down-scales sizing
@@ -398,6 +455,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # VIX regime + skew + term structure). Falls back to 0.55 only if
         # no realized vol available (first 30 days).
         def iv_at(K, dte, right='C'):
+            # Try real surface first if enabled
+            if iv_surface is not None and iv_surface:
+                d_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
+                real = iv_from_surface(iv_surface, d_str, K, dte, right)
+                if real is not None:
+                    return real
             return iv_for_quote(row, K, spot_u, dte, right)
         z = compute_historical_z(row, use_surprise=use_surprise)
         # DD-aware risk dial — generic protection against any adverse
@@ -2607,6 +2670,30 @@ STRATEGIES = {
         'cut_and_rebuild_puts': True,
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
+    },
+    # Real-IV variant of aggressive_z — uses PG ung_iv_surface table
+    'champion_aggressive_z_real_iv': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'use_real_iv_surface': True,  # NEW: pull IV from PG when available
     },
     # NEW HARNESS WINNER: aggressive z-target mults push Sharpe to 1.86
     # Counter-intuitive: trimming MORE at rich + loading MORE at cheap
