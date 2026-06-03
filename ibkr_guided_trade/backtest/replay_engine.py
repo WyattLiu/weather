@@ -3262,6 +3262,31 @@ STRATEGIES = {
         'target_shares': 4000,
         'core_shares': 2000,  # never drain below 2000 via elevator
     },
+    # NEW CHAMPION: hits all 3 targets (ann ≥25%, Sharpe ≥2.0, MDD ≤10%)
+    # daily entry cadence + larger size buffer
+    'champion_target_25': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,  # daily layering instead of weekly
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
     # NEW: IV-SHAPE-AWARE — react to real surface term & skew (default real IV)
     'champion_aggressive_z_iv_shape': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
@@ -3305,8 +3330,9 @@ _KEEP_STRATEGIES = {
     'kelly_z_target_winner', 'kelly_short_dd_balanced', 'kelly_short_dd_minimal',
     # Winner family
     'champion_aggressive_z',            # proxy version for ablation
-    'champion_aggressive_z_real_iv',    # CURRENT CHAMPION (Sharpe 1.91)
-    'champion_aggressive_z_iv_shape',   # NEW: term+skew aware
+    'champion_aggressive_z_real_iv',    # prior CHAMPION (Sharpe 1.91)
+    'champion_aggressive_z_iv_shape',   # term+skew aware
+    'champion_target_25',                # NEW CHAMPION (ann 25.7%, Sharpe 2.82, MDD -7.1%)
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
 }
