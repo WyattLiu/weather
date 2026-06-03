@@ -419,6 +419,20 @@
     "max_dd_pct": -61.980302743484174,
     "sharpe": 0.8998347562458081
   },
+  "champion_plus_shoulder": {
+    "final": 705959.7824957198,
+    "return_pct": 124.2224088348192,
+    "annual_pct": 17.526499986898216,
+    "max_dd_pct": -58.4490562752077,
+    "sharpe": 0.8154791488381032
+  },
+  "champion_plus_shoulder_heavy": {
+    "final": 702929.3724897706,
+    "return_pct": 123.25990948550931,
+    "annual_pct": 17.425427205883494,
+    "max_dd_pct": -58.39094625140052,
+    "sharpe": 0.8109662658890766
+  },
   "best_plus_concentration": {
     "final": 771908.5452336341,
     "return_pct": 145.1686309956556,
@@ -446,6 +460,104 @@
     "annual_pct": 17.354430171048985,
     "max_dd_pct": -69.15912887416451,
     "sharpe": 0.6585646697097359
+  },
+  "kelly_fundamental_modulated": {
+    "final": 708495.5517175912,
+    "return_pct": 125.02780355740124,
+    "annual_pct": 17.6108087026414,
+    "max_dd_pct": -69.16242092312773,
+    "sharpe": 0.6653850585127709
+  },
+  "kelly_dd_aware": {
+    "final": 701005.0306297148,
+    "return_pct": 122.64871239187602,
+    "annual_pct": 17.361063836268297,
+    "max_dd_pct": -69.16242092312773,
+    "sharpe": 0.6587473822930816
+  },
+  "kelly_shoulder_kold": {
+    "final": 730287.2064481996,
+    "return_pct": 131.94912887556595,
+    "annual_pct": 18.32555472133388,
+    "max_dd_pct": -68.99914049799204,
+    "sharpe": 0.6874894327506377
+  },
+  "kelly_shoulder_kold_heavy": {
+    "final": 719522.3703760866,
+    "return_pct": 128.53007082913143,
+    "annual_pct": 17.97464273846423,
+    "max_dd_pct": -69.16242092312773,
+    "sharpe": 0.6761381567964327
+  },
+  "kelly_dd_share_trim_15": {
+    "final": 574445.2683462603,
+    "return_pct": 82.45161410897161,
+    "annual_pct": 12.779338248532945,
+    "max_dd_pct": -47.9249684677772,
+    "sharpe": 0.6726792480439042
+  },
+  "kelly_dd_share_trim_10": {
+    "final": 596954.1393651128,
+    "return_pct": 89.60073705498016,
+    "annual_pct": 13.649624266760064,
+    "max_dd_pct": -50.84789061423747,
+    "sharpe": 0.7718215530469674
+  },
+  "kelly_dd_kold_hedge": {
+    "final": 733279.7247020588,
+    "return_pct": 132.89959329011148,
+    "annual_pct": 18.42236934826691,
+    "max_dd_pct": -68.99684673864722,
+    "sharpe": 0.6900277931600545
+  },
+  "kelly_z_target_winner": {
+    "final": 635025.225002149,
+    "return_pct": 101.69263058794455,
+    "annual_pct": 15.063612815747529,
+    "max_dd_pct": -51.18480959405078,
+    "sharpe": 1.0903139065616858
+  },
+  "kelly_z_target_calm_max": {
+    "final": 654220.4030790876,
+    "return_pct": 107.78927967921285,
+    "annual_pct": 15.750966906518915,
+    "max_dd_pct": -53.00727454429535,
+    "sharpe": 0.9233783113847366
+  },
+  "kelly_short_dd_balanced": {
+    "final": 465611.5730013016,
+    "return_pct": 47.884555279682786,
+    "annual_pct": 8.139551472328455,
+    "max_dd_pct": -31.62859679582987,
+    "sharpe": 1.235907317540729
+  },
+  "kelly_short_dd_tight": {
+    "final": 414149.5205896639,
+    "return_pct": 31.53950894499149,
+    "annual_pct": 5.635828602806869,
+    "max_dd_pct": -23.13088709990367,
+    "sharpe": 1.0467353606997023
+  },
+  "kelly_short_dd_minimal": {
+    "final": 389932.99087417295,
+    "return_pct": 23.848010419067634,
+    "annual_pct": 4.370510290361818,
+    "max_dd_pct": -18.36144264386011,
+    "sharpe": 1.0045776181754777
+  },
+  "kelly_dd_controlled": {
+    "final": 571785.0946685718,
+    "return_pct": 81.60670684269415,
+    "annual_pct": 12.674691237282643,
+    "max_dd_pct": -44.33306934749125,
+    "sharpe": 1.0784641890023299
+  },
+  "kelly_dd_belt_and_suspenders": {
+    "final": 595212.4647695293,
+    "return_pct": 89.04755756386587,
+    "annual_pct": 13.583229862111024,
+    "max_dd_pct": -50.25865659417572,
+    "sharpe": 0.7428591008034406
   },
   "beam_put_only": {
     "final": 768240.3696946056,
@@ -485,5 +597,5 @@
   "ung_return_pct": -74.55855117020977,
   "initial_nav": 314848.00567626953,
   "years": 5.0,
-  "updated_at": "2026-06-03T00:09:57.786037"
+  "updated_at": "2026-06-03T00:48:28.205750"
 }
