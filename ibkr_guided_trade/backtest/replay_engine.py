@@ -460,12 +460,46 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if smart_trim and (is_uptrend or is_oversold):
                 should_trim = False
             if should_trim and i % dd_trim_cadence == 0 and s['shares'] > dd_trim_floor:
+                desired_trim = int(s['shares'] * dd_trim_qty_pct / 100)
+                desired_trim = (desired_trim // 100) * 100
+                desired_trim = min(desired_trim, s['shares'] - dd_trim_floor)
+
+                # CC-AWARE CUT: if desired trim exceeds the freely-tradable
+                # uncovered shares, close CCs (cheapest first = nearest
+                # expiry, least time value) to free up shares. This lets
+                # us cut delta even when wheel is fully covered.
                 short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
                 min_shares_required = short_call_lots * 100
-                effective_floor = max(dd_trim_floor, min_shares_required)
-                trim_qty = int(s['shares'] * dd_trim_qty_pct / 100)
+                free_shares = s['shares'] - min_shares_required
+                if desired_trim > free_shares and p.get('cc_aware_cut', True):
+                    needed_lots = (desired_trim - free_shares + 99) // 100
+                    # Sort CCs by ascending DTE (close near-expiry first = cheapest)
+                    s['short_calls'].sort(key=lambda sc: (idx - sc['entry']).days - sc['dte'])
+                    while needed_lots > 0 and s['short_calls']:
+                        sc = s['short_calls'][0]
+                        days_left = max(1, sc['dte'] - (idx - sc['entry']).days)
+                        T_left = days_left / 365
+                        cur_prem = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], days_left, 'C'))
+                        close_lots = min(sc['qty'], needed_lots)
+                        debit = cur_prem * 100 * close_lots + close_lots * SPREAD_OPTION * 100
+                        if s['cash'] < debit + 500:
+                            break
+                        s['cash'] -= debit
+                        pnl = sc['entry_prem'] * 100 * close_lots - debit
+                        trades.append({'date': idx, 'type': 'CC_CLOSE_FOR_CUT',
+                                       'pnl': pnl, 'qty': close_lots, 'K': sc['K'],
+                                       'spot': spot_u, 'dd_pct': dd_pct})
+                        sc['qty'] -= close_lots
+                        needed_lots -= close_lots
+                        if sc['qty'] <= 0:
+                            s['short_calls'].pop(0)
+                    # Recompute free shares after closing
+                    short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+                    min_shares_required = short_call_lots * 100
+                    free_shares = s['shares'] - min_shares_required
+
+                trim_qty = min(desired_trim, free_shares, s['shares'] - dd_trim_floor)
                 trim_qty = (trim_qty // 100) * 100
-                trim_qty = min(trim_qty, s['shares'] - effective_floor)
                 if trim_qty >= 100:
                     proceeds = trim_qty * (spot_u - SPREAD_SHARE)
                     s['cash'] += proceeds
@@ -526,8 +560,18 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             target = (target // 100) * 100
             current = s['shares']
             delta = target - current
-            # Move 50% toward target per cadence (gradual rebalancing)
-            adjust = int(delta * 0.5)
+            # Cut speed tunable: 0.3 = slow (30% toward target per cadence),
+            # 0.5 = balanced (default), 1.0 = full snap. Higher = faster cut.
+            cut_speed = p.get('cut_speed', 0.5)
+            # Over-cut buffer: trim a bit MORE than the calculated amount to
+            # build cash buffer (e.g., 0.10 = 10% extra cut). Only applies
+            # when we're SELLING (delta < 0), not buying. Restores parity
+            # on the way back up via z_target_add when z turns cheap.
+            over_cut = p.get('over_cut_pct', 0.0)
+            if delta < 0 and over_cut > 0:
+                adjust = int(delta * cut_speed * (1 + over_cut))
+            else:
+                adjust = int(delta * cut_speed)
             adjust = (adjust // 100) * 100
             # Must keep enough shares to cover existing short calls
             short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
@@ -2314,6 +2358,51 @@ STRATEGIES = {
     # while waiting for re-entry. Captures put-skew richness (panic IV
     # is fattest in declines). More executable than ITM CCs in fast-down
     # markets where call-side spreads widen.
+    # Speed-tunable variants of champion_cut_rebuild
+    'champion_cut_rebuild_fast': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 5,  # weekly cadence
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.8,  # faster snap
+        'over_cut_pct': 0.10,  # 10% over-cut buffer
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -10, 'dd_trim_qty_pct': 35, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'champion_cut_rebuild_slow': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 42,  # ~2 months
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.3,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -20, 'dd_trim_qty_pct': 20, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 21,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    # Over-cut variant — same as champion_cut_rebuild but with over_cut buffer
+    'champion_cut_rebuild_overcut': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.5, 'over_cut_pct': 0.15,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 35, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.12, 'rebuild_put_dte': 45,
+    },
     'champion_cut_rebuild': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'roll_down': True,
@@ -2607,8 +2696,12 @@ def compare_strategies():
             continue
         final = hist.iloc[-1]['nav']
         ret = (final / initial_nav - 1) * 100
-        max_dd_pct = ((hist['nav'].min() - hist['nav'].cummax().max()) /
-                      hist['nav'].cummax().max() * 100)
+        # CORRECT MDD: max peak-to-trough running drawdown, NOT (min vs all-time-max).
+        # Old buggy formula compared absolute-min (often the start) to absolute-max,
+        # massively overstating MDD by mixing different points in time.
+        running_peak = hist['nav'].cummax()
+        dd_series = (hist['nav'] - running_peak) / running_peak * 100
+        max_dd_pct = dd_series.min() if len(dd_series) else 0.0
         daily_ret = hist['nav'].pct_change().dropna()
         sharpe = daily_ret.mean() / (daily_ret.std() + 1e-9) * math.sqrt(252)
         ann = ((final / initial_nav) ** (1/years_held) - 1) * 100 if years_held > 0 else 0
