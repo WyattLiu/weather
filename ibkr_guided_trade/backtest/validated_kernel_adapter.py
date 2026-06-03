@@ -95,7 +95,8 @@ def _iv_shape_today(spot: float):
 
 
 def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = None,
-                      base_shares: int = 6200) -> Dict[str, Any]:
+                      base_shares: int = 6200,
+                      nav: Optional[float] = None) -> Dict[str, Any]:
     """Return what the validated kernel says about current state.
 
     Args:
@@ -193,13 +194,17 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
 
     # Put posture
     if current_put_collateral > 0:
-        # Check over-leverage signal
-        # Recommend not opening new puts if collateral > 80% of likely NAV proxy (5x base*spot)
-        proxy_nav = base_shares * spot
-        out['put_collateral_pct_nav'] = (current_put_collateral / proxy_nav) if proxy_nav > 0 else 0
+        # Use real NAV when caller provides it; otherwise fall back to proxy
+        # (base_shares × spot underestimates real NAV when BOXX/cash present)
+        denom = nav if (nav and nav > 0) else (base_shares * spot)
+        out['put_collateral_pct_nav'] = (current_put_collateral / denom) if denom > 0 else 0
+        out['_nav_source'] = 'live' if (nav and nav > 0) else 'proxy(base×spot)'
         if out['put_collateral_pct_nav'] > 0.8:
-            out['warnings'].append('Short-put collateral > 80% of est NAV — over-leveraged; '
+            out['warnings'].append('Short-put collateral > 80% of NAV — over-leveraged; '
                                    'do NOT open new puts until existing roll off')
+        elif out['put_collateral_pct_nav'] > 0.6:
+            out['warnings'].append('Short-put collateral > 60% of NAV — elevated; '
+                                   'avoid adding new put exposure')
 
     # Shoulder
     import datetime

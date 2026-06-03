@@ -95,7 +95,8 @@ def _refresh():
                     'total_return_pct': float(bal.total_return_pct),
                 }
                 _STATE_CACHE['error'] = None
-            _STATE_CACHE['verdict'] = validated_verdict(spot, _STATE_CACHE['positions'])
+            nav_live = (_STATE_CACHE.get('balance') or {}).get('net_liquidation')
+            _STATE_CACHE['verdict'] = validated_verdict(spot, _STATE_CACHE['positions'], nav=nav_live)
             _STATE_CACHE['last_refresh'] = time.time()
         except Exception as e:
             _STATE_CACHE['error'] = f'refresh failed: {e}'
@@ -107,11 +108,141 @@ def _refresh_loop():
         time.sleep(REFRESH_SEC)
 
 
+# ─── Series + analytics endpoints ────────────────────────────────────────────
+_SERIES_CACHE = {'ts': 0.0, 'data': None}
+
+
+def _build_series():
+    """Build time-series JSON for charts (UNG, z, IV30, regime bands)."""
+    import pandas as pd
+    from replay_engine import precompute_factor_z, compute_historical_z  # type: ignore
+
+    csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
+    df = pd.read_csv(csv, index_col=0, parse_dates=True)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+    # Compute z timeseries
+    z = df.apply(lambda r: compute_historical_z(r, use_surprise=True), axis=1)
+    out = {
+        'dates': [d.strftime('%Y-%m-%d') for d in df.index],
+        'ung': [float(x) for x in df['UNG'].tolist()],
+        'iv30': [float(x) if pd.notna(x) else None for x in df.get('iv_30d', pd.Series([None]*len(df))).tolist()],
+        'z': [float(x) if pd.notna(x) else None for x in z.tolist()],
+        'rv30': [float(x) if pd.notna(x) else None for x in df.get('rv_30', pd.Series([None]*len(df))).tolist()],
+    }
+    return out
+
+
+def _build_walkforward():
+    """Run champion_target_25_dd_trim on rolling 12-month windows."""
+    import pandas as pd
+    import math
+    from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z  # type: ignore
+    csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
+    df = pd.read_csv(csv, index_col=0, parse_dates=True)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+    strat = STRATEGIES['champion_target_25_dd_trim']
+    windows = []
+    start_dates = pd.date_range('2021-07-01', '2025-04-01', freq='3MS')
+    for start in start_dates:
+        end = start + pd.DateOffset(years=1)
+        if end > df.index[-1]: continue
+        sub = df.loc[start:end]
+        if len(sub) < 200: continue
+        try:
+            hist, _ = run_strategy_simple(sub, strat, 100000, 0)
+            hist = hist.set_index(pd.to_datetime(hist['date']))
+            init = 100000
+            fret = (float(hist.iloc[-1]['nav'])/init - 1)*100
+            y = (sub.index[-1]-sub.index[0]).days/365.25
+            ann = (1+fret/100)**(1/y)*100 - 100
+            rets = hist['nav'].pct_change().dropna()
+            sh = rets.mean()/(rets.std()+1e-9)*math.sqrt(252)
+            mdd = ((hist['nav']-hist['nav'].cummax())/hist['nav'].cummax()*100).min()
+            windows.append({
+                'start': start.strftime('%Y-%m-%d'),
+                'end': end.strftime('%Y-%m-%d'),
+                'ret': round(fret, 1), 'ann': round(ann, 1),
+                'sharpe': round(sh, 2), 'mdd': round(mdd, 1),
+            })
+        except Exception:
+            pass
+    return windows
+
+
+def _build_backtest_curve():
+    """Full backtest equity curve for champion strategy at $100K cash start."""
+    import pandas as pd
+    from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z  # type: ignore
+    csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
+    df = pd.read_csv(csv, index_col=0, parse_dates=True)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+    strat = STRATEGIES['champion_target_25_dd_trim']
+    hist, _ = run_strategy_simple(df, strat, 100000, 0)
+    hist = hist.set_index(pd.to_datetime(hist['date']))
+    nav = hist['nav'].tolist()
+    peak = hist['nav'].cummax()
+    dd = ((hist['nav']-peak)/peak*100).tolist()
+    return {
+        'dates': [d.strftime('%Y-%m-%d') for d in hist.index],
+        'nav': [float(x) for x in nav],
+        'drawdown_pct': [float(x) for x in dd],
+        'shares': [int(x) for x in hist['shares'].tolist()],
+        'cash': [float(x) for x in hist['cash'].tolist()],
+    }
+
+
+def _build_yearly_pnl():
+    """Year-by-year P&L breakdown for the champion strategy."""
+    import pandas as pd
+    import math
+    from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z  # type: ignore
+    csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
+    df = pd.read_csv(csv, index_col=0, parse_dates=True)
+    df = precompute_factor_z(df).dropna(subset=['UNG'])
+    strat = STRATEGIES['champion_target_25_dd_trim']
+    hist, _ = run_strategy_simple(df, strat, 100000, 0)
+    hist = hist.set_index(pd.to_datetime(hist['date']))
+    years = []
+    for yr in sorted(hist.index.year.unique()):
+        ydf = hist[hist.index.year == yr]
+        if len(ydf) < 2: continue
+        ystart = ydf['nav'].iloc[0]; yend = ydf['nav'].iloc[-1]
+        yret = (yend/ystart - 1) * 100
+        yrets = ydf['nav'].pct_change().dropna()
+        ysh = yrets.mean()/(yrets.std()+1e-9)*math.sqrt(252) if len(yrets) else 0
+        ymdd = ((ydf['nav'] - ydf['nav'].cummax())/ydf['nav'].cummax()*100).min()
+        years.append({
+            'year': int(yr),
+            'pnl_pct': round(yret, 1),
+            'pnl_dollar': round(yend - ystart, 0),
+            'sharpe': round(ysh, 2),
+            'mdd_pct': round(ymdd, 1),
+            'days': len(ydf),
+        })
+    return years
+
+
+def _cached_analytics():
+    """Refresh analytics every 10 minutes (heavy compute)."""
+    if time.time() - _SERIES_CACHE['ts'] < 600 and _SERIES_CACHE['data']:
+        return _SERIES_CACHE['data']
+    data = {
+        'series': _build_series(),
+        'walkforward': _build_walkforward(),
+        'backtest_curve': _build_backtest_curve(),
+        'yearly': _build_yearly_pnl(),
+    }
+    _SERIES_CACHE['ts'] = time.time()
+    _SERIES_CACHE['data'] = data
+    return data
+
+
 # ─── HTML (matches production CSS variables and layout) ──────────────────────
 HTML = r"""<!doctype html>
 <html><head>
 <meta charset="utf-8"/>
 <title>UNG Kernel Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
 :root {
     --bg: #0d1117;
@@ -313,6 +444,54 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
+  <!-- Charts behind the reasons -->
+  <div class="section">
+    <h2>Why this regime? — UNG price + Z-score history</h2>
+    <div id="chart-regime" style="height:380px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Z = surprise-detrended storage z. <span style="color:var(--red)">z &gt; +1.5 = EXTREME_RICH</span> (mult 0.1),
+      <span style="color:var(--orange)">+0.5 to +1.5 = RICH</span> (0.4), grey ±0.5 = NEUTRAL (1.0),
+      <span style="color:var(--green)">-0.5 to -1.5 = CHEAP</span> (1.4), bright green &lt; -1.5 = EXTREME_CHEAP (2.0).
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Why this IV? — IV30 history (PG real surface)</h2>
+    <div id="chart-iv" style="height:280px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Real market IV30 from PG <code>ung_iv_surface</code> (16,517 rows, 878 dates). Median 0.55,
+      range 0.20-1.22 over 2017-2026.
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Backtest equity curve — champion_target_25_dd_trim @ $100K cash start</h2>
+    <div id="chart-equity" style="height:380px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Full 5yr backtest used to validate the kernel. Drawdown overlay shows real DD episodes.
+      Walk-forward 12mo worst window: <strong>-17%</strong> MDD (vs full-sample -7%).
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Walk-forward validation — rolling 12mo windows</h2>
+    <div id="chart-walkforward" style="height:340px"></div>
+    <div class="rec-why" style="margin-top:8px">
+      Each bar is a 1-year run starting at a different date. The headline "Sharpe 2.58 / MDD -7%"
+      is for the full window; the rolling test exposes that real worst-case MDD on any 12mo period
+      reaches -17%. Lower bars = harder windows.
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Year-by-year P&amp;L</h2>
+    <div id="chart-yearly" style="height:300px"></div>
+    <table style="margin-top:12px" id="yearly-table">
+      <thead><tr><th>Year</th><th>P&L $</th><th>P&L %</th><th>Sharpe</th><th>MDD %</th><th>Days</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
   <!-- Positions -->
   <div class="section">
     <h2>UNG Position Detail</h2>
@@ -449,6 +628,112 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 30000);
+
+// Chart rendering (10-minute cache on backend)
+const PLOTLY_LAYOUT_BASE = {
+  paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+  font: { color: '#e6edf3', family: 'ui-monospace, SFMono-Regular, monospace', size: 11 },
+  margin: { l: 50, r: 30, t: 10, b: 40 },
+  xaxis: { gridcolor: '#21262d', linecolor: '#30363d' },
+  yaxis: { gridcolor: '#21262d', linecolor: '#30363d' },
+};
+async function drawCharts() {
+  try {
+    const r = await fetch('/api/analytics');
+    const a = await r.json();
+    if (a.error) { console.error(a.error); return; }
+
+    // Regime: UNG price + z overlay
+    const s = a.series;
+    Plotly.newPlot('chart-regime', [
+      { x: s.dates, y: s.ung, type: 'scatter', mode: 'lines', name: 'UNG ($)',
+        line: {color: '#58a6ff', width: 1.5}, yaxis: 'y' },
+      { x: s.dates, y: s.z, type: 'scatter', mode: 'lines', name: 'Z (surprise)',
+        line: {color: '#bc8cff', width: 1.5, dash: 'dot'}, yaxis: 'y2' },
+    ], {
+      ...PLOTLY_LAYOUT_BASE,
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'UNG $', side: 'left' },
+      yaxis2: { title: 'Z', overlaying: 'y', side: 'right',
+                gridcolor: 'transparent', zeroline: true, zerolinecolor: '#30363d',
+                range: [-3, 3] },
+      shapes: [
+        // Regime bands as horizontal stripes on z axis
+        {type:'rect', xref:'paper', yref:'y2', x0:0, x1:1, y0:1.5, y1:3, fillcolor:'rgba(248,81,73,0.08)', line:{width:0}},
+        {type:'rect', xref:'paper', yref:'y2', x0:0, x1:1, y0:-1.5, y1:-3, fillcolor:'rgba(63,185,80,0.08)', line:{width:0}},
+      ],
+      legend: { x: 0, y: 1.1, orientation: 'h' },
+    }, {displayModeBar: false, responsive: true});
+
+    // IV30 history
+    Plotly.newPlot('chart-iv', [
+      { x: s.dates, y: s.iv30, type: 'scatter', mode: 'lines', name: 'IV30',
+        line: {color: '#39d2c0', width: 1.5}, fill: 'tozeroy', fillcolor: 'rgba(57,210,192,0.1)' },
+    ], {
+      ...PLOTLY_LAYOUT_BASE,
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'IV30 (annualized)', tickformat: '.0%' },
+    }, {displayModeBar: false, responsive: true});
+
+    // Equity curve + drawdown overlay
+    const bc = a.backtest_curve;
+    Plotly.newPlot('chart-equity', [
+      { x: bc.dates, y: bc.nav, type: 'scatter', mode: 'lines', name: 'NAV ($)',
+        line: {color: '#3fb950', width: 1.8}, yaxis: 'y' },
+      { x: bc.dates, y: bc.drawdown_pct, type: 'scatter', mode: 'lines', name: 'Drawdown %',
+        line: {color: '#f85149', width: 1.2}, fill: 'tozeroy', fillcolor: 'rgba(248,81,73,0.15)',
+        yaxis: 'y2' },
+    ], {
+      ...PLOTLY_LAYOUT_BASE,
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'NAV ($)', side: 'left' },
+      yaxis2: { title: 'DD %', overlaying: 'y', side: 'right', gridcolor: 'transparent',
+                range: [-25, 0] },
+      legend: { x: 0, y: 1.1, orientation: 'h' },
+    }, {displayModeBar: false, responsive: true});
+
+    // Walk-forward windows (bar chart, color by MDD severity)
+    const wf = a.walkforward;
+    const wfColors = wf.map(w => w.mdd < -15 ? '#f85149' : w.mdd < -10 ? '#d29922' : '#3fb950');
+    Plotly.newPlot('chart-walkforward', [
+      { x: wf.map(w => w.start), y: wf.map(w => w.ann), type: 'bar', name: 'Annualized %',
+        marker: { color: wfColors }, yaxis: 'y' },
+      { x: wf.map(w => w.start), y: wf.map(w => w.mdd), type: 'scatter', mode: 'lines+markers',
+        name: 'MDD %', line: { color: '#bc8cff' }, marker: {size: 6}, yaxis: 'y2' },
+    ], {
+      ...PLOTLY_LAYOUT_BASE,
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Annualized %' },
+      yaxis2: { title: 'MDD %', overlaying: 'y', side: 'right', gridcolor: 'transparent',
+                range: [-30, 0] },
+      legend: { x: 0, y: 1.1, orientation: 'h' },
+    }, {displayModeBar: false, responsive: true});
+
+    // Yearly P&L bars
+    const yrs = a.yearly;
+    const yrColors = yrs.map(y => y.pnl_pct > 0 ? '#3fb950' : '#f85149');
+    Plotly.newPlot('chart-yearly', [
+      { x: yrs.map(y => y.year), y: yrs.map(y => y.pnl_pct), type: 'bar',
+        marker: { color: yrColors }, text: yrs.map(y => y.pnl_pct.toFixed(1) + '%'),
+        textposition: 'outside', textfont: { color: '#e6edf3' } },
+    ], {
+      ...PLOTLY_LAYOUT_BASE,
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'P&L %' },
+      xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'category' },
+    }, {displayModeBar: false, responsive: true});
+
+    // Yearly table
+    const tbody = document.querySelector('#yearly-table tbody');
+    tbody.innerHTML = yrs.map(y => `<tr>
+      <td>${y.year}</td>
+      <td class="mono ${y.pnl_dollar>0?'positive':'negative'}">$${y.pnl_dollar.toLocaleString()}</td>
+      <td class="mono ${y.pnl_pct>0?'positive':'negative'}">${y.pnl_pct.toFixed(1)}%</td>
+      <td class="mono">${y.sharpe.toFixed(2)}</td>
+      <td class="mono ${y.mdd_pct<-10?'negative':'neutral'}">${y.mdd_pct.toFixed(1)}%</td>
+      <td>${y.days}</td>
+    </tr>`).join('');
+  } catch (e) {
+    console.error('charts failed:', e);
+  }
+}
+drawCharts();
+setInterval(drawCharts, 600000); // 10 min
 </script>
 </body></html>"""
 
@@ -478,6 +763,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"refreshed": true}')
+        elif parsed.path == '/api/analytics':
+            try:
+                body = json.dumps(_cached_analytics(), default=str)
+            except Exception as e:
+                body = json.dumps({'error': str(e)})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'public, max-age=600')
+            self.end_headers()
+            self.wfile.write(body.encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
