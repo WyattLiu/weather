@@ -2444,6 +2444,58 @@ STRATEGIES = {
         'rebuild_put_otm_pct': 0.15,  # deeper OTM
         'rebuild_put_dte': 45,
     },
+    # HIGH-RETURN BASES + protection layer (cut_rebuild + z_target + shoulder)
+    # Goal: retain old champion's 140%+ return profile but cap MDD at <-10%
+    'champion_20pct_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        # Protection layer
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'beam_put_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'beam_put_selector': True, 'beam_put_n': 5,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'kelly_firmness_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True, 'kelly_firmness': True,
+        'kelly_max_qty': 25, 'open_dte': 45, 'vol_aware_dte': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
     # CHAMPION TRIFECTA: highest Sharpe in entire harness (1.48)
     # +90.5% return, -49% MDD, +16% calm, calm Sharpe ~0.3
     # Mechanics: elevator close (lock spike), shoulder hedge (KOLD in weak
