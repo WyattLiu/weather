@@ -132,6 +132,41 @@
     "max_dd_pct": -6.188716403141965,
     "sharpe": 2.580517568899681
   },
+  "champion_target_25_dd_trim": {
+    "final": 885219.5313321607,
+    "return_pct": 181.15773813805066,
+    "annual_pct": 22.95348278974987,
+    "max_dd_pct": -6.188716403141965,
+    "sharpe": 2.580517568899681
+  },
+  "champion_target_25_max_protected": {
+    "final": 678832.5453486562,
+    "return_pct": 115.6064301219173,
+    "annual_pct": 16.599260525717142,
+    "max_dd_pct": -6.4958162693361405,
+    "sharpe": 2.3588876219312644
+  },
+  "champion_target_25_nav_aware": {
+    "final": 724902.5905210575,
+    "return_pct": 130.2389017723082,
+    "annual_pct": 18.139756645832694,
+    "max_dd_pct": -4.959280221137923,
+    "sharpe": 2.422123004633462
+  },
+  "champion_target_25_cash_start": {
+    "final": 724902.5905210575,
+    "return_pct": 130.2389017723082,
+    "annual_pct": 18.139756645832694,
+    "max_dd_pct": -4.959280221137923,
+    "sharpe": 2.422123004633462
+  },
+  "champion_target_25_window_safe": {
+    "final": 816934.28158191,
+    "return_pct": 159.46941598921592,
+    "annual_pct": 20.99624159773066,
+    "max_dd_pct": -6.321341273170922,
+    "sharpe": 2.220401320721265
+  },
   "champion_aggressive_z_iv_shape": {
     "final": 754853.7811006929,
     "return_pct": 139.75180642460305,
@@ -142,5 +177,5 @@
   "ung_return_pct": -74.55855117020977,
   "initial_nav": 314848.00567626953,
   "years": 5.002739726027397,
-  "updated_at": "2026-06-03T14:09:18.866583"
+  "updated_at": "2026-06-03T14:48:05.235091"
 }
