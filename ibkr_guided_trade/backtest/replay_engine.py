@@ -25,6 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from seasonal_z import add_seasonal_factors  # type: ignore
 from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 from attribution import attribute_trades, print_attribution  # type: ignore
+from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
+from scenario_distribution import ScenarioDistribution  # type: ignore
+from quality_scorer import score_portfolio_quality  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -51,49 +54,88 @@ def bs_call(S, K, T, sig, r=0.045):
 
 
 def compute_historical_z(row, use_surprise=False):
-    """Approximate composite z-score from available factors.
+    """Composite z-score (CLEANED 20260603).
 
-    use_surprise=True uses seasonal-detrended storage/days_supply
-    (storage_surprise_z) — removes the dominant ~annual sine cycle,
-    so signal reflects deviation from SEASONAL expectation, not raw level.
+    Honest finding: of 5 candidate factors, only storage_surprise_z has
+    IC > 0.10 with future returns (IC +0.146 at 20d). Adding other
+    factors NAIVELY DILUTES this signal. days_supply_z = +0.04,
+    ng_trend = +0.024 (inversion bug also: was multiplied by -1 wrongly),
+    rv_30 as z component flips sign at combination.
+
+    NEW APPROACH: single-factor z based on storage_surprise_z. Other
+    signals (rv_30 for vol, momentum for trend) used separately in
+    strategies, NOT folded into a noisy composite.
+
+    use_surprise kept for backward compat — both modes now identical
+    since we use surprise-detrended storage as the canonical z.
     """
     z_components = []
     weights = []
 
-    # Storage deviation (negative when storage low = bullish)
-    storage_col = 'storage_surprise_z' if use_surprise else 'storage_z'
-    if storage_col in row and not pd.isna(row[storage_col]):
-        z_components.append(-row[storage_col])
-        weights.append(0.30)
+    # PRIMARY (and only) factor: storage surprise z (inverted = bullish positive)
+    if 'storage_surprise_z' in row and not pd.isna(row['storage_surprise_z']):
+        z_components.append(-row['storage_surprise_z'])
+        weights.append(1.0)
+    # Fallback to raw storage_z when surprise unavailable (warmup)
+    elif 'storage_z' in row and not pd.isna(row['storage_z']):
+        z_components.append(-row['storage_z'])
+        weights.append(1.0)
 
-    # Days supply
-    ds_col = 'days_supply_surprise_z' if use_surprise else 'days_supply_z'
-    if ds_col in row and not pd.isna(row[ds_col]):
-        z_components.append(-row[ds_col])
-        weights.append(0.25)
-
-    # NG trend
-    if 'ng_trend' in row and not pd.isna(row['ng_trend']):
-        z_components.append(-row['ng_trend'] * 3)  # high trend (above MA) = bearish (mean revert)
-        weights.append(0.20)
-
-    # VIX (market fear) — mildly bearish for NG (demand fear)
-    if 'VIX' in row and not pd.isna(row['VIX']):
-        vix_normed = (row['VIX'] - 20) / 10  # rough z
-        z_components.append(-vix_normed * 0.5)
-        weights.append(0.10)
-
-    # CL/NG ratio (oil/gas)
-    if 'CL' in row and 'NG' in row and not pd.isna(row['NG']) and row['NG'] > 0:
-        ratio = row['CL'] / row['NG']
-        # Typical ratio ~25; > 30 = NG cheap relative
-        ratio_z = (ratio - 25) / 10
-        z_components.append(ratio_z * 0.5)
-        weights.append(0.15)
+    # Other fundamental signals NOT in z directly (would dilute) but used
+    # via compute_fundamental_health() for sizing modulation + dashboard.
+    # See [[project_z_audit]].
 
     if not z_components:
         return 0.0
     return float(np.average(z_components, weights=weights))
+
+
+def compute_fundamental_health(row) -> dict:
+    """Separate fundamental score — NOT a predictor, but interpretability +
+    sizing modulator + risk context. Each component independently rated
+    in [-1, +1] where + = bullish for NG.
+
+    Returns:
+      dict with each pillar + 'sum' (rough overall health).
+
+    Use cases:
+      - Dashboard display (show operator why z says what it says)
+      - Sizing modulation (down-size when fundamentals weak even if z neutral)
+      - Risk gating (don't sell deep OTM puts when LNG exports dropping)
+    """
+    out = {'storage': 0.0, 'days_supply': 0.0, 'cl_ng_ratio': 0.0,
+           'price_band': 0.0, 'rv_regime': 0.0, 'sum': 0.0}
+    try:
+        # Storage component (low = bullish, signed +)
+        sz = float(row.get('storage_z') or 0)
+        out['storage'] = max(-1, min(1, -sz / 2.0))
+        # Days supply (low = bullish)
+        dz = float(row.get('days_supply_z') or 0)
+        out['days_supply'] = max(-1, min(1, -dz / 2.0))
+        # CL/NG ratio
+        cl = float(row.get('CL') or 0)
+        ng = float(row.get('NG') or 0)
+        if ng > 0:
+            ratio = cl / ng
+            # ~25 typical, > 30 = NG cheap relative
+            out['cl_ng_ratio'] = max(-1, min(1, (ratio - 25) / 10))
+        # Price band (high in 120d range = mean-rev bearish)
+        spot = float(row.get('UNG') or 0)
+        lo = float(row.get('ung_252d_mean') or 0)
+        std = float(row.get('ung_252d_std') or 1)
+        if std > 0 and lo > 0:
+            band = (spot - lo) / std
+            out['price_band'] = max(-1, min(1, -band / 2.0))
+        # Vol regime — high RV is risk caution signal (not bullish/bearish, more "be careful")
+        rv = float(row.get('rv_30') or 0.5)
+        if rv > 0.80:
+            out['rv_regime'] = -0.5   # high vol → cautious
+        elif rv < 0.40:
+            out['rv_regime'] = +0.2   # calm = mild positive
+    except Exception:
+        pass
+    out['sum'] = sum(v for k, v in out.items() if k != 'sum')
+    return out
 
 
 def precompute_factor_z(df):
@@ -151,12 +193,141 @@ def detect_anomaly(row) -> str:
     return 'NORMAL'
 
 
+def model_conviction(row, z: float, anomaly: str) -> float:
+    """Returns p_otm adjustment in [-0.20, +0.20]. Small effect on Kelly."""
+    conv = 0.0
+    z_surp = float(row.get('storage_surprise_z') or 0)
+    if z_surp > 1.0:    conv += 0.08
+    elif z_surp > 0.5:  conv += 0.04
+    elif z_surp < -1.0: conv -= 0.08
+    elif z_surp < -0.5: conv -= 0.04
+    if z > 0.5:   conv += 0.04
+    elif z < -0.5: conv -= 0.04
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    if mom5 > 0.05:    conv += 0.04
+    elif mom5 > 0.02:  conv += 0.02
+    elif mom5 < -0.05: conv -= 0.04
+    if falling_knife(row): conv -= 0.05
+    if anomaly != 'NORMAL':
+        conv *= 0.4
+    return max(-0.20, min(0.20, conv))
+
+
+def firmness_multiplier(row, z: float, anomaly: str) -> float:
+    """Per user: 'when extreme volatility happens, based on history and
+    modeling, the firmness of confidence will get a higher [sizing]'.
+
+    Returns a MULTIPLIER on Kelly qty in [0.5, 2.5]. Activates strongest
+    when HIGH VOL + multiple model signals align. The intuition: rich
+    premium AND high conviction is rare — when both happen, size up hard.
+    Default 1.0 (neutral). 0.5 (de-risk) when anomaly conflicts with model.
+
+    Signal stack:
+      vol regime (rv_30):  amplifies confidence interpretation
+      z direction:         is model bullish or bearish?
+      momentum direction:  confirms or contradicts?
+      seasonal:            (encoded via z_surprise already)
+      anomaly:             damp during true 2022-style events
+    """
+    rv30 = float(row.get('rv_30') or 0.5)
+    mom5 = float(row.get('ung_5d_mom') or 0)
+    z_surp = float(row.get('storage_surprise_z') or 0)
+    # Count aligned bullish signals
+    bullish_signals = 0
+    if z > 0.5:        bullish_signals += 1
+    if z_surp > 0.5:   bullish_signals += 1
+    if mom5 > 0.02 and not falling_knife(row): bullish_signals += 1
+    # Count aligned bearish signals
+    bearish_signals = 0
+    if z < -0.5:        bearish_signals += 1
+    if z_surp < -0.5:   bearish_signals += 1
+    if mom5 < -0.03 or falling_knife(row): bearish_signals += 1
+
+    # Base multiplier
+    mult = 1.0
+    if bullish_signals >= 2:
+        # Multi-signal bullish alignment → size UP
+        if rv30 > 0.80:  mult = 2.0   # HIGH VOL + confirmed → max conviction (rare gold)
+        elif rv30 > 0.60: mult = 1.6
+        else:             mult = 1.3
+    elif bearish_signals >= 2:
+        # Multi-signal bearish → size DOWN
+        if rv30 > 0.80:  mult = 0.5
+        elif rv30 > 0.60: mult = 0.7
+        else:             mult = 0.9
+
+    # Anomaly damp: even if model says go big, anomaly says be careful.
+    # ANOMALY_UP (parabolic up) is the dangerous one — don't sell more
+    # puts into a melting rally. ANOMALY_DOWN — can be opportunity if
+    # model agrees, but capped.
+    if anomaly == 'ANOMALY_UP':
+        mult = min(mult, 0.7)   # never size up in parabolic up
+    elif anomaly == 'ANOMALY_DOWN':
+        mult = min(mult, 1.3)   # cap during true panic
+
+    return max(0.5, min(2.5, mult))
+
+
 def falling_knife(row) -> bool:
     """True if UNG is in active downtrend — don't accumulate here.
     Per [[feedback_no_falling_knife_anomaly]]."""
     at_low = bool(row.get('ung_at_20d_low', False))
     mom5 = float(row.get('ung_5d_mom') or 0)
     return at_low and mom5 < -0.03
+
+
+def compute_pillar_score(row, spot: float) -> dict:
+    """Production-port (item #6): compute tech/fund/yoy pillar scores.
+
+    Each pillar in [-1, +1], + = bullish for NG.
+      tech: price band (near 120d low → bullish) + MA tilt (20 > 50 → bullish)
+      fund: storage surprise (cheap = bullish)
+      yoy: year-over-year price ratio (well below = bullish)
+
+    Returns dict with each pillar score + sum.
+    Sum can be added to composite z for amplified conviction.
+    """
+    out = {'tech': 0.0, 'fund': 0.0, 'yoy': 0.0, 'sum': 0.0}
+    if spot <= 0:
+        return out
+    # Tech pillar
+    lo_252 = float(row.get('ung_252d_mean') or 0)
+    try:
+        std_252 = float(row.get('ung_252d_std') or 1)
+        if lo_252 > 0 and std_252 > 0:
+            # Distance from mean in std units, inverted so low = bullish
+            band = (spot - lo_252) / std_252
+            tech = max(-1.0, min(1.0, -band * 0.5))
+        else:
+            tech = 0.0
+        # Add MA tilt: 50d > 200d = bullish, but UNG rarely has this
+        ma_50 = float(row.get('ung_50d_ma') or 0)
+        ma_200 = float(row.get('ung_200d_ma') or 0)
+        if ma_50 > 0 and ma_200 > 0:
+            ma_diff = (ma_50 - ma_200) / ma_200
+            tech += max(-0.3, min(0.3, ma_diff * 5.0))
+        out['tech'] = max(-1.0, min(1.0, tech))
+    except Exception:
+        pass
+    # Fund pillar — storage surprise z (already detrended)
+    try:
+        z_surp = float(row.get('storage_surprise_z') or 0)
+        out['fund'] = max(-1.0, min(1.0, z_surp * 0.5))
+    except Exception:
+        pass
+    # YoY pillar — vs 252d ago (rough proxy; we don't have exact 1yr lookback)
+    try:
+        # Use the long-term mean as a proxy: if spot < 70% of mean, very cheap
+        if lo_252 > 0:
+            ratio = spot / lo_252
+            # ratio < 0.7 → very bullish (well below avg)
+            # ratio > 1.3 → very bearish
+            yoy = max(-1.0, min(1.0, (1.0 - ratio) * 2.0))
+            out['yoy'] = yoy
+    except Exception:
+        pass
+    out['sum'] = out['tech'] + out['fund'] + out['yoy']
+    return out
 
 
 def detect_divergence(row, z: float) -> str:
@@ -195,17 +366,137 @@ def regime(z_val):
     return 'EXTREME_RICH'
 
 
+_IV_SURFACE_CACHE = None  # lazy-loaded once per process
+
+
+def _load_iv_surface():
+    """Load full UNG IV surface from Postgres into a fast in-memory lookup.
+
+    Returns dict keyed by date_str → list of (dte, strike_adj, right, iv).
+    Returns None if PG unavailable; caller falls back to parametric model.
+    """
+    global _IV_SURFACE_CACHE
+    if _IV_SURFACE_CACHE is not None:
+        return _IV_SURFACE_CACHE
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host='192.168.1.172', port=5432, database='market_scanner',
+            user='postgres', password='shinobi2025', connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute('SELECT date, dte, strike_adj, option_right, iv FROM ung_iv_surface')
+        rows = cur.fetchall()
+        conn.close()
+        surface = {}
+        for d, dte, K, right, iv in rows:
+            d_str = d.isoformat()
+            surface.setdefault(d_str, []).append((int(dte), float(K), right, float(iv)))
+        _IV_SURFACE_CACHE = surface
+        return surface
+    except Exception:
+        _IV_SURFACE_CACHE = {}
+        return {}
+
+
+def iv_from_surface(surface, date_str, K, dte, right):
+    """Nearest-neighbor IV lookup. Returns None if no data within tolerance."""
+    rows = surface.get(date_str)
+    if not rows:
+        return None
+    # Filter by right; find closest (K, dte) jointly
+    best = None
+    best_dist = float('inf')
+    for r_dte, r_K, r_right, r_iv in rows:
+        if r_right != right:
+            continue
+        dist = abs(r_K - K) / max(K, 1) + abs(r_dte - dte) * 0.001
+        if dist < best_dist:
+            best_dist = dist
+            best = r_iv
+    if best is None or best_dist > 0.4:
+        return None
+    return best
+
+
+def iv_shape_features(surface, date_str, spot_adj):
+    """Extract IV term-structure & skew features from PG surface.
+
+    Returns dict with:
+      atm_iv      — IV at ~ATM strike (proxy for IV30)
+      put_skew    — IV(0.9 OTM put) - IV(ATM)  (positive = put skew rich)
+      call_skew   — IV(1.1 OTM call) - IV(ATM)
+      pc_skew     — put_skew - call_skew (smile asymmetry)
+      term_slope  — IV at long DTE - IV at short DTE (positive = contango)
+    Returns None if surface lacks data for this date.
+    """
+    rows = surface.get(date_str)
+    if not rows or len(rows) < 4:
+        return None
+    # ATM = nearest strike to spot, prefer call
+    atm = sorted(rows, key=lambda r: abs(r[1]-spot_adj))[:6]
+    atm_iv = sum(r[3] for r in atm) / len(atm)
+    # OTM put = strike ~0.9 × spot, right='P'
+    Kp_target = spot_adj * 0.90
+    put_candidates = [r for r in rows if r[2] == 'P']
+    if put_candidates:
+        put_otm = min(put_candidates, key=lambda r: abs(r[1] - Kp_target))
+        put_skew = put_otm[3] - atm_iv
+    else:
+        put_skew = 0.0
+    # OTM call = strike ~1.1 × spot
+    Kc_target = spot_adj * 1.10
+    call_candidates = [r for r in rows if r[2] == 'C']
+    if call_candidates:
+        call_otm = min(call_candidates, key=lambda r: abs(r[1] - Kc_target))
+        call_skew = call_otm[3] - atm_iv
+    else:
+        call_skew = 0.0
+    # Term slope: average IV at high-dte rows - average at low-dte rows
+    if rows:
+        dtes = [r[0] for r in rows]
+        if max(dtes) - min(dtes) > 14:
+            short_dte = [r[3] for r in rows if r[0] <= min(dtes) + 7]
+            long_dte = [r[3] for r in rows if r[0] >= max(dtes) - 7]
+            if short_dte and long_dte:
+                term_slope = sum(long_dte)/len(long_dte) - sum(short_dte)/len(short_dte)
+            else:
+                term_slope = 0.0
+        else:
+            term_slope = 0.0
+    else:
+        term_slope = 0.0
+    return {
+        'atm_iv': atm_iv,
+        'put_skew': put_skew,
+        'call_skew': call_skew,
+        'pc_skew': put_skew - call_skew,
+        'term_slope': term_slope,
+    }
+
+
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
     """Simpler procedural runner with state dict."""
     s = {
         'cash': initial_cash, 'shares': initial_shares, 'boxx': 0, 'kold': 0,
-        'short_puts': [], 'short_calls': [], 'long_puts': [],
+        'short_puts': [], 'short_calls': [], 'long_puts': [], 'long_calls': [],
+        'upside_call_open': None,
     }
     history = []
     trades = []
 
     p = strategy_params
     use_surprise = p.get('use_surprise_z', False)
+    # Real IV from PG ung_iv_surface is now the DEFAULT for all strategies.
+    # Opt out only with use_real_iv_surface=False (e.g., proxy-only diagnostics).
+    use_real_iv = p.get('use_real_iv_surface', True)
+    iv_surface = _load_iv_surface() if use_real_iv else None
+    target_weekly_income = p.get('target_weekly_income', 1500.0)
+    recent_premium = []
+    # Drawdown-aware risk dial — single parameter that down-scales sizing
+    # when NAV is deep in drawdown. Generic risk control — protects against
+    # BOTH sharp crashes (2021-12 → 2022-02) AND slow declines (2023-2026).
+    nav_peak = float(initial_cash + initial_shares * (df['UNG'].iloc[0] if len(df) else 1))
 
     for i in range(len(df) - 30):
         idx = df.index[i]
@@ -219,9 +510,345 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # Time-varying IV: per-strike via calibrated model (realized vol +
         # VIX regime + skew + term structure). Falls back to 0.55 only if
         # no realized vol available (first 30 days).
+        d_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
         def iv_at(K, dte, right='C'):
+            if iv_surface is not None and iv_surface:
+                real = iv_from_surface(iv_surface, d_str, K, dte, right)
+                if real is not None:
+                    return real
             return iv_for_quote(row, K, spot_u, dte, right)
+        # Per-day IV shape features (term + skew). None if no surface coverage.
+        iv_shape = iv_shape_features(iv_surface, d_str, spot_u) if iv_surface else None
         z = compute_historical_z(row, use_surprise=use_surprise)
+        # DD-aware risk dial — generic protection against any adverse
+        # regime (sharp crash or slow decline). Track NAV peak; if
+        # current NAV is significantly below peak, scale down all sizing.
+        cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117 + s['kold'] * spot_k
+        if cur_nav > nav_peak:
+            nav_peak = cur_nav
+        dd_pct = (cur_nav - nav_peak) / nav_peak * 100 if nav_peak > 0 else 0
+
+        # TREND-FOLLOWING SHARE TRIM — generic protection against multi-year
+        # declines. When UNG in confirmed downtrend (per ung_downtrend flag),
+        # trim shares periodically to limit share-based losses. NOT a stop
+        # loss — gradual exit that respects the wheel philosophy.
+        trim_pct = p.get('trend_share_trim_pct_per_month', 0)
+        if trim_pct > 0 and bool(row.get('ung_downtrend', False)):
+            # Trim once per ~21 trading days
+            if i % 21 == 0 and s['shares'] > 100:
+                short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+                min_shares_required = short_call_lots * 100
+                trim_qty = int(s['shares'] * trim_pct / 100)
+                trim_qty = (trim_qty // 100) * 100  # round to whole lots
+                trim_qty = min(trim_qty, s['shares'] - min_shares_required)
+                if trim_qty >= 100:
+                    proceeds = trim_qty * (spot_u - SPREAD_SHARE)
+                    s['cash'] += proceeds
+                    s['shares'] -= trim_qty
+                    trades.append({'date': idx, 'type': 'TREND_TRIM_SHARES',
+                                   'pnl': 0.0, 'qty': trim_qty, 'spot': spot_u,
+                                   'shares_after': s['shares']})
+
+        # DD-TRIGGERED SHARE TRIM — emergency share reduction when DD breaches
+        # explicit threshold. With smart conditions:
+        #   - Skip trim if z extreme cheap (oversold, likely bounce)
+        #   - Skip trim if confirmed uptrend (would miss spike capture)
+        #   - Only act after persistent DD (avoid noise)
+        dd_trim_trigger = p.get('dd_trim_trigger_pct', 0)  # e.g. -15 means trim if DD < -15%
+        dd_trim_qty_pct = p.get('dd_trim_qty_pct', 20)     # 20% of shares per cadence
+        dd_trim_floor = p.get('dd_trim_floor', 1000)       # minimum share level (never go below)
+        dd_trim_cadence = p.get('dd_trim_cadence_days', 21)  # how often to trim (in trading days)
+        # Smart-trim conditions
+        smart_trim = p.get('smart_trim', False)
+        z_skip_threshold = p.get('dd_trim_z_skip_below', -1.0)  # skip if z < this (oversold)
+        # Pre-compute 50/200 MAs (cheap lookback if cached on row)
+        if smart_trim:
+            try:
+                window_50 = df['UNG'].iloc[max(0,i-49):i+1]
+                ma50 = window_50.mean()
+                window_200 = df['UNG'].iloc[max(0,i-199):i+1]
+                ma200 = window_200.mean()
+                is_uptrend = (ma50 > ma200 * 1.02)  # bullish MA cross with 2% buffer
+                is_oversold = (z < z_skip_threshold)
+            except Exception:
+                is_uptrend = False
+                is_oversold = False
+        else:
+            is_uptrend = False
+            is_oversold = False
+        if dd_trim_trigger < 0 and dd_pct < dd_trim_trigger:
+            should_trim = True
+            if smart_trim and (is_uptrend or is_oversold):
+                should_trim = False
+            if should_trim and i % dd_trim_cadence == 0 and s['shares'] > dd_trim_floor:
+                desired_trim = int(s['shares'] * dd_trim_qty_pct / 100)
+                desired_trim = (desired_trim // 100) * 100
+                desired_trim = min(desired_trim, s['shares'] - dd_trim_floor)
+
+                # CC-AWARE CUT: if desired trim exceeds the freely-tradable
+                # uncovered shares, close CCs (cheapest first = nearest
+                # expiry, least time value) to free up shares. This lets
+                # us cut delta even when wheel is fully covered.
+                short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+                min_shares_required = short_call_lots * 100
+                free_shares = s['shares'] - min_shares_required
+                if desired_trim > free_shares and p.get('cc_aware_cut', True):
+                    needed_lots = (desired_trim - free_shares + 99) // 100
+                    # Sort CCs by ascending DTE (close near-expiry first = cheapest)
+                    s['short_calls'].sort(key=lambda sc: (idx - sc['entry']).days - sc['dte'])
+                    while needed_lots > 0 and s['short_calls']:
+                        sc = s['short_calls'][0]
+                        days_left = max(1, sc['dte'] - (idx - sc['entry']).days)
+                        T_left = days_left / 365
+                        cur_prem = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], days_left, 'C'))
+                        close_lots = min(sc['qty'], needed_lots)
+                        debit = cur_prem * 100 * close_lots + close_lots * SPREAD_OPTION * 100
+                        if s['cash'] < debit + 500:
+                            break
+                        s['cash'] -= debit
+                        pnl = sc['entry_prem'] * 100 * close_lots - debit
+                        trades.append({'date': idx, 'type': 'CC_CLOSE_FOR_CUT',
+                                       'pnl': pnl, 'qty': close_lots, 'K': sc['K'],
+                                       'spot': spot_u, 'dd_pct': dd_pct})
+                        sc['qty'] -= close_lots
+                        needed_lots -= close_lots
+                        if sc['qty'] <= 0:
+                            s['short_calls'].pop(0)
+                    # Recompute free shares after closing
+                    short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+                    min_shares_required = short_call_lots * 100
+                    free_shares = s['shares'] - min_shares_required
+
+                trim_qty = min(desired_trim, free_shares, s['shares'] - dd_trim_floor)
+                trim_qty = (trim_qty // 100) * 100
+                if trim_qty >= 100:
+                    proceeds = trim_qty * (spot_u - SPREAD_SHARE)
+                    s['cash'] += proceeds
+                    s['shares'] -= trim_qty
+                    trades.append({'date': idx, 'type': 'DD_TRIM_SHARES',
+                                   'pnl': 0.0, 'qty': trim_qty, 'spot': spot_u,
+                                   'dd_pct': dd_pct, 'shares_after': s['shares']})
+
+                    # CUT-AND-REBUILD: after cutting shares, sell OTM puts
+                    # BELOW spot to (a) capture put-skew premium (richer in
+                    # declines), (b) stay paid while waiting for re-entry,
+                    # (c) get re-acquired at lower strike if assigned. More
+                    # executable than ITM CCs in fast-down markets.
+                    if p.get('cut_and_rebuild_puts', False):
+                        trim_lots = trim_qty // 100
+                        put_otm = p.get('rebuild_put_otm_pct', 0.10)  # 10% below
+                        put_dte = p.get('rebuild_put_dte', 45)
+                        Kp = round(spot_u * (1 - put_otm))
+                        put_prem = bs_put(spot_u, Kp, put_dte/365, iv_at(Kp, put_dte, 'P'))
+                        if put_prem > 0.05:
+                            # Size to match trim lots so re-entry restores
+                            # original share count. Cap at cash-secured limit.
+                            put_qty_rebuild = min(trim_lots, int(s['cash'] / (Kp * 100)))
+                            if put_qty_rebuild >= 1:
+                                credit = put_prem * 100 * put_qty_rebuild - put_qty_rebuild * SPREAD_OPTION * 100
+                                s['cash'] += credit
+                                s['short_puts'].append({'entry': idx, 'K': Kp, 'dte': put_dte,
+                                                        'qty': put_qty_rebuild, 'entry_prem': put_prem})
+                                trades.append({'date': idx, 'type': 'OPEN_REBUILD_PUT',
+                                               'pnl': 0.0, 'credit': credit, 'K': Kp,
+                                               'qty': put_qty_rebuild, 'spot': spot_u, 'dd_pct': dd_pct})
+
+        # Z-BASED SHARE TARGETING — proactive (not reactive) wheel sizing.
+        # Encode the wheel philosophy directly: accumulate cheap, lighten
+        # expensive. Maintain shares = base × z_multiplier. Avoids the
+        # reactive-trim trap where we sell into noise pullbacks.
+        z_target_enabled = p.get('z_share_target_enabled', False)
+        if z_target_enabled and i % p.get('z_target_cadence_days', 5) == 0:
+            base_shares = p.get('z_share_target_base', 6200)
+            # Tunable multipliers — defaults are the wheel philosophy curve
+            mults = p.get('z_target_mults', {
+                'extreme_cheap': 1.4, 'cheap': 1.2, 'neutral': 1.0,
+                'rich': 0.7, 'extreme_rich': 0.3,
+            })
+            # SMOOTH variant: continuous mult via tanh(z) interpolation between
+            # extreme_cheap and extreme_rich endpoints. Eliminates the bucket
+            # discontinuities (e.g. z=0.49 → 1.0× but z=0.51 → 0.4×) and
+            # produces much smoother NAV path (lower daily volatility).
+            if p.get('smooth_z_target'):
+                lo = mults.get('extreme_rich', 0.1)
+                hi = mults.get('extreme_cheap', 2.0)
+                # tanh(z) maps [-3, +3] roughly to [-0.99, 0.99]; convert to [lo,hi]
+                t = math.tanh(z * -0.5)  # negative because cheap = high mult
+                mult = lo + (hi - lo) * (t + 1) / 2
+            elif z < -1.5:    mult = mults['extreme_cheap']
+            elif z < -0.5:  mult = mults['cheap']
+            elif z < 0.5:   mult = mults['neutral']
+            elif z < 1.0:   mult = mults['rich']
+            else:           mult = mults['extreme_rich']
+            # DD-aware override: if in deep DD, cap the multiplier
+            dd_cap_15 = p.get('z_target_dd_cap_15', 0.6)
+            dd_cap_10 = p.get('z_target_dd_cap_10', 0.8)
+            if dd_pct < -15:
+                mult = min(mult, dd_cap_15)
+            elif dd_pct < -10:
+                mult = min(mult, dd_cap_10)
+            target = int(base_shares * mult)
+            target = (target // 100) * 100
+            current = s['shares']
+            # MOMENTUM OVERRIDE — when shares are about to be TRIMMED (rich
+            # regime) BUT trend is clearly bullish (50/20d MAs ripping),
+            # hold shares anyway. Captures spike runups (2022-style) that
+            # pure z-target would have trimmed too early. Doesn't override
+            # ADD direction — accumulation always proceeds.
+            momentum_override = p.get('momentum_override', False)
+            if momentum_override and target < current and i > 50:
+                try:
+                    win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                    win20 = df['UNG'].iloc[max(0,i-19):i+1]
+                    win5 = df['UNG'].iloc[max(0,i-4):i+1]
+                    ma50 = win50.mean(); ma20 = win20.mean(); ma5 = win5.mean()
+                    # Steep bullish: short MA > med MA > long MA + recent gain
+                    recent_gain = (spot_u / win50.iloc[0] - 1) if win50.iloc[0] > 0 else 0
+                    rip = (ma5 > ma20 * 1.03) and (ma20 > ma50 * 1.03) and (recent_gain > 0.20)
+                    if rip:
+                        # Suspend trim — set target to current
+                        target = current
+                        # Log once per regime turn
+                        if not s.get('_momentum_overriding'):
+                            trades.append({'date': idx, 'type': 'MOMENTUM_OVERRIDE_HOLD',
+                                           'pnl': 0.0, 'spot': spot_u, 'z': z,
+                                           'shares': current})
+                        s['_momentum_overriding'] = True
+                    else:
+                        s['_momentum_overriding'] = False
+                except Exception:
+                    pass
+            delta = target - current
+            # Cut speed tunable: 0.3 = slow (30% toward target per cadence),
+            # 0.5 = balanced (default), 1.0 = full snap. Higher = faster cut.
+            cut_speed = p.get('cut_speed', 0.5)
+            # Over-cut buffer: trim a bit MORE than the calculated amount to
+            # build cash buffer (e.g., 0.10 = 10% extra cut). Only applies
+            # when we're SELLING (delta < 0), not buying. Restores parity
+            # on the way back up via z_target_add when z turns cheap.
+            over_cut = p.get('over_cut_pct', 0.0)
+            if delta < 0 and over_cut > 0:
+                adjust = int(delta * cut_speed * (1 + over_cut))
+            else:
+                adjust = int(delta * cut_speed)
+            adjust = (adjust // 100) * 100
+            # Must keep enough shares to cover existing short calls
+            short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+            min_shares_required = short_call_lots * 100
+            if adjust < 0:  # selling
+                max_sell = current - min_shares_required
+                adjust = max(adjust, -max(0, max_sell))
+                if adjust <= -100:
+                    sell_qty = -adjust
+                    proceeds = sell_qty * (spot_u - SPREAD_SHARE)
+                    s['cash'] += proceeds
+                    s['shares'] -= sell_qty
+                    trades.append({'date': idx, 'type': 'Z_TARGET_TRIM',
+                                   'pnl': 0.0, 'qty': sell_qty, 'spot': spot_u,
+                                   'z': z, 'target': target, 'shares_after': s['shares']})
+                    # CUT-AND-REBUILD on z_target trim too
+                    if p.get('cut_and_rebuild_puts', False) and z > -1.0:
+                        # Skip if already very cheap (don't want more shares at bottom)
+                        trim_lots = sell_qty // 100
+                        put_otm = p.get('rebuild_put_otm_pct', 0.10)
+                        put_dte = p.get('rebuild_put_dte', 45)
+                        Kp = round(spot_u * (1 - put_otm))
+                        put_prem = bs_put(spot_u, Kp, put_dte/365, iv_at(Kp, put_dte, 'P'))
+                        if put_prem > 0.05:
+                            put_qty_rebuild = min(trim_lots, int(s['cash'] / (Kp * 100)))
+                            if put_qty_rebuild >= 1:
+                                credit = put_prem * 100 * put_qty_rebuild - put_qty_rebuild * SPREAD_OPTION * 100
+                                s['cash'] += credit
+                                s['short_puts'].append({'entry': idx, 'K': Kp, 'dte': put_dte,
+                                                        'qty': put_qty_rebuild, 'entry_prem': put_prem})
+                                trades.append({'date': idx, 'type': 'OPEN_REBUILD_PUT_Z',
+                                               'pnl': 0.0, 'credit': credit, 'K': Kp,
+                                               'qty': put_qty_rebuild, 'spot': spot_u, 'z': z})
+            elif adjust >= 100:  # buying
+                max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
+                max_afford = (max_afford // 100) * 100
+                adjust = min(adjust, max_afford)
+                if adjust >= 100:
+                    cost = adjust * (spot_u + SPREAD_SHARE)
+                    s['cash'] -= cost
+                    s['shares'] += adjust
+                    trades.append({'date': idx, 'type': 'Z_TARGET_ADD',
+                                   'pnl': 0.0, 'qty': adjust, 'spot': spot_u,
+                                   'z': z, 'target': target, 'shares_after': s['shares']})
+
+        # SMART RE-ENTRY — when we've trimmed shares and conditions turn
+        # favorable, buy back. Recovers upside that pure-trim variants miss.
+        # Conditions: shares below initial AND z cheap AND uptrend confirmed
+        rebuy_enabled = p.get('dd_rebuy_enabled', False)
+        if rebuy_enabled and i % dd_trim_cadence == 0:
+            initial_shares_ref = p.get('initial_shares_ref', 6200)
+            shares_deficit = initial_shares_ref - s['shares']
+            try:
+                window_5 = df['UNG'].iloc[max(0,i-4):i+1]
+                window_20 = df['UNG'].iloc[max(0,i-19):i+1]
+                short_ma = window_5.mean()
+                med_ma = window_20.mean()
+                trend_turning = short_ma > med_ma * 1.01
+            except Exception:
+                trend_turning = False
+            rebuy_z_threshold = p.get('dd_rebuy_z_below', -0.5)
+            if shares_deficit >= 100 and z < rebuy_z_threshold and trend_turning:
+                # Buy back 25% of deficit per cycle, capped by cash
+                rebuy_qty = int(shares_deficit * 0.25)
+                rebuy_qty = (rebuy_qty // 100) * 100
+                max_affordable = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
+                rebuy_qty = min(rebuy_qty, max_affordable, shares_deficit)
+                if rebuy_qty >= 100:
+                    cost = rebuy_qty * (spot_u + SPREAD_SHARE)
+                    s['cash'] -= cost
+                    s['shares'] += rebuy_qty
+                    trades.append({'date': idx, 'type': 'DD_REBUY_SHARES',
+                                   'pnl': 0.0, 'qty': rebuy_qty, 'spot': spot_u,
+                                   'z': z, 'shares_after': s['shares']})
+
+        # DYNAMIC KOLD HEDGE — scale KOLD position with DD severity. Preserves
+        # share inventory (wheel-friendly) but uses inverse ETF as portfolio
+        # delta hedge. Larger DD → larger KOLD allocation.
+        dd_kold_max = p.get('dd_kold_hedge_max_pct', 0)  # e.g. 0.20 = up to 20% NAV in KOLD
+        if dd_kold_max > 0 and dd_pct < -5 and spot_k > 0 and pd.notna(spot_k):
+            # Linear ramp: 0% at DD=-5, max at DD=-25
+            ramp = min(1.0, max(0.0, (-dd_pct - 5) / 20.0))
+            target_kold_dollars = cur_nav * dd_kold_max * ramp
+            current_kold_dollars = s['kold'] * spot_k
+            delta_dollars = target_kold_dollars - current_kold_dollars
+            # Only act if change > 5% of target (avoid churning)
+            if abs(delta_dollars) > max(500, target_kold_dollars * 0.10):
+                if delta_dollars > 0:  # buy more KOLD
+                    buy_q = int(delta_dollars / spot_k)
+                    if buy_q >= 5 and s['cash'] > buy_q * spot_k + 200:
+                        s['kold'] += buy_q
+                        s['cash'] -= buy_q * spot_k + buy_q * SPREAD_SHARE
+                        trades.append({'date': idx, 'type': 'KOLD_DD_HEDGE_BUY',
+                                       'pnl': 0.0, 'qty': buy_q, 'spot': spot_k,
+                                       'dd_pct': dd_pct})
+                else:  # trim KOLD
+                    sell_q = min(s['kold'], int(-delta_dollars / spot_k))
+                    if sell_q >= 5:
+                        s['cash'] += sell_q * spot_k - sell_q * SPREAD_SHARE
+                        s['kold'] -= sell_q
+                        trades.append({'date': idx, 'type': 'KOLD_DD_HEDGE_TRIM',
+                                       'pnl': 0.0, 'qty': sell_q, 'spot': spot_k,
+                                       'dd_pct': dd_pct})
+        # Default no scaling. Strategies opt-in via dd_aware_dial.
+        if p.get('dd_aware_dial'):
+            if dd_pct < -25:    dd_scale = 0.4
+            elif dd_pct < -15:  dd_scale = 0.6
+            elif dd_pct < -10:  dd_scale = 0.8
+            else:               dd_scale = 1.0
+        else:
+            dd_scale = 1.0
+        # Pillar boost: if enabled, add scaled pillar sum to composite z.
+        # Production uses pillar_drift to nudge the scenario distribution;
+        # backtest just adds it to z for similar effect on regime/sizing.
+        if p.get('pillar_boost'):
+            pillars = compute_pillar_score(row, spot_u)
+            # Pillars in [-1, +1] each, sum in [-3, +3]. Scale to ±0.5 z adj.
+            z = z + pillars['sum'] * 0.15
         r = regime(z)
 
         # Expire short puts
@@ -229,6 +856,43 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         for sp in s['short_puts']:
             days = (idx - sp['entry']).days
             T_left = max(1, sp['dte'] - days) / 365
+
+            # GAMMA-MANAGEMENT FORCE-CLOSE — classic tastytrade 45/21 rule.
+            # Close all positions when remaining DTE drops below threshold,
+            # to avoid the high-gamma zone where small price moves cause
+            # large P&L swings.
+            fcd = p.get('force_close_dte', 0)
+            dte_left = T_left * 365
+            if fcd > 0 and 0 < dte_left <= fcd:
+                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(dte_left), 'P'))
+                pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
+                s['cash'] += pnl
+                trades.append({'date': idx, 'type': 'PUT_GAMMA_CLOSE',
+                               'pnl': pnl, 'dte_left': dte_left, 'K': sp['K']})
+                # IMMEDIATE RE-OPEN at fresh open_dte (continuous-roll variant
+                # of the tastytrade rule). Maintains theta capture while
+                # preserving gamma protection. Re-opens at same OTM% as
+                # original, fresh strike vs current spot.
+                if p.get('roll_on_gamma_close'):
+                    new_dte = p.get('open_dte', 45)
+                    otm_orig = p.get('otm_put', 0.10)
+                    new_K = round(spot_u * (1 - otm_orig))
+                    new_prem = bs_put(spot_u, new_K, new_dte/365,
+                                      iv_at(new_K, new_dte, 'P'))
+                    if new_prem > 0.05:
+                        new_qty = sp['qty']
+                        # Quick margin check
+                        existing_coll = sum(spx['K']*100*spx['qty'] for spx in s['short_puts'])
+                        if s['cash'] + new_prem*100*new_qty >= existing_coll + new_K*100*new_qty:
+                            s['cash'] += new_prem*100*new_qty - new_qty*SPREAD_OPTION*100
+                            s['short_puts'].append({
+                                'entry': idx, 'K': new_K, 'dte': new_dte,
+                                'qty': new_qty, 'entry_prem': new_prem,
+                            })
+                            trades.append({'date': idx, 'type': 'PUT_GAMMA_REOPEN',
+                                           'pnl': 0.0, 'K': new_K, 'qty': new_qty,
+                                           'dte': new_dte})
+                continue
 
             # Take profit — configurable threshold (default 50% drop).
             # If tp_dynamic enabled, vary by vol regime per
@@ -302,6 +966,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         for sc in s['short_calls']:
             days = (idx - sc['entry']).days
             T_left = max(1, sc['dte'] - days) / 365
+            # Gamma force-close for calls (45/21 rule)
+            fcd_c = p.get('force_close_dte', 0)
+            dte_left_c = T_left * 365
+            if fcd_c > 0 and 0 < dte_left_c <= fcd_c:
+                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(dte_left_c), 'C'))
+                pnl = (sc['entry_prem'] - cv) * 100 * sc['qty'] - sc['qty'] * SPREAD_OPTION * 100
+                s['cash'] += pnl
+                trades.append({'date': idx, 'type': 'CALL_GAMMA_CLOSE',
+                               'pnl': pnl, 'dte_left': dte_left_c, 'K': sc['K']})
+                continue
             tp_thresh = None
             if p.get('tp_50'):
                 tp_thresh = p.get('tp_threshold', 0.5)
@@ -326,7 +1000,22 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # AND short call is deep ITM with low extrinsic →
             # buy-to-close call + sell underlying shares to lock the rally
             # gain before mean reversion. Avoids waiting for assignment.
-            if p.get('elevator_close') and T_left > 1/365:
+            # MOMENTUM GATE: if elevator_skip_on_momentum is enabled and
+            # confirmed parabolic uptrend is in progress, SKIP elevator-close.
+            # Holds the spike instead of locking small gains while it runs.
+            skip_elevator = False
+            if p.get('elevator_skip_on_momentum') and i > 200:
+                try:
+                    win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                    win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                    ma50 = win50.mean(); ma200 = win200.mean()
+                    ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                    if ma50 > ma200 * 1.05 and ret90 > 0.30:
+                        skip_elevator = True
+                except Exception:
+                    pass
+
+            if p.get('elevator_close') and T_left > 1/365 and not skip_elevator:
                 deep_itm_thresh = p.get('elevator_itm_pct', 0.05)
                 is_deep_itm = spot_u > sc['K'] * (1 + deep_itm_thresh)
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
@@ -445,6 +1134,123 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
             s['kold'] = 0
 
+        # MOMENTUM CALL LAYER — buy OTM calls during confirmed parabolic
+        # uptrend. Decouples upside capture from share holding (so we still
+        # benefit from z_target's protective trim on the eventual crash).
+        # Trigger: 50d/200d MA cross AND 90d return > momentum_threshold.
+        # Sizing: small NAV % per fire, max stack of N concurrent positions.
+        mom_call_pct = p.get('momentum_call_pct', 0)
+        if mom_call_pct > 0 and i > 200:
+            try:
+                win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                ma50 = win50.mean(); ma200 = win200.mean()
+                ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                mom_threshold = p.get('momentum_call_threshold', 0.20)
+                bullish_cross = ma50 > ma200 * 1.05
+                strong_momentum = ret90 > mom_threshold
+                existing_mom_calls = len([lc for lc in s.get('long_calls', [])
+                                          if lc.get('momentum_call')])
+                max_stack = p.get('momentum_call_max_stack', 3)
+                # Fire monthly cadence to ladder positions through the move
+                if bullish_cross and strong_momentum and existing_mom_calls < max_stack and i % 21 == 0:
+                    Kc = round(spot_u * (1 + p.get('momentum_call_otm_pct', 0.15)))
+                    dte_c = p.get('momentum_call_dte', 90)
+                    cost = bs_call(spot_u, Kc, dte_c/365, iv_at(Kc, dte_c, 'C'))
+                    if cost > 0.05:
+                        budget = cur_nav * mom_call_pct
+                        qty_c = int(budget / (cost * 100))
+                        if qty_c >= 1 and s['cash'] > qty_c * cost * 100 + 200:
+                            debit = qty_c * cost * 100 + qty_c * SPREAD_OPTION * 100
+                            s['cash'] -= debit
+                            s.setdefault('long_calls', []).append({
+                                'entry': idx, 'K': Kc, 'dte': dte_c,
+                                'qty': qty_c, 'cost': cost,
+                                'momentum_call': True,
+                            })
+                            trades.append({'date': idx, 'type': 'OPEN_MOMENTUM_CALL',
+                                           'pnl': -debit, 'K': Kc, 'qty': qty_c,
+                                           'spot': spot_u, 'ret90': ret90})
+            except Exception:
+                pass
+
+        # LONG OTM CALL UPSIDE TICKET — when EXTREME_CHEAP regime, allocate
+        # tiny NAV % to far-OTM calls. Bounded downside, convex upside.
+        # Fills the "missed 2022 spike" gap on protected variants without
+        # giving up MDD discipline. Premium is small because OTM + cheap
+        # regime depresses IV.
+        upside_ticket_pct = p.get('upside_ticket_pct', 0)
+        if upside_ticket_pct > 0 and z < -1.0 and not s.get('upside_call_open'):
+            # Buy 90d calls 30% OTM — far enough to be cheap, close enough
+            # to pay in a real spike
+            Kc = round(spot_u * 1.30)
+            dte_c = 90
+            cost = bs_call(spot_u, Kc, dte_c/365, iv_at(Kc, dte_c, 'C'))
+            if cost > 0.05:
+                budget = cur_nav * upside_ticket_pct
+                qty_c = int(budget / (cost * 100))
+                if qty_c >= 1 and s['cash'] > qty_c * cost * 100 + 200:
+                    debit = qty_c * cost * 100 + qty_c * SPREAD_OPTION * 100
+                    s['cash'] -= debit
+                    s.setdefault('long_calls', []).append({'entry': idx, 'K': Kc,
+                                                           'dte': dte_c, 'qty': qty_c,
+                                                           'cost': cost})
+                    s['upside_call_open'] = idx
+                    trades.append({'date': idx, 'type': 'OPEN_UPSIDE_TICKET',
+                                   'pnl': -debit, 'K': Kc, 'qty': qty_c,
+                                   'spot': spot_u, 'z': z})
+
+        # Expire / value long calls (upside tickets)
+        if s.get('long_calls'):
+            keep = []
+            for lc in s['long_calls']:
+                days = (idx - lc['entry']).days
+                if days >= lc['dte']:
+                    # Expire — settle vs spot
+                    payoff = max(0, spot_u - lc['K']) * 100 * lc['qty']
+                    s['cash'] += payoff
+                    if payoff > 0:
+                        trades.append({'date': idx, 'type': 'UPSIDE_TICKET_PAYOFF',
+                                       'pnl': payoff - lc['cost']*100*lc['qty'],
+                                       'qty': lc['qty'], 'K': lc['K'], 'spot': spot_u})
+                    if s.get('upside_call_open') == lc['entry']:
+                        s['upside_call_open'] = None
+                else:
+                    keep.append(lc)
+            s['long_calls'] = keep
+
+        # SHOULDER-SEASON KOLD HEDGE — March-May and Sept-Nov are NG's
+        # structurally weak periods (low HDD/CDD, storage builds). KOLD
+        # (-2x NG) profits there. Empirical: shoulder months show +0.33%/d
+        # KOLD vs +0.12%/d non-shoulder. Allocate a small NAV % to KOLD
+        # during shoulder when z is NEUTRAL or RICH. Exit when leaving
+        # shoulder OR z turns CHEAP (NG rebound likely).
+        shoulder_pct = p.get('kold_shoulder_hedge', 0)
+        if shoulder_pct > 0:
+            month = idx.month
+            in_shoulder = month in (3, 4, 5, 9, 10, 11)
+            # Force exit if outside shoulder or z is cheap (NG bouncing)
+            if not in_shoulder and s['kold'] > 0:
+                s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
+                trades.append({'date': idx, 'type': 'KOLD_EXIT_SHOULDER_END',
+                               'pnl': 0.0, 'qty': s['kold'], 'spot': spot_k})
+                s['kold'] = 0
+            elif in_shoulder and z > -0.5 and s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
+                # Scale entry by z-score richness — richer NG → larger hedge
+                z_scale = min(1.0, max(0.3, 0.5 + z * 0.3))  # 0.3 at z=-0.5, 1.0 at z=+1.5
+                nav_now = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117
+                if nav_now > 0:
+                    try:
+                        tq = int(nav_now * shoulder_pct * z_scale / spot_k)
+                    except (ValueError, OverflowError):
+                        tq = 0
+                    if tq >= 5 and s['cash'] > tq * spot_k + 200:
+                        s['kold'] += tq
+                        s['cash'] -= tq * spot_k + tq * SPREAD_SHARE
+                        trades.append({'date': idx, 'type': 'KOLD_SHOULDER_ENTRY',
+                                       'pnl': 0.0, 'qty': tq, 'spot': spot_k,
+                                       'month': month, 'z': z})
+
         # Entry cadence — default weekly; configurable for smoother layering
         entry_cadence = p.get('entry_cadence', 7)
         if i % entry_cadence == 0:
@@ -454,6 +1260,53 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             otm_call = p.get('otm_call', 0.05)
             put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
             call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
+
+            # NAV-RELATIVE SIZING — scale put_qty by current NAV so the
+            # strategy works at any capital level. Default off (use fixed
+            # put_qty); when on, put_qty = floor(nav * pct / strike_estimate).
+            # This prevents over-leverage at small NAV and under-utilization
+            # at large NAV.
+            put_nav_pct = p.get('put_qty_nav_pct', 0)
+            if put_nav_pct > 0:
+                # Estimate strike at otm_put OTM
+                K_est = spot_u * (1 - otm_put)
+                if K_est > 0:
+                    target_put = int(cur_nav * put_nav_pct / (K_est * 100))
+                    put_qty = max(1, min(target_put, int(p.get('put_qty_max', 50))))
+                    put_qty = int(put_qty * size_scale)
+            call_nav_pct = p.get('call_qty_nav_pct', 0)
+            if call_nav_pct > 0:
+                K_est = spot_u * (1 + otm_call)
+                if K_est > 0:
+                    target_call = int(cur_nav * call_nav_pct / (K_est * 100))
+                    call_qty = max(1, min(target_call, int(p.get('call_qty_max', 50))))
+                    call_qty = int(call_qty * size_scale)
+
+            # IV-SHAPE SIZING — react to real surface term & skew.
+            # put_skew rich → sell MORE puts (premium is fat)
+            # call_skew rich → sell MORE calls
+            # term contango → prefer longer DTE (premium decays slower)
+            # term backwardation (negative slope) → vol spike imminent, reduce
+            if p.get('iv_shape_sizing') and iv_shape:
+                # Skew-based qty scaling
+                ps = iv_shape['put_skew']
+                cs = iv_shape['call_skew']
+                # Reference levels: typical UNG put_skew ~0.02-0.05, rich >0.08
+                if ps > 0.08:
+                    put_qty = int(put_qty * 1.5)
+                elif ps > 0.05:
+                    put_qty = int(put_qty * 1.2)
+                elif ps < 0.01:
+                    put_qty = max(1, int(put_qty * 0.7))
+                if cs > 0.05:
+                    call_qty = int(call_qty * 1.3)
+                elif cs < 0:
+                    call_qty = max(1, int(call_qty * 0.7))
+                # Backwardation = imminent vol spike → cut size
+                ts = iv_shape['term_slope']
+                if ts < -0.05:
+                    put_qty = max(1, int(put_qty * 0.6))
+                    call_qty = max(1, int(call_qty * 0.6))
 
             # VOL-REGIME SIZING: when IV (proxied by rv_30) is high, sell
             # more premium; when depressed, back off. Premium is the alpha
@@ -547,6 +1400,80 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                'pnl': 0.0, 'spot': spot_u})
             if not skip_put:
                 divergence = detect_divergence(row, z)
+                # BEAM SELECTOR (item #1 port — critical version): generate
+                # ladder of put candidates, score each, pick best by quality
+                # delta. Tests if multi-objective scoring beats hardcoded
+                # regime_aware_strike rules.
+                if p.get('beam_put'):
+                    ladder_otm = p.get('beam_put_otm_ladder',
+                                       [0.02, 0.05, 0.08, 0.12, 0.15])
+                    best_qty = 0
+                    best_K = 0
+                    best_prem = 0
+                    best_score = -1e9
+                    for try_otm in ladder_otm:
+                        try_K = round(spot_u * (1 - try_otm))
+                        try_dte = p.get('open_dte', 30)
+                        try_iv = iv_at(try_K, try_dte, 'P')
+                        try_prem = bs_put(spot_u, try_K, try_dte/365, try_iv)
+                        if try_prem < 0.05:
+                            continue
+                        # Approximate per-trade score components:
+                        # income contribution (premium * qty * 100)
+                        # assignment risk (p_itm * (K - spot_at_assign))
+                        T = try_dte / 365
+                        d2 = (math.log(spot_u/try_K) - 0.5*try_iv**2*T) / (try_iv*math.sqrt(T))
+                        from scipy.stats import norm as _norm
+                        p_otm = float(_norm.cdf(d2))
+                        p_itm = 1 - p_otm
+                        qty_try = p.get('put_qty', 3)
+                        income = try_prem * 100 * qty_try
+                        # Penalty: expected loss if assigned in adverse move
+                        loss = max(0, try_K - spot_u * 0.92) * 100 * qty_try * p_itm
+                        # Quality: income - 0.5 * loss (asymmetric)
+                        score = income - 0.5 * loss
+                        if score > best_score:
+                            best_score = score
+                            best_K = try_K
+                            best_prem = try_prem
+                            best_qty = qty_try
+                    if best_qty > 0:
+                        otm_put = (spot_u - best_K) / spot_u  # back-derive
+                # REGIME-AWARE STRIKE: when z says cheap (bullish), lean
+                # CLOSER to ATM puts (higher delta = more income, accept
+                # higher assignment prob since we want shares anyway).
+                # When z says rich (bearish), go FARTHER OTM (safer).
+                # Continuous adjustment by z, replaces fixed otm_put.
+                if p.get('regime_aware_strike'):
+                    if z > 1.0:   otm_put = 0.02
+                    elif z > 0.5: otm_put = 0.05
+                    elif z > 0.0: otm_put = 0.08
+                    elif z > -0.5: otm_put = 0.10
+                    elif z > -1.0: otm_put = 0.13
+                    else:          otm_put = 0.18
+                # INCOME-MODE strike push: if rolling weekly income < 60% of
+                # target, push strike CLOSER to ATM (more income, accept
+                # higher assignment prob). If above 120% of target, push
+                # FARTHER OTM (we have buffer, prefer safety).
+                if p.get('income_mode_strike') and len(recent_premium) >= 4:
+                    avg_weekly = sum(recent_premium[-4:]) / 4
+                    ratio = avg_weekly / target_weekly_income
+                    if ratio < 0.6:    otm_put = max(0.02, otm_put - 0.04)
+                    elif ratio > 1.2:  otm_put = min(0.25, otm_put + 0.04)
+                # SMOOTHNESS PENALTY (production-port #7): if the last 4
+                # weeks of income have high variance (std/mean > 0.5),
+                # push strike FARTHER OTM to reduce future variance. The
+                # idea: jagged income → bad operator experience even if
+                # total is high.
+                if p.get('smoothness_aware') and len(recent_premium) >= 4:
+                    recent = recent_premium[-4:]
+                    mean = sum(recent) / 4
+                    if mean > 0:
+                        import statistics
+                        std = statistics.pstdev(recent)
+                        cv = std / mean if mean > 0 else 0
+                        if cv > 0.5:  # jagged income
+                            otm_put = min(0.25, otm_put + 0.02)
                 # Z-scaled sizing — bigger when more cheap.
                 if p.get('z_scaled_sizing'):
                     if z > 0.75:   put_qty = int(p.get('put_qty', 3) * 3)
@@ -577,7 +1504,46 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
-                prem = bs_put(spot_u, K, 30/365, iv_at(K, 30, 'P'))
+                # Tunable open-DTE (default 30; tastytrade rule uses 45).
+                open_dte = p.get('open_dte', 30)
+                if p.get('vol_aware_dte'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    if rv30 > 0.80:   open_dte = 60
+                    else:             open_dte = 45
+                prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
+                # KELLY SIZING with conviction-aware "firmness" multiplier.
+                # Optionally backed by ScenarioDistribution (port item #2).
+                if p.get('kelly_sizing') and prem > 0.05:
+                    iv_use = iv_at(K, open_dte, 'P')
+                    conv_adj = model_conviction(row, z, anomaly) if p.get('kelly_conviction') else 0.0
+                    sd = None
+                    if p.get('use_scenario_dist'):
+                        sd = ScenarioDistribution(spot=spot_u, sigma_annual=iv_use,
+                                                  z_score=z, contango_per_day=-0.001)
+                    kelly_q = kelly_qty_short_put(
+                        spot_u, K, open_dte, iv_use,
+                        cash_available=s['cash'],
+                        premium=prem,
+                        model_conviction=conv_adj,
+                        scenario_dist=sd,
+                    )
+                    if p.get('kelly_firmness'):
+                        firm = firmness_multiplier(row, z, anomaly)
+                        kelly_q = int(kelly_q * firm)
+                    # FUNDAMENTAL SIZE MODULATION — fundamentals don't predict
+                    # direction (per IC audit) but they modulate confidence.
+                    # If fundamentals strongly support the position, size up
+                    # 20%. If they contradict, size down 30%.
+                    if p.get('fundamental_modulation'):
+                        f = compute_fundamental_health(row)
+                        f_sum = f['sum']
+                        if f_sum > 1.5:
+                            kelly_q = int(kelly_q * 1.2)
+                        elif f_sum < -1.5:
+                            kelly_q = int(kelly_q * 0.7)
+                    # DD-aware risk dial — generic risk control
+                    kelly_q = int(kelly_q * dd_scale)
+                    put_qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
                     # Available collateral = current cash + premium received -
@@ -597,10 +1563,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                            'reason': 'insufficient_buying_power'})
                             put_qty = 0
                     if put_qty > 0:
+                        # CONCENTRATION PENALTY (production-port #4):
+                        # Cap total contracts at any one strike. Production
+                        # beam penalizes via quality scoring; backtest uses
+                        # hard cap for simplicity.
+                        max_conc = p.get('max_concentration_per_strike', 0)
+                        if max_conc > 0:
+                            existing_at_K = sum(sp.get('qty', 0)
+                                               for sp in s['short_puts']
+                                               if abs(sp.get('K', 0) - K) < 0.5)
+                            allowed = max(0, max_conc - existing_at_K)
+                            if put_qty > allowed:
+                                trades.append({'date': idx, 'type': 'CONCENTRATION_CAP',
+                                              'pnl': 0.0, 'K': K,
+                                              'requested': put_qty, 'allowed': allowed})
+                                put_qty = allowed
+                        if put_qty == 0:
+                            continue
                         # DTE diversification — per [[feedback_dte_diversification]]:
                         # spread across DTEs not pile at 30. Each DTE gets a slice
                         # sized by 1/N.
-                        dte_ladder = p.get('dte_ladder', [30])
+                        dte_ladder = p.get('dte_ladder', [p.get('open_dte', 30)])
                         n_dtes = len(dte_ladder)
                         per_dte_qty = max(1, put_qty // n_dtes)
                         # Re-margin-check the FULL allocation
@@ -627,6 +1610,28 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if uncovered_shares >= 100:
                 use_itm = (p.get('aggressive_itm_cc_z') is not None
                            and z < p['aggressive_itm_cc_z'])
+                # Disable aggressive ITM CC during confirmed momentum
+                if use_itm and p.get('itm_cc_skip_on_momentum') and i > 200:
+                    try:
+                        win50 = df['UNG'].iloc[max(0,i-49):i+1]
+                        win200 = df['UNG'].iloc[max(0,i-199):i+1]
+                        ma50 = win50.mean(); ma200 = win200.mean()
+                        ret90 = (spot_u / df['UNG'].iloc[max(0,i-90)] - 1) if i >= 90 else 0
+                        if ma50 > ma200 * 1.05 and ret90 > 0.30:
+                            use_itm = False
+                    except Exception:
+                        pass
+                # REGIME-AWARE CC STRIKE: when z is BEARISH/rich, push CC
+                # strike closer or ITM (force assignment, divest shares).
+                # When z is BULLISH/cheap, push CC FARTHER OTM (preserve
+                # upside, don't sacrifice shares cheaply).
+                if p.get('regime_aware_strike'):
+                    if z > 1.0:    otm_call = 0.15   # extreme cheap → far OTM
+                    elif z > 0.5:  otm_call = 0.10   # cheap → 10% OTM
+                    elif z > 0.0:  otm_call = 0.07
+                    elif z > -0.5: otm_call = 0.05   # neutral → standard 5%
+                    elif z > -1.0: otm_call = 0.00   # rich → ATM
+                    else:          otm_call = -0.05  # extreme rich → 5% ITM
                 # Divergence: when crowd is euphorically buying through rich
                 # signals, sell DEEPER ITM CCs to lock the move via assignment.
                 # Per [[project_fundamental_divergence_alpha]]
@@ -640,17 +1645,64 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
                 qty = min(call_qty, uncovered_shares // 100)
-                prem = bs_call(spot_u, K, 30/365, iv_at(K, 30, 'C'))
-                if prem > 0.05:
+                cc_dte = p.get('open_dte', 30)
+                if p.get('vol_aware_dte'):
+                    rv30 = float(row.get('rv_30') or 0.5)
+                    if rv30 > 0.80:   cc_dte = 60
+                    else:             cc_dte = 45
+                prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
+                # KELLY SIZING for CCs (with conviction + firmness)
+                if p.get('kelly_sizing') and prem > 0.05:
+                    iv_use = iv_at(K, cc_dte, 'C')
+                    conv_adj = model_conviction(row, z, anomaly) if p.get('kelly_conviction') else 0.0
+                    kelly_q = kelly_qty_covered_call(
+                        spot_u, K, cc_dte, iv_use,
+                        uncovered_shares=uncovered_shares,
+                        premium=prem,
+                        model_conviction=conv_adj,
+                    )
+                    if p.get('kelly_firmness'):
+                        # For CCs, firmness is inverted — bearish alignment
+                        # = sell MORE CCs, bullish = fewer.
+                        firm = firmness_multiplier(row, z, anomaly)
+                        # Invert: 2.0 (bullish) → 0.5 (sell few CCs)
+                        cc_firm = 1.0 / max(0.5, min(2.5, firm))
+                        kelly_q = int(kelly_q * cc_firm)
+                    qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20)), uncovered_shares // 100))
+                if prem > 0.05 and qty >= 1:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['cash'] += credit
-                    s['short_calls'].append({'entry': idx, 'K': K, 'dte': 30,
+                    s['short_calls'].append({'entry': idx, 'K': K, 'dte': cc_dte,
                                              'qty': qty, 'entry_prem': prem,
                                              'is_itm_aggressive': use_itm})
                     open_kind = 'OPEN_ITM_CC' if use_itm else 'OPEN_CC'
                     trades.append({'date': idx, 'type': open_kind,
                                    'pnl': 0.0, 'credit': credit,
                                    'K': K, 'qty': qty, 'z': z})
+
+                    # UPSIDE WING — when shorting an ITM/ATM CC, buy a far-OTM
+                    # call at K_wing = K * (1 + wing_otm_pct) so if UNG spikes
+                    # through, the wing recovers the capped upside. Net credit
+                    # still positive because wing premium << CC premium when
+                    # wing is deep OTM. Same expiry as CC.
+                    wing_otm = p.get('upside_wing_otm_pct', 0)
+                    wing_always = p.get('upside_wing_always', False)
+                    if wing_otm > 0 and (use_itm or wing_always):
+                        K_wing = round(spot_u * (1 + wing_otm))
+                        wing_cost = bs_call(spot_u, K_wing, cc_dte/365, iv_at(K_wing, cc_dte, 'C'))
+                        if wing_cost > 0.02:
+                            wing_debit = wing_cost * 100 * qty + qty * SPREAD_OPTION * 100
+                            # Only buy wing if wing_debit < 30% of credit (net positive)
+                            if wing_debit < credit * 0.30 and s['cash'] > wing_debit + 500:
+                                s['cash'] -= wing_debit
+                                s.setdefault('long_calls', []).append({
+                                    'entry': idx, 'K': K_wing, 'dte': cc_dte,
+                                    'qty': qty, 'cost': wing_cost,
+                                    'wing_for_cc_K': K,  # link to its CC
+                                })
+                                trades.append({'date': idx, 'type': 'OPEN_UPSIDE_WING',
+                                               'pnl': -wing_debit, 'K': K_wing,
+                                               'qty': qty, 'cc_K': K, 'spot': spot_u})
 
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
@@ -663,6 +1715,48 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90, 'qty': qty, 'cost': cost})
                     trades.append({'date': idx, 'type': 'OPEN_LONG_PUT',
                                    'pnl': -debit, 'K': Kp, 'qty': qty})
+
+            # PROTECTIVE COLLAR — maintain long puts proportional to share
+            # exposure. Direct depth control: if 100% of shares hedged at
+            # strike S, max loss = (spot - S) / spot. Tunable hedge ratio
+            # and strike offset.
+            collar_ratio = p.get('protective_collar_ratio', 0)  # fraction of share lots to hedge (0.5 = 50%)
+            collar_otm = p.get('protective_collar_otm_pct', 0.05)  # 5% OTM by default
+            collar_dte = p.get('protective_collar_dte', 90)
+            if collar_ratio > 0 and s['shares'] >= 100:
+                share_lots = s['shares'] // 100
+                target_protected_lots = int(share_lots * collar_ratio)
+                existing_long_qty = sum(lp.get('qty', 0) for lp in s['long_puts'])
+                shortfall = target_protected_lots - existing_long_qty
+                if shortfall > 0:
+                    Kp = round(spot_u * (1 - collar_otm))
+                    cost = bs_put(spot_u, Kp, collar_dte/365, iv_at(Kp, collar_dte, 'P'))
+                    debit = cost * 100 * shortfall + shortfall * SPREAD_OPTION * 100
+                    if s['cash'] > debit + 1000:
+                        s['cash'] -= debit
+                        s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': collar_dte,
+                                               'qty': shortfall, 'cost': cost})
+                        trades.append({'date': idx, 'type': 'OPEN_PROTECTIVE_COLLAR',
+                                       'pnl': -debit, 'K': Kp, 'qty': shortfall,
+                                       'spot': spot_u, 'ratio': collar_ratio})
+
+            # TAIL-HEDGE FLOOR (production-port #5) — maintain minimum long
+            # put count regardless of regime. Production default = 2 LEAPS.
+            # Backtest uses 90 DTE puts as proxy.
+            tail_floor = p.get('tail_hedge_floor', 0)
+            existing_long_qty = sum(lp.get('qty', 0) for lp in s['long_puts'])
+            if tail_floor > 0 and existing_long_qty < tail_floor:
+                # Add to floor — pick OTM strike, 90 DTE
+                need = tail_floor - existing_long_qty
+                Kp = round(spot_u * 0.92)
+                cost = bs_put(spot_u, Kp, 90/365, iv_at(Kp, 90, 'P'))
+                debit = cost * 100 * need + need * SPREAD_OPTION * 100
+                if s['cash'] > debit + 1000:  # leave $1K buffer
+                    s['cash'] -= debit
+                    s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90,
+                                           'qty': need, 'cost': cost})
+                    trades.append({'date': idx, 'type': 'OPEN_LONG_PUT_FLOOR',
+                                   'pnl': -debit, 'K': Kp, 'qty': need})
 
                 # Guard against NaN spot_k or NaN nav
                 if s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
@@ -687,6 +1781,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         s['boxx'] += nb
                         s['cash'] -= nb * 117 + nb * SPREAD_SHARE
 
+        # Track weekly premium for income-mode awareness (every Monday-ish)
+        if i % 7 == 0 and i > 0:
+            # Sum credits in last 7 trades from any opens that fired this cycle
+            recent = trades[-10:]  # rough window
+            wk_credit = sum(t.get('credit', 0) for t in recent
+                           if t.get('type', '').startswith('OPEN_')
+                           and (idx - t.get('date', idx)).days <= 7)
+            recent_premium.append(wk_credit)
+            if len(recent_premium) > 12:
+                recent_premium.pop(0)
         nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117 + s['kold'] * spot_k
         history.append({
             'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
@@ -1152,6 +2256,995 @@ STRATEGIES = {
     # Price-level-aware standdown: only stop wheel when downtrend STARTS
     # from high prices (UNG > $30). Allows continued operation at low
     # prices per user's "low UNG accumulate" rule.
+    # Classic tastytrade 45/21 rule
+    'tastytrade_45_21': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': False, 'roll_up_calls': False,
+        'bearish_stack': False, 'boxx': True,
+        'open_dte': 45, 'force_close_dte': 21,
+    },
+    # Variant: keep good kernels + 45/21 management
+    'tastytrade_full': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45, 'force_close_dte': 21,
+        'vol_aware_sizing': True,
+    },
+    # Open at 45 only (no force-close — control)
+    'open_45_only': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45,
+        'vol_aware_sizing': True,
+    },
+    # 45/21 with immediate re-roll (user-suggested fix)
+    'tt_45_21_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 45, 'force_close_dte': 21,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # User's 37/14 suggestion
+    'tt_37_14_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 37, 'force_close_dte': 14,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Longer pair — 60/30
+    'tt_60_30_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 60, 'force_close_dte': 30,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Shorter pair — 30/14
+    'tt_30_14_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 30, 'force_close_dte': 14,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # Very short — 21/7
+    'tt_21_7_reroll': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'open_dte': 21, 'force_close_dte': 7,
+        'roll_on_gamma_close': True,
+        'vol_aware_sizing': True,
+    },
+    # REGIME-AWARE DTE — sharp move → longer DTE, calm → shorter
+    # rv > 80% → 60d, rv 60-80% → 45d, rv 40-60% → 30d, rv <40% → 21d
+    'regime_dte': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'vol_aware_dte': True,
+        'vol_aware_sizing': True,
+    },
+    # PRODUCTION-PORT: Kelly position sizing (replaces fixed qty)
+    'kelly_sized': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_threshold': 0.5,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_max_qty': 15,
+    },
+    # Kelly + best other features (closer-to-production chassis)
+    'kelly_champion': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_max_qty': 15,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Per user (cycle 20260602): "when extreme volatility happens, based on
+    # history and modeling, the firmness of confidence will get a higher".
+    # Kelly + conviction adjustment to BS p_otm based on aligned signals.
+    'kelly_firm': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Full firmness — multiplier-based, scales kelly qty up to 2x at high
+    # conviction + high vol, down to 0.5x when signals conflict.
+    'kelly_firmness': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_firmness': True,
+        'kelly_max_qty': 25,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Regime-aware STRIKE (continuous, by z) — flex between OTM/ATM/ITM
+    'regime_aware_strike': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Stack: regime_aware_strike + Kelly + firmness — production-style
+    'fully_dynamic': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'kelly_sizing': True,
+        'kelly_conviction': True,
+        'kelly_firmness': True,
+        'kelly_max_qty': 25,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Income-mode strike adjustment + regime-aware (production-style loop)
+    'income_mode_strike': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'income_mode_strike': True,
+        'target_weekly_income': 1500.0,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+    },
+    # Best kernel + tail-hedge floor (production-port item #5)
+    'best_plus_tail_floor': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'regime_aware_strike': True,
+        'income_mode_strike': True,
+        'target_weekly_income': 1500.0,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Champion_dyn_itm_20pct chassis (Sharpe 1.77 post-refresh) + tail floor
+    'champion_20pct_plus_floor': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+    },
+    # Champion + KOLD shoulder hedge — addresses calm-period bleed
+    'champion_plus_shoulder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'kold_shoulder_hedge': 0.08,
+    },
+    'champion_plus_shoulder_heavy': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'kold_shoulder_hedge': 0.15,
+    },
+    # Best + concentration penalty (production-port item #4)
+    'best_plus_concentration': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'max_concentration_per_strike': 15,
+    },
+    # Best + smoothness penalty (production-port item #7)
+    'best_plus_smoothness': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'income_mode_strike': True,
+        'target_weekly_income': 1500.0,
+        'smoothness_aware': True,
+    },
+    # Best + pillar boost (production-port item #6)
+    'best_plus_pillars': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'pillar_boost': True,
+    },
+    # Kelly backed by ScenarioDistribution (production-port item #2)
+    'kelly_with_sd': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'use_scenario_dist': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Fundamentals back — used as SIZING modulator (not in z)
+    'kelly_fundamental_modulated': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # + drawdown-aware risk dial (generic risk control)
+    'kelly_dd_aware': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'dd_aware_dial': True,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # + KOLD shoulder-season hedge (Mar-May, Sept-Nov are weak NG periods)
+    'kelly_shoulder_kold': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'dd_aware_dial': True,
+        'kold_shoulder_hedge': 0.05,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    'kelly_shoulder_kold_heavy': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'dd_aware_dial': True,
+        'kold_shoulder_hedge': 0.10,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # ANTI-DD FAMILY — explicit drawdown control tunables
+    # A: DD-triggered share trim (sell shares when DD breaches threshold)
+    'kelly_dd_share_trim_15': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 25, 'dd_trim_floor': 2000,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    'kelly_dd_share_trim_10': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -10, 'dd_trim_qty_pct': 30, 'dd_trim_floor': 2000,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # B: Dynamic KOLD hedge (scale KOLD with DD severity)
+    'kelly_dd_kold_hedge': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_kold_hedge_max_pct': 0.20,  # up to 20% NAV in KOLD at DD=-25%
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # TRIFECTA CANDIDATES — combining best Sharpe bases with z_target
+    'otm_managed_z_target': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+    },
+    'otm_managed_z_target_shoulder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
+    'regime_aware_z_target': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
+    # CUT-AND-REBUILD: sell shares + sell OTM puts BELOW to stay paid
+    # while waiting for re-entry. Captures put-skew richness (panic IV
+    # is fattest in declines). More executable than ITM CCs in fast-down
+    # markets where call-side spreads widen.
+    # Speed-tunable variants of champion_cut_rebuild
+    'champion_cut_rebuild_fast': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 5,  # weekly cadence
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.8,  # faster snap
+        'over_cut_pct': 0.10,  # 10% over-cut buffer
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -10, 'dd_trim_qty_pct': 35, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'champion_cut_rebuild_slow': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 42,  # ~2 months
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.3,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -20, 'dd_trim_qty_pct': 20, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 21,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    # Over-cut variant — same as champion_cut_rebuild but with over_cut buffer
+    'champion_cut_rebuild_overcut': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05, 'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'cut_speed': 0.5, 'over_cut_pct': 0.15,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 35, 'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.12, 'rebuild_put_dte': 45,
+    },
+    'champion_cut_rebuild': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        # NEW: cut-and-rebuild mechanism
+        'cut_and_rebuild_puts': True,
+        'rebuild_put_otm_pct': 0.10,
+        'rebuild_put_dte': 45,
+    },
+    'champion_cut_rebuild_deep': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cut_and_rebuild_puts': True,
+        'rebuild_put_otm_pct': 0.15,  # deeper OTM
+        'rebuild_put_dte': 45,
+    },
+    # Real-IV variant of aggressive_z — uses PG ung_iv_surface table
+    'champion_aggressive_z_real_iv': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'use_real_iv_surface': True,  # NEW: pull IV from PG when available
+    },
+    # NEW HARNESS WINNER: aggressive z-target mults push Sharpe to 1.86
+    # Counter-intuitive: trimming MORE at rich + loading MORE at cheap
+    # IMPROVES everything (Sharpe, return, MDD all better). Cash from
+    # rich trims funds bigger accumulation at lows.
+    'champion_aggressive_z': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
+    # CHAMPION + MOMENTUM GATES (preserve spike capture by not forcing
+    # ITM assignment / elevator close during confirmed parabolic move)
+    'champion_20pct_protected_mom_gated': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        # MOMENTUM GATES — skip pinch-the-spike mechanics during true parabola
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
+    # CHAMPION + MOMENTUM CALL LAYER — buy OTM calls during 2022-style spikes
+    # Decouples upside capture from share holding. Targets the 1-bad-year
+    # (2022) where protected gave up $226K to unprotected.
+    'champion_20pct_protected_momcalls': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_call_pct': 0.02,           # 2% NAV per ladder rung
+        'momentum_call_threshold': 0.20,     # 90d return > 20%
+        'momentum_call_otm_pct': 0.15,       # 15% OTM
+        'momentum_call_dte': 90,
+        'momentum_call_max_stack': 3,        # max 3 concurrent
+    },
+    # More aggressive momentum sizing
+    'champion_20pct_protected_momcalls_aggressive': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_call_pct': 0.04,
+        'momentum_call_threshold': 0.15,
+        'momentum_call_otm_pct': 0.15,
+        'momentum_call_dte': 120,
+        'momentum_call_max_stack': 5,
+    },
+    # CHAMPION + UPSIDE WING — covered call spread to recapture extreme upside
+    # Attach long far-OTM call to each ITM CC so spike-through gets paid
+    'champion_20pct_protected_wing': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.30,  # 30% above spot
+    },
+    'champion_20pct_protected_wing_all': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.20, 'upside_wing_always': True,
+    },
+    'champion_20pct_protected_wing_close': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_wing_otm_pct': 0.15,  # closer-in wing
+    },
+    # CHAMPION + momentum override (capture spike runs without giving up MDD)
+    'champion_20pct_protected_momentum': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'momentum_override': True,
+    },
+    # CHAMPION + upside ticket (fills the 2022-spike-capture gap)
+    'champion_20pct_protected_upside': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_ticket_pct': 0.02,  # 2% NAV in 30% OTM 90DTE calls when EXTREME_CHEAP
+    },
+    'champion_20pct_protected_upside_heavy': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'upside_ticket_pct': 0.04,
+    },
+    # HIGH-RETURN BASES + protection layer (cut_rebuild + z_target + shoulder)
+    # Goal: retain old champion's 140%+ return profile but cap MDD at <-10%
+    'champion_20pct_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        # Protection layer
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'beam_put_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'beam_put_selector': True, 'beam_put_n': 5,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    'kelly_firmness_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True, 'kelly_firmness': True,
+        'kelly_max_qty': 25, 'open_dte': 45, 'vol_aware_dte': True,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0, 'rich': 0.6, 'extreme_rich': 0.2},
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+    },
+    # CHAMPION TRIFECTA: highest Sharpe in entire harness (1.48)
+    # +90.5% return, -49% MDD, +16% calm, calm Sharpe ~0.3
+    # Mechanics: elevator close (lock spike), shoulder hedge (KOLD in weak
+    # seasons), z-target sizing (proactive), dd-trim safety net
+    'champion_trifecta': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'dd_trim_trigger_pct': -15, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    'elevator_z_target_shoulder': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'roll_down': True,
+        'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
+        'use_surprise_z': True,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.05,
+    },
+    # Z-BASED DYNAMIC SHARE TARGETING — proactive wheel sizing.
+    # Beats baseline on Sharpe, MDD, AND calm return simultaneously.
+    # Sharpe 1.09 (vs 0.69), MDD -51% (vs -69%), calm +46% (vs +31%).
+    # Only sacrifice: 2022 spike capture (full +102% vs +132%).
+    'kelly_z_target_winner': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.6, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kelly_max_qty': 20, 'open_dte': 45, 'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Calm-period maximizer — same but with heavier shoulder hedge
+    'kelly_z_target_calm_max': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.10,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.85, 'extreme_rich': 0.4,
+        },
+        'z_share_target_base': 6200,
+        'kelly_max_qty': 20, 'open_dte': 45, 'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # SHORT-DD VARIANTS — depth-minimizing tunables (daily cadence is key)
+    # Sweet spot: weekly trim, best Sharpe 1.24, MDD -32%
+    'kelly_short_dd_balanced': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -3, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'kelly_max_qty': 20, 'open_dte': 45, 'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Tight depth control — MDD -23% at the cost of -100pp full return
+    'kelly_short_dd_tight': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -3, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 1,
+        'kelly_max_qty': 20, 'open_dte': 45, 'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # Shallowest — MDD -18%, very defensive
+    'kelly_short_dd_minimal': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -2, 'dd_trim_qty_pct': 40,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 1,
+        'kelly_max_qty': 20, 'open_dte': 45, 'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # WINNER of DD-control sweep: aggressive early trim, floor=0
+    # MDD -69% → -44%, Sharpe 0.69 → 1.08, full +131% → +82%
+    'kelly_dd_controlled': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -3, 'dd_trim_qty_pct': 50, 'dd_trim_floor': 0,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # C: Combined — both share trim AND KOLD hedge
+    'kelly_dd_belt_and_suspenders': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'kelly_sizing': True, 'kelly_conviction': True,
+        'fundamental_modulation': True,
+        'kold_shoulder_hedge': 0.05,
+        'dd_trim_trigger_pct': -12, 'dd_trim_qty_pct': 20, 'dd_trim_floor': 2000,
+        'dd_kold_hedge_max_pct': 0.15,
+        'kelly_max_qty': 20,
+        'open_dte': 45,
+        'vol_aware_dte': True,
+        'tail_hedge_floor': 2,
+    },
+    # BEAM SELECTOR (item #1 port — critical version)
+    # Generate 5 put candidates, score by income-minus-expected-loss,
+    # pick highest. Tests if multi-objective scoring beats hardcoded
+    # regime_aware_strike rules.
+    'beam_put_only': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'beam_put': True,
+        'beam_put_otm_ladder': [0.02, 0.05, 0.08, 0.12, 0.15],
+        'open_dte': 45,
+    },
     'champion_robust_pricedt': {
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
@@ -1200,7 +3293,304 @@ STRATEGIES = {
         'target_shares': 4000,
         'core_shares': 2000,  # never drain below 2000 via elevator
     },
+    # NEW CHAMPION: hits all 3 targets (ann ≥25%, Sharpe ≥2.0, MDD ≤10%)
+    # daily entry cadence + larger size buffer
+    'champion_target_25': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,  # daily layering instead of weekly
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+    },
+    # SMOOTH variant — continuous tanh-based z-mult eliminates bucket jumps.
+    # Lower daily NAV vol, easier to manage psychologically + operationally.
+    'champion_target_25_smooth': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'smooth_z_target': True,  # tanh continuous interpolation
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    # WALK-FORWARD HARDENED — tightest dd_trim + cc_aware_cut + smaller put size
+    # Designed specifically to survive 12mo rolling windows (target worst MDD > -15%)
+    'champion_target_25_walkforward_safe': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 10,  # smaller
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.15,  # less ITM
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 14,  # faster rebal
+        'z_target_mults': {
+            'extreme_cheap': 1.8, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.5, 'extreme_rich': 0.2,  # slightly less aggressive
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.12,  # slightly heavier seasonal hedge
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        # Tighter DD-trim: catch DD earlier (-5% vs -8%) + cc_aware_cut implicit
+        'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 25,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cc_aware_cut': True,  # close near-DTE CCs first to free shares for cut
+    },
+    # DD-TRIM variant — best Sharpe variant from walk-forward (2.73 on full sample)
+    # Cuts worst 12mo MDD from -24% to -17% with almost no return cost.
+    'champion_target_25_dd_trim': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        # NEW: reactive DD-trim catches the 2023-2024 bad windows
+        'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    # MAX-PROTECTED variant — sacrifices ~10pp ann for worst-window MDD -15%
+    # Walk-forward worst 12mo MDD: -15% (vs -24% baseline)
+    'champion_target_25_max_protected': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': False,  # disable based on bad-window finding
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -6, 'dd_trim_qty_pct': 35,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+    },
+    # NAV-AWARE variant — sizes puts/calls as % of NAV (capital-scale invariant)
+    # Use this if your account is ~$100K-200K (puts sized to your actual cash)
+    'champion_target_25_nav_aware': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        # roll_up_calls intentionally DROPPED — ablation showed it hurts Sharpe
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        # NEW: NAV-relative sizing
+        'put_qty_nav_pct': 0.06,   # 6% of NAV in put notional per cycle
+        'call_qty_nav_pct': 0.045, # 4.5% of NAV in call notional per cycle
+        'put_qty_max': 50,
+        'call_qty_max': 50,
+    },
+    # CASH-START variant — best Sharpe (2.96) + best MDD (-4.4%) per init sweep
+    # Use this if starting fresh with all cash; no initial share exposure
+    'champion_target_25_cash_start': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'put_qty_nav_pct': 0.06,
+        'call_qty_nav_pct': 0.045,
+        'put_qty_max': 50,
+        'call_qty_max': 50,
+    },
+    # WINDOW-SAFE variant — tighter risk controls for rolling-window MDD safety
+    # Trades some return for limiting 12mo MDD < -10% in walk-forward
+    'champion_target_25_window_safe': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 10,
+        'entry_cadence': 2,  # bi-daily (less leverage than daily=1)
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.15,  # softer ITM
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 3,  # MORE long puts as insurance
+        'z_share_target_enabled': True, 'z_target_cadence_days': 14,  # faster rebal
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.5, 'extreme_rich': 0.2,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.12,  # slightly more KOLD
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.12, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'put_qty_nav_pct': 0.04,  # smaller put sizing
+        'call_qty_nav_pct': 0.035,
+        'put_qty_max': 40,
+        'call_qty_max': 40,
+    },
+    # NEW: IV-SHAPE-AWARE — react to real surface term & skew (default real IV)
+    'champion_aggressive_z_iv_shape': {
+        'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 2.0, 'cheap': 1.6, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 6200,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.10, 'rebuild_put_dte': 45,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'iv_shape_sizing': True,  # NEW: react to PG surface skew + term
+    },
 }
+
+
+# RETIRE old format. Keep only Pareto winners + key baselines.
+# All remaining strategies default to use_real_iv_surface=True (set in
+# run_strategy_simple). The strategies below are intentionally kept short
+# for clarity; reference ablations live in git history.
+_KEEP_STRATEGIES = {
+    # Sanity / unprotected reference baselines
+    'naive_atm', 'otm_managed', 'champion_20pct_plus_floor',
+    'kelly_firmness', 'beam_put_only',
+    # Diagnostic bases (used by ablation.py / bug_watch sample-bias check)
+    'elevator_close_surprise',
+    # Pareto-frontier protected family
+    'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
+    'champion_cut_rebuild', 'champion_cut_rebuild_slow', 'champion_cut_rebuild_fast',
+    'kelly_z_target_winner', 'kelly_short_dd_balanced', 'kelly_short_dd_minimal',
+    # Winner family
+    'champion_aggressive_z',            # proxy version for ablation
+    'champion_aggressive_z_real_iv',    # prior CHAMPION (Sharpe 1.91)
+    'champion_aggressive_z_iv_shape',   # term+skew aware
+    'champion_target_25',                # NEW CHAMPION (ann 25.7%, Sharpe 2.82, MDD -7.1%)
+    'champion_target_25_nav_aware',      # NAV-relative sizing (capital-scale invariant)
+    'champion_target_25_cash_start',     # Optimized for all-cash start
+    'champion_target_25_window_safe',    # Tighter rolling-MDD controls
+    'champion_target_25_dd_trim',        # WALK-FWD WINNER: same MDD, better Sharpe
+    'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
+    'champion_target_25_walkforward_safe', # walk-fwd hardened share-cut + cc-aware
+    'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
+    'champion_trifecta',                 # diagnostic
+    'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
+}
+STRATEGIES = {k: v for k, v in STRATEGIES.items() if k in _KEEP_STRATEGIES}
+
+
+# ─── STALE FILTER (lifecycle) ────────────────────────────────────────────────
+# Stale strategies remain in code/git but are excluded from cycle runs and
+# dashboard. Managed by backtest/retire_stale.py; state in strategy_lifecycle.json.
+# Each retirement is logged with date + reason — strategies are NEVER deleted,
+# only marked, so we can re-activate or compare retroactively.
+try:
+    import json as _json
+    _LIFECYCLE_PATH = os.path.join(CACHE_DIR, '..', 'strategy_lifecycle.json')
+    if os.path.exists(_LIFECYCLE_PATH):
+        _STALE = set(_json.loads(open(_LIFECYCLE_PATH).read()).get('stale', []))
+        STRATEGIES = {k: v for k, v in STRATEGIES.items() if k not in _STALE}
+except Exception:
+    pass
 
 
 def compare_strategies():
@@ -1228,8 +3618,12 @@ def compare_strategies():
             continue
         final = hist.iloc[-1]['nav']
         ret = (final / initial_nav - 1) * 100
-        max_dd_pct = ((hist['nav'].min() - hist['nav'].cummax().max()) /
-                      hist['nav'].cummax().max() * 100)
+        # CORRECT MDD: max peak-to-trough running drawdown, NOT (min vs all-time-max).
+        # Old buggy formula compared absolute-min (often the start) to absolute-max,
+        # massively overstating MDD by mixing different points in time.
+        running_peak = hist['nav'].cummax()
+        dd_series = (hist['nav'] - running_peak) / running_peak * 100
+        max_dd_pct = dd_series.min() if len(dd_series) else 0.0
         daily_ret = hist['nav'].pct_change().dropna()
         sharpe = daily_ret.mean() / (daily_ret.std() + 1e-9) * math.sqrt(252)
         ann = ((final / initial_nav) ** (1/years_held) - 1) * 100 if years_held > 0 else 0
