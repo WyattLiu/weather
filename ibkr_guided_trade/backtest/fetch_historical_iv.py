@@ -31,11 +31,20 @@ except ImportError:
     print("ib_insync not installed. pip install ib_insync")
     sys.exit(1)
 
+# Use the canonical IBKR endpoint from modules.common (192.168.1.127:20009)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from modules.common import IBKR_HOST, IBKR_PORT
+except ImportError:
+    IBKR_HOST, IBKR_PORT = '192.168.1.127', 20009
+
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
-def fetch_iv30(symbol='UNG', years=6, host='127.0.0.1', port=7497, client_id=42):
+def fetch_iv30(symbol='UNG', years=6, host=None, port=None, client_id=42):
+    if host is None: host = IBKR_HOST
+    if port is None: port = IBKR_PORT
     """Pull underlying IV30 series from IBKR."""
     ib = IB()
     print(f"Connecting to TWS at {host}:{port}...")
@@ -104,7 +113,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--symbol', default='UNG')
     parser.add_argument('--years', type=int, default=6)
-    parser.add_argument('--port', type=int, default=7497, help='TWS=7497, Gateway=4001')
+    parser.add_argument('--host', default=IBKR_HOST)
+    parser.add_argument('--port', type=int, default=IBKR_PORT)
     parser.add_argument('--client-id', type=int, default=42)
     args = parser.parse_args()
-    fetch_iv30(args.symbol, args.years, port=args.port, client_id=args.client_id)
+    fetch_iv30(args.symbol, args.years, host=args.host, port=args.port, client_id=args.client_id)
