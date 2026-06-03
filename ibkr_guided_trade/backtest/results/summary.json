@@ -510,6 +510,41 @@
     "max_dd_pct": -68.99684673864722,
     "sharpe": 0.6900277931600545
   },
+  "otm_managed_z_target": {
+    "final": 582159.0318582321,
+    "return_pct": 84.90161009843426,
+    "annual_pct": 13.080608962822948,
+    "max_dd_pct": -51.56588304572883,
+    "sharpe": 1.0244224540272828
+  },
+  "otm_managed_z_target_shoulder": {
+    "final": 586542.7330387485,
+    "return_pct": 86.29393309285838,
+    "annual_pct": 13.250399409857705,
+    "max_dd_pct": -50.0739724089686,
+    "sharpe": 1.0472692461167405
+  },
+  "regime_aware_z_target": {
+    "final": 576926.134781686,
+    "return_pct": 83.239570961389,
+    "annual_pct": 12.876582809359572,
+    "max_dd_pct": -47.09652796291586,
+    "sharpe": 1.358419624754672
+  },
+  "champion_trifecta": {
+    "final": 599704.7418901786,
+    "return_pct": 90.47436575056544,
+    "annual_pct": 13.75416508528855,
+    "max_dd_pct": -49.15742441132733,
+    "sharpe": 1.482341995685189
+  },
+  "elevator_z_target_shoulder": {
+    "final": 573281.374449956,
+    "return_pct": 82.08194561010203,
+    "annual_pct": 12.733600315941661,
+    "max_dd_pct": -46.732816761649715,
+    "sharpe": 1.3737723455409765
+  },
   "kelly_z_target_winner": {
     "final": 635025.225002149,
     "return_pct": 101.69263058794455,
@@ -597,5 +632,5 @@
   "ung_return_pct": -74.55855117020977,
   "initial_nav": 314848.00567626953,
   "years": 5.0,
-  "updated_at": "2026-06-03T08:48:22.583410"
+  "updated_at": "2026-06-03T08:52:55.209729"
 }
