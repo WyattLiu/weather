@@ -54,49 +54,40 @@ def bs_call(S, K, T, sig, r=0.045):
 
 
 def compute_historical_z(row, use_surprise=False):
-    """Approximate composite z-score from available factors.
+    """Composite z-score (CLEANED 20260603).
 
-    use_surprise=True uses seasonal-detrended storage/days_supply
-    (storage_surprise_z) — removes the dominant ~annual sine cycle,
-    so signal reflects deviation from SEASONAL expectation, not raw level.
+    Honest finding: of 5 candidate factors, only storage_surprise_z has
+    IC > 0.10 with future returns (IC +0.146 at 20d). Adding other
+    factors NAIVELY DILUTES this signal. days_supply_z = +0.04,
+    ng_trend = +0.024 (inversion bug also: was multiplied by -1 wrongly),
+    rv_30 as z component flips sign at combination.
+
+    NEW APPROACH: single-factor z based on storage_surprise_z. Other
+    signals (rv_30 for vol, momentum for trend) used separately in
+    strategies, NOT folded into a noisy composite.
+
+    use_surprise kept for backward compat — both modes now identical
+    since we use surprise-detrended storage as the canonical z.
     """
     z_components = []
     weights = []
 
-    # Storage deviation (negative when storage low = bullish)
-    storage_col = 'storage_surprise_z' if use_surprise else 'storage_z'
-    if storage_col in row and not pd.isna(row[storage_col]):
-        z_components.append(-row[storage_col])
-        weights.append(0.30)
+    # PRIMARY (and only) factor: storage surprise z (inverted = bullish positive)
+    if 'storage_surprise_z' in row and not pd.isna(row['storage_surprise_z']):
+        z_components.append(-row['storage_surprise_z'])
+        weights.append(1.0)
+    # Fallback to raw storage_z when surprise unavailable (warmup)
+    elif 'storage_z' in row and not pd.isna(row['storage_z']):
+        z_components.append(-row['storage_z'])
+        weights.append(1.0)
 
-    # Days supply
-    ds_col = 'days_supply_surprise_z' if use_surprise else 'days_supply_z'
-    if ds_col in row and not pd.isna(row[ds_col]):
-        z_components.append(-row[ds_col])
-        weights.append(0.25)
-
-    # NG trend
-    if 'ng_trend' in row and not pd.isna(row['ng_trend']):
-        z_components.append(-row['ng_trend'] * 3)  # high trend (above MA) = bearish (mean revert)
-        weights.append(0.20)
-
-    # VIX (market fear) — mildly bearish for NG (demand fear)
-    # VIX removed 20260602: it's S&P implied vol, not NG-related. Was a
-    # weak heuristic ("market fear → bearish risk assets") and silently 100%
-    # NaN due to tz join bug. User: "why we care vix?" — we don't.
-    # Will be restored only if a NG-specific volatility signal is added.
-    if False and 'VIX' in row and not pd.isna(row['VIX']):  # disabled
-        vix_normed = (row['VIX'] - 20) / 10
-        z_components.append(-vix_normed * 0.5)
-        weights.append(0.10)
-
-    # CL/NG ratio (oil/gas)
-    if 'CL' in row and 'NG' in row and not pd.isna(row['NG']) and row['NG'] > 0:
-        ratio = row['CL'] / row['NG']
-        # Typical ratio ~25; > 30 = NG cheap relative
-        ratio_z = (ratio - 25) / 10
-        z_components.append(ratio_z * 0.5)
-        weights.append(0.15)
+    # All other components removed per IC audit:
+    # - days_supply_z      IC +0.04   (too weak)
+    # - ng_trend           IC +0.024  (also had sign bug — was *-3)
+    # - VIX                IC -0.078  (counterintuitive sign, irrelevant to NG)
+    # - CL/NG ratio        IC +0.086  (diluter when combined)
+    # - rv_30              IC +0.140  (USEFUL but as separate vol regime signal,
+    #                                  not folded into directional z)
 
     if not z_components:
         return 0.0
