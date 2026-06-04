@@ -389,14 +389,51 @@ def regime(z_val):
 
 _IV_SURFACE_CACHE = None  # lazy-loaded once per process
 _REAL_STRIKE_GRID = None  # {(date_str, right): sorted_list_of_strikes_adj}
+_REAL_STRIKE_GRID_BY_EXP = None  # {(date_str, exp_str, right): sorted_strikes}
+
+
+def _is_third_friday(d):
+    """True if date d is the 3rd Friday of its month (monthly expiry)."""
+    return d.weekday() == 4 and 15 <= d.day <= 21
+
+
+def _heuristic_strike_grid(spot, expiration_str):
+    """Fallback strike grid when PG doesn't cover (date, expiration).
+
+    UNG empirical rules:
+    - Monthly expirations (3rd Friday): integer strikes only ($1 increments
+      when spot ≤ $20; $2.50/$5 increments above that).
+    - Weekly expirations: half-strikes ($0.50 increments) when spot ≤ $20,
+      else $1 increments.
+    """
+    from datetime import date as _date
+    try:
+        exp_d = _date.fromisoformat(expiration_str)
+    except Exception:
+        exp_d = None
+    is_monthly = exp_d is not None and _is_third_friday(exp_d)
+    if spot <= 0:
+        spot = 12.0
+    # Generate a reasonable window around spot
+    low = max(1.0, spot * 0.5)
+    high = spot * 1.5
+    if is_monthly:
+        inc = 1.0 if spot <= 20 else 2.5
+    else:
+        inc = 0.5 if spot <= 20 else 1.0
+    # Snap low to inc grid
+    n0 = int(low / inc)
+    strikes = []
+    for i in range(n0, int(high / inc) + 2):
+        strikes.append(round(i * inc, 2))
+    return strikes
 
 
 def _load_real_strike_grid():
-    """Load real listed UNG strikes per (date, right) from PG ung_iv_surface.
-    Grouped by date — for each backtest day, we know what strikes existed.
-    Cached once per process.
+    """Load real listed UNG strikes per (date, right) and per (date, exp, right)
+    from PG ung_iv_surface. Cached once per process.
     """
-    global _REAL_STRIKE_GRID
+    global _REAL_STRIKE_GRID, _REAL_STRIKE_GRID_BY_EXP
     if _REAL_STRIKE_GRID is not None:
         return _REAL_STRIKE_GRID
     try:
@@ -407,38 +444,61 @@ def _load_real_strike_grid():
         )
         cur = conn.cursor()
         cur.execute(
-            'SELECT date, option_right, strike_adj FROM ung_iv_surface '
-            'ORDER BY date, option_right, strike_adj'
+            'SELECT date, expiration, option_right, strike_adj FROM ung_iv_surface '
+            'ORDER BY date, expiration, option_right, strike_adj'
         )
         grid = {}
-        for d, r, k in cur.fetchall():
-            key = (d.isoformat(), r)
-            grid.setdefault(key, []).append(float(k))
-        # Dedupe + sort each key
+        grid_by_exp = {}
+        for d, exp, r, k in cur.fetchall():
+            d_str = d.isoformat(); exp_str = exp.isoformat(); k_f = float(k)
+            grid.setdefault((d_str, r), []).append(k_f)
+            grid_by_exp.setdefault((d_str, exp_str, r), []).append(k_f)
         for key in grid:
             grid[key] = sorted(set(grid[key]))
+        for key in grid_by_exp:
+            grid_by_exp[key] = sorted(set(grid_by_exp[key]))
         conn.close()
         _REAL_STRIKE_GRID = grid
+        _REAL_STRIKE_GRID_BY_EXP = grid_by_exp
         return grid
     except Exception:
         _REAL_STRIKE_GRID = {}
+        _REAL_STRIKE_GRID_BY_EXP = {}
         return {}
 
 
-def snap_to_real_strike(K, date_str, right='P'):
-    """Snap a computed strike to the nearest REAL listed strike for this date.
-    Returns the snapped strike, or original K if no PG data available.
+def snap_to_real_strike(K, date_str, right='P', expiration=None, spot=None):
+    """Snap a computed strike to the nearest REAL listed strike.
+
+    Lookup order:
+    1. PG (date, expiration, right) — exact match if backfill covered this contract
+    2. Heuristic for that expiration — monthly=integer, weekly=half-strike (UNG-specific)
+    3. PG (date, right) — fallback to date-pooled strikes
+    4. Original K — no data at all
     """
-    grid = _load_real_strike_grid()
-    if not grid:
-        return K
+    _load_real_strike_grid()
+    grid = _REAL_STRIKE_GRID or {}
+    grid_exp = _REAL_STRIKE_GRID_BY_EXP or {}
+
+    # (1) Exact (date, exp, right) match
+    if expiration is not None:
+        exp_str = expiration if isinstance(expiration, str) else expiration.isoformat()
+        strikes = grid_exp.get((date_str, exp_str, right))
+        if strikes:
+            return min(strikes, key=lambda s: abs(s - K))
+
+        # (2) Heuristic for this expiration (when spot known)
+        if spot is not None and spot > 0:
+            strikes = _heuristic_strike_grid(spot, exp_str)
+            if strikes:
+                return min(strikes, key=lambda s: abs(s - K))
+
+    # (3) Fallback to date-pooled
     strikes = grid.get((date_str, right))
     if not strikes:
-        # Find nearest date with data
         all_dates = sorted({d for (d, r) in grid.keys() if r == right})
         if not all_dates:
             return K
-        # Pick nearest date <= or earliest after
         prior = [d for d in all_dates if d <= date_str]
         nearest = prior[-1] if prior else all_dates[0]
         strikes = grid.get((nearest, right), [])
@@ -1690,15 +1750,22 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
-                # REAL STRIKE SNAP — opt-in via use_real_strikes flag
-                if p.get('use_real_strikes'):
-                    K = snap_to_real_strike(K, d_str, 'P')
                 # Tunable open-DTE (default 30; tastytrade rule uses 45).
                 open_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
                     rv30 = float(row.get('rv_30') or 0.5)
                     if rv30 > 0.80:   open_dte = 60
                     else:             open_dte = 45
+                # REAL STRIKE SNAP — now per-expiry aware. Compute the actual
+                # expiration date for this contract, then snap to strikes that
+                # exist on THAT expiry (monthly=integer, weekly=half).
+                if p.get('use_real_strikes'):
+                    _exp_d = idx.date() + timedelta(days=int(open_dte))
+                    while _exp_d.weekday() != 4:
+                        _exp_d += timedelta(days=1)
+                    K = snap_to_real_strike(K, d_str, 'P',
+                                             expiration=_exp_d.isoformat(),
+                                             spot=spot_u)
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
                 # KELLY SIZING with conviction-aware "firmness" multiplier.
                 # Optionally backed by ScenarioDistribution (port item #2).
@@ -1833,14 +1900,20 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 else:
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
-                if p.get('use_real_strikes'):
-                    K = snap_to_real_strike(K, d_str, 'C')
                 qty = min(call_qty, uncovered_shares // 100)
                 cc_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
                     rv30 = float(row.get('rv_30') or 0.5)
                     if rv30 > 0.80:   cc_dte = 60
                     else:             cc_dte = 45
+                # REAL STRIKE SNAP — per-expiry aware (monthly=integer, weekly=half)
+                if p.get('use_real_strikes'):
+                    _exp_d = idx.date() + timedelta(days=int(cc_dte))
+                    while _exp_d.weekday() != 4:
+                        _exp_d += timedelta(days=1)
+                    K = snap_to_real_strike(K, d_str, 'C',
+                                             expiration=_exp_d.isoformat(),
+                                             spot=spot_u)
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
                 # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
