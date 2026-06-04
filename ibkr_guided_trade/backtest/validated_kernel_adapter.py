@@ -228,6 +228,15 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     out['current_short_calls'] = current_short_calls
     out['current_short_puts'] = current_short_puts
     out['current_put_collateral'] = current_put_collateral
+    # Constraint enforcement — applies across ALL kernels, not kernel-specific
+    out['constraints'] = {
+        'covered_calls_only': True,  # never short calls without shares to cover
+        'cash_secured_puts': True,    # put collateral always available
+        'put_collateral_ceiling_pct_nav': 0.80,
+        'shares_uncovered': current_shares - current_short_calls * 100,
+        'cc_room': max(0, (current_shares - current_short_calls * 100) // 100),
+        'enforced_at': 'kernel_adapter._build_actionable_orders',
+    }
 
     # IV shape today
     shape = _iv_shape_today(spot)
@@ -430,6 +439,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     try:
         out['actionable_orders'] = _build_actionable_orders(
             kernel_info, spot, nav or 100000, current_shares,
+            current_short_calls,  # NEW: pass real CC count
             current_put_collateral, snap,
         )
     except Exception as e:
@@ -543,8 +553,54 @@ def _beam_per_kernel(spot, z, nav):
     return out
 
 
+def _real_strikes_near(target_K, spot, increment=0.5):
+    """Real UNG strikes are at $0.50 increments (mostly).
+    Return the surrounding strikes that bracket target_K, plus weights.
+    """
+    lower = int(target_K / increment) * increment
+    upper = lower + increment
+    if abs(target_K - lower) < 0.01:
+        return [(round(lower, 2), 1.0)]
+    # Linear interpolation weight
+    w_upper = (target_K - lower) / increment
+    w_lower = 1.0 - w_upper
+    return [(round(lower, 2), w_lower), (round(upper, 2), w_upper)]
+
+
+def _strike_mix_for_target_otm(target_otm_pct, spot, total_qty, increment=0.5):
+    """Build a strike mix that approximates the ideal target OTM%.
+
+    Returns list of {strike, qty} entries summing to total_qty.
+    If target falls between real strikes, splits qty proportionally so the
+    effective avg OTM% matches the target.
+    """
+    target_K = spot * (1 - target_otm_pct)
+    weighted = _real_strikes_near(target_K, spot, increment)
+    if total_qty < 2 or len(weighted) == 1:
+        # Single strike — pick closest
+        best_K = min((s for s, _ in weighted),
+                     key=lambda s: abs(s - target_K))
+        return [{'strike': best_K, 'qty': total_qty,
+                 'effective_otm_pct': round((1 - best_K/spot) * 100, 2)}]
+    # Split across both with rounded quantities
+    qty_upper = max(1, round(total_qty * weighted[1][1]))
+    qty_lower = total_qty - qty_upper
+    if qty_lower < 1:
+        qty_lower = 1
+        qty_upper = total_qty - 1
+    eff_K = (weighted[0][0] * qty_lower + weighted[1][0] * qty_upper) / total_qty
+    return [
+        {'strike': weighted[0][0], 'qty': qty_lower,
+         'effective_otm_pct': round((1 - weighted[0][0]/spot) * 100, 2),
+         'target_weight': round(weighted[0][1], 2)},
+        {'strike': weighted[1][0], 'qty': qty_upper,
+         'effective_otm_pct': round((1 - weighted[1][0]/spot) * 100, 2),
+         'target_weight': round(weighted[1][1], 2)},
+    ]
+
+
 def _build_actionable_orders(kernel_info, spot, nav, current_shares,
-                              current_put_collateral, snap):
+                              current_short_calls, current_put_collateral, snap):
     """Build directly-executable orders specific to the active kernel.
     Includes OSI option symbols, limit prices, qtys based on current NAV.
     """
@@ -565,6 +621,15 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
         target_date += timedelta(days=1)
     exp_str = target_date.isoformat()
     exp_osi = target_date.strftime('%y%m%d')
+
+    def _bs_call_put(K, T_y, iv_=0.50):
+        """BSM call & put prices."""
+        from scipy.stats import norm
+        d1 = (math.log(spot/K) + (0.045 + 0.5*iv_**2)*T_y) / (iv_*math.sqrt(T_y))
+        d2 = d1 - iv_*math.sqrt(T_y)
+        call = spot*norm.cdf(d1) - K*math.exp(-0.045*T_y)*norm.cdf(d2)
+        put = K*math.exp(-0.045*T_y)*norm.cdf(-d2) - spot*norm.cdf(-d1)
+        return call, put
 
     # SHARE order: regime-aware target
     z_mults = sp.get('z_target_mults', {
@@ -606,6 +671,86 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
             'priority': 'high' if abs(share_delta) >= 200 else 'medium',
         })
 
+        # ─── PUT-CALL PARITY SYNTHETIC ALTERNATIVE ────────────────────────
+        # Same delta exposure without paying for shares upfront.
+        # Synthetic long stock = +1 call + (-1) put at same K/exp
+        # Synthetic short stock = (-1) call + (+1) put — needs share coverage for call leg
+        from datetime import timedelta as _td
+        synth_target = today + _td(days=30)
+        while synth_target.weekday() != 4:
+            synth_target += _td(days=1)
+        synth_exp = synth_target.isoformat()
+        synth_exp_osi = synth_target.strftime('%y%m%d')
+        K_synth = round(spot, 0)  # ATM
+        T_synth = 30 / 365
+        c_prem, p_prem = _bs_call_put(K_synth, T_synth)
+        net_debit = c_prem - p_prem  # synthetic-long net (typically small at ATM)
+        synth_qty = max(1, abs(share_delta) // 100)
+        synth_qty = min(synth_qty, 50)  # cap
+
+        if share_delta > 0:
+            # Synthetic LONG: buy call + sell put. Net delta = +100 per contract.
+            # No coverage constraint on either leg (BTO call + STO put are fine).
+            orders.append({
+                'order_type': 'SYNTHETIC_LONG_PARITY',
+                'side': 'BUY_CALL + SELL_PUT',
+                'legs': [
+                    {'side': 'BUY_TO_OPEN',  'symbol': f'UNG   {synth_exp_osi}C{int(K_synth*1000):08d}',
+                     'right': 'CALL', 'strike': K_synth, 'qty': synth_qty,
+                     'est_premium_per': round(c_prem, 3)},
+                    {'side': 'SELL_TO_OPEN', 'symbol': f'UNG   {synth_exp_osi}P{int(K_synth*1000):08d}',
+                     'right': 'PUT',  'strike': K_synth, 'qty': synth_qty,
+                     'est_premium_per': round(p_prem, 3)},
+                ],
+                'underlying': 'UNG',
+                'expiry': synth_exp,
+                'qty': synth_qty,
+                'net_debit_per_pair': round(net_debit, 3),
+                'net_delta_per_pair': 100,
+                'capital_efficiency': 'No shares purchased; only put collateral required',
+                'collateral_required': round(K_synth * 100 * synth_qty, 0),
+                'rationale': (f'Put-call parity LONG: same +{synth_qty*100}Δ as buying shares '
+                              f'but no upfront stock purchase. Net debit ~${net_debit*100*synth_qty:+.0f}. '
+                              f'Useful when cash is short or you want optional 30d exit.'),
+                'priority': 'low',
+            })
+        else:
+            # Synthetic SHORT: sell call + buy put. The short call REQUIRES share coverage.
+            uncovered_synth = current_shares - current_short_calls * 100
+            if uncovered_synth >= synth_qty * 100:
+                orders.append({
+                    'order_type': 'SYNTHETIC_SHORT_PARITY',
+                    'side': 'SELL_CALL + BUY_PUT',
+                    'legs': [
+                        {'side': 'SELL_TO_OPEN', 'symbol': f'UNG   {synth_exp_osi}C{int(K_synth*1000):08d}',
+                         'right': 'CALL', 'strike': K_synth, 'qty': synth_qty,
+                         'est_premium_per': round(c_prem, 3)},
+                        {'side': 'BUY_TO_OPEN',  'symbol': f'UNG   {synth_exp_osi}P{int(K_synth*1000):08d}',
+                         'right': 'PUT',  'strike': K_synth, 'qty': synth_qty,
+                         'est_premium_per': round(p_prem, 3)},
+                    ],
+                    'underlying': 'UNG',
+                    'expiry': synth_exp,
+                    'qty': synth_qty,
+                    'net_credit_per_pair': round(c_prem - p_prem, 3),
+                    'net_delta_per_pair': -100,
+                    'capital_efficiency': 'Avoids tax realization vs share sale',
+                    'cc_coverage_check': f'OK: {uncovered_synth} uncovered ≥ {synth_qty*100} needed',
+                    'rationale': (f'Put-call parity SHORT: synthetic -{synth_qty*100}Δ without '
+                                  f'selling shares (avoids realized gain/loss). Covered by '
+                                  f'{uncovered_synth} uncovered shares.'),
+                    'priority': 'low',
+                })
+            else:
+                orders.append({
+                    'order_type': 'SYNTHETIC_SHORT_BLOCKED',
+                    'side': 'BLOCKED',
+                    'rationale': (f'Cannot create synthetic short: need {synth_qty*100} uncovered '
+                                  f'shares to cover the short-call leg, only have {uncovered_synth}. '
+                                  f'Covered-calls-only rule.'),
+                    'priority': 'low',
+                })
+
     # PUT order: short put with kernel's strike preference
     itm_z = sp.get('aggressive_itm_put_z')
     if itm_z is not None and z > itm_z:
@@ -643,33 +788,72 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
         max_qty = max(0, int(room / (K * 100)))
 
     if max_qty >= 1:
-        # OSI: UNG  + YYMMDD + P + strike*1000 padded to 8
-        strike_osi = f'{int(K * 1000):08d}'
-        osi = f'UNG   {exp_osi}P{strike_osi}'
+        # MIX-AND-MATCH: split across nearest real strikes so effective
+        # OTM matches the kernel's ideal target.
+        target_otm = (spot - K) / spot
+        strike_mix = _strike_mix_for_target_otm(target_otm, spot, max_qty)
+        # Build OSI legs for each strike in the mix
+        legs = []
+        total_credit = 0
+        total_collateral = 0
+        for slot in strike_mix:
+            sK = slot['strike']
+            sQ = slot['qty']
+            # Re-price for this real strike
+            d1s = (math.log(spot/sK) + (0.045 + 0.5*iv**2)*T) / (iv*math.sqrt(T))
+            d2s = d1s - iv*math.sqrt(T)
+            slot_prem = sK*math.exp(-0.045*T)*norm.cdf(-d2s) - spot*norm.cdf(-d1s)
+            strike_osi = f'{int(sK * 1000):08d}'
+            legs.append({
+                'symbol': f'UNG   {exp_osi}P{strike_osi}',
+                'strike': sK,
+                'qty': sQ,
+                'effective_otm_pct': slot['effective_otm_pct'],
+                'est_premium_per': round(slot_prem, 3),
+                'limit_low': round(slot_prem * 0.90, 2),
+                'limit_high': round(slot_prem * 1.10, 2),
+                'credit_total': round(slot_prem * 100 * sQ, 0),
+                'collateral': round(sK * 100 * sQ, 0),
+            })
+            total_credit += slot_prem * 100 * sQ
+            total_collateral += sK * 100 * sQ
+        avg_eff_otm = sum(l['effective_otm_pct'] * l['qty'] for l in legs) / max_qty
         orders.append({
-            'order_type': 'PUT_SHORT',
+            'order_type': 'PUT_SHORT_MIX',
             'side': 'SELL_TO_OPEN',
-            'symbol': osi,
             'underlying': 'UNG',
-            'strike': K,
             'expiry': exp_str,
             'right': 'PUT',
+            'symbol': f'{len(legs)} real strikes',  # for display
             'qty': max_qty,
-            'limit_low': limit_low,
-            'limit_high': limit_high,
-            'est_premium_per': round(bsm_prem, 3),
-            'est_credit_total': round(bsm_prem * 100 * max_qty, 0),
-            'collateral_required': round(K * 100 * max_qty, 0),
-            'rationale': f'{order_label}. K=${K} ({(spot-K)/spot*100:+.1f}% from spot), '
-                         f'{sp.get("open_dte", 45)} DTE, qty {max_qty} fits NAV budget.',
+            'target_otm_pct': round(target_otm * 100, 2),
+            'achieved_otm_pct': round(avg_eff_otm, 2),
+            'est_credit_total': round(total_credit, 0),
+            'collateral_required': round(total_collateral, 0),
+            'legs': legs,
+            'rationale': (f'{order_label}. Kernel target {target_otm*100:.1f}% OTM; '
+                          f'real strikes split into {len(legs)} legs to match. '
+                          f'Achieved avg {avg_eff_otm:.1f}% OTM.'),
             'priority': 'medium',
         })
 
-    # CC order — sell calls if uncovered shares exist
-    short_call_lots = 0  # we'd need from positions, simplified
-    # For now skip if can't compute uncovered
-    uncovered = current_shares - short_call_lots * 100
-    if uncovered >= 100:
+    # CC order — sell calls ONLY if we have uncovered shares (constraint:
+    # covered-calls-only, never naked). short_calls_qty * 100 shares are
+    # already covering existing CCs; uncovered = shares - committed.
+    uncovered = current_shares - current_short_calls * 100
+    if uncovered < 100:
+        # No room for new CCs — explicitly skip and tell user why
+        orders.append({
+            'order_type': 'CC_SKIPPED',
+            'side': 'HOLD',
+            'symbol': 'UNG',
+            'qty': 0,
+            'rationale': (f'No new CC: {current_short_calls} short calls already '
+                          f'cover {current_short_calls*100} of {current_shares} shares '
+                          f'(uncovered: {uncovered}). Covered-calls-only constraint.'),
+            'priority': 'low',
+        })
+    elif uncovered >= 100:
         Kc = round(spot * (1 + sp.get('otm_call', 0.05)), 2)
         cc_dte = sp.get('open_dte', 45)
         T = cc_dte / 365

@@ -665,12 +665,8 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- Recommendations: production rec-card pattern -->
-  <div class="section">
-    <h2>Recommendations</h2>
-    <div id="recs">–</div>
-    <div id="warnings"></div>
-  </div>
+  <!-- Warnings only (recommendations unified into Directly Usable Orders section) -->
+  <div id="warnings" style="margin-bottom:12px"></div>
 
   <!-- Expiration timeline: production-style per-expiry cards -->
   <div class="section">
@@ -1072,6 +1068,31 @@ async function refresh() {
                  + '<table style="font-size:0.85rem">'
                  + o.limit_ladder.map(l => `<tr><td class="mono" style="text-align:right">${l.qty}</td><td>shares @</td><td class="mono">$${l.limit_price}</td></tr>`).join('')
                  + '</table></div>';
+        } else if (o.order_type.startsWith('SYNTHETIC')) {
+          const legs = (o.legs || []).map(l => `<tr><td>${l.side}</td><td>${l.qty}</td><td class="mono">${l.symbol}</td><td class="mono">@~$${l.est_premium_per}</td></tr>`).join('');
+          detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px;border-left:2px solid var(--purple)">`
+                 + `<div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">Legs (put-call parity):</div>`
+                 + `<table style="font-size:0.78rem">${legs}</table>`
+                 + (o.net_debit_per_pair != null ? `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Net debit/pair: $${o.net_debit_per_pair} · Δ per pair: ${o.net_delta_per_pair}</div>` : '')
+                 + (o.net_credit_per_pair != null ? `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Net credit/pair: $${o.net_credit_per_pair} · Δ per pair: ${o.net_delta_per_pair}</div>` : '')
+                 + (o.cc_coverage_check ? `<div style="font-size:0.72rem;margin-top:4px;color:var(--green)">✓ ${o.cc_coverage_check}</div>` : '')
+                 + (o.capital_efficiency ? `<div style="font-size:0.72rem;margin-top:4px;color:var(--text-dim)">💡 ${o.capital_efficiency}</div>` : '')
+                 + `</div>`;
+        } else if (o.order_type === 'CC_SKIPPED' || o.order_type === 'SYNTHETIC_SHORT_BLOCKED') {
+          detail = `<div style="margin-top:6px;padding:8px;background:rgba(248,81,73,0.08);border-radius:4px;border-left:2px solid var(--red);font-size:0.78rem;color:var(--red)">⛔ CONSTRAINT ENFORCED — covered-calls-only rule</div>`;
+        } else if (o.order_type === 'PUT_SHORT_MIX' && o.legs) {
+          // Mix-and-match real-strike rendering
+          const legsTable = o.legs.map(l => `<tr>
+            <td class="mono">${l.qty}</td><td class="mono">${l.symbol}</td>
+            <td class="mono">$${l.est_premium_per}</td>
+            <td class="mono" style="color:var(--text-dim)">${l.effective_otm_pct}% OTM</td>
+            <td class="mono">$${fmt(l.credit_total,0)}</td>
+          </tr>`).join('');
+          detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px;border-left:2px solid var(--blue)">`
+                 + `<div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">`
+                 + `Strike mix → target <strong>${o.target_otm_pct}%</strong> OTM, achieved <strong>${o.achieved_otm_pct}%</strong></div>`
+                 + `<table style="font-size:0.78rem"><thead><tr><th>Qty</th><th>OSI</th><th>Prem/ct</th><th>Eff OTM</th><th>Credit</th></tr></thead><tbody>${legsTable}</tbody></table>`
+                 + `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Total credit: $${fmt(o.est_credit_total,0)} · Collateral: $${fmt(o.collateral_required,0)}</div></div>`;
         } else if (o.order_type.includes('PUT') || o.order_type.includes('CALL')) {
           detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px">`
                  + `<div class="mono" style="font-size:0.85rem"><span style="color:var(--text-dim)">OSI:</span> ${o.symbol}</div>`
