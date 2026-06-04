@@ -1474,6 +1474,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     elif z > -0.5: otm_put = 0.10
                     elif z > -1.0: otm_put = 0.13
                     else:          otm_put = 0.18
+                # AGGRESSIVE ITM PUT GATE — when z is RICH (overvalued),
+                # sell ITM puts to harvest fat premium AND acquire shares
+                # at discount via assignment. Only fires when we want
+                # MORE shares (under target). Pairs with smaller share base
+                # to keep total inventory controlled.
+                aip_z = p.get('aggressive_itm_put_z')
+                if aip_z is not None and z > aip_z:
+                    # Allow ITM only if we're below target shares (room to acquire)
+                    target_check = p.get('z_share_target_base', 6200)
+                    if s['shares'] < target_check * 1.2:  # not over-acquired
+                        otm_put = p.get('itm_put_pct', -0.05)  # 5% ITM by default
                 # INCOME-MODE strike push: if rolling weekly income < 60% of
                 # target, push strike CLOSER to ATM (more income, accept
                 # higher assignment prob). If above 120% of target, push
@@ -3369,6 +3380,45 @@ STRATEGIES = {
         'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
         'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
     },
+    # ITM-PUT PREMIUM HARVEST — high premium, less shares
+    # Sells ITM puts when z is RICH to harvest fat extrinsic + acquire shares
+    # at strike (effective discount via collected premium). Smaller share
+    # inventory (3000 vs 6200) means more put-collateral capacity AND lower
+    # share-bleed risk in downtrends. Heavy dd_trim keeps inventory in check.
+    # EVOLUTION 1 (day-by-day analyzer): put_qty reduced 18→12 in NEUTRAL
+    # — fixes the -$220K NEUTRAL noise-zone loss accumulation. Improves every
+    # metric: ann +1.2pp, Sharpe +0.19, full MDD -5pp, WF range -5pp.
+    'champion_premium_harvest': {
+        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 12,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        # Aggressive ITM on BOTH sides
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'aggressive_itm_put_z': 0.3,   # NEW: sell ITM put when z > +0.3 (RICH-ish)
+        'itm_put_pct': -0.05,           # NEW: 5% ITM by default
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        # Smaller share inventory
+        'z_share_target_enabled': True, 'z_target_cadence_days': 14,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 3000,    # smaller (was 6200)
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.08, 'rebuild_put_dte': 30,
+        'elevator_skip_on_momentum': True,
+        'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cc_aware_cut': True,
+        'skip_puts_on_grind_down': True,
+    },
     # WALK-FORWARD HARDENED — tightest dd_trim + cc_aware_cut + smaller put size
     # Designed specifically to survive 12mo rolling windows (target worst MDD > -15%)
     'champion_target_25_walkforward_safe': {
@@ -3598,6 +3648,7 @@ _KEEP_STRATEGIES = {
     'champion_target_25_dd_trim',        # WALK-FWD WINNER: same MDD, better Sharpe
     'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
     'champion_target_25_walkforward_safe', # walk-fwd hardened share-cut + cc-aware
+    'champion_premium_harvest',           # ITM-put premium harvest, smaller share base
     'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
