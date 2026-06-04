@@ -675,7 +675,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # reactive-trim trap where we sell into noise pullbacks.
         z_target_enabled = p.get('z_share_target_enabled', False)
         if z_target_enabled and i % p.get('z_target_cadence_days', 5) == 0:
-            base_shares = p.get('z_share_target_base', 6200)
+            # SCALE-INVARIANT base: if z_share_target_pct_nav set, compute base
+            # shares as (NAV * pct / spot) so base scales with account size.
+            # Falls back to hardcoded z_share_target_base for legacy strategies.
+            pct_base = p.get('z_share_target_pct_nav')
+            if pct_base is not None and pct_base > 0 and spot_u > 0:
+                base_shares = int((cur_nav * pct_base / spot_u) / 100) * 100
+                base_shares = max(100, base_shares)
+            else:
+                base_shares = p.get('z_share_target_base', 6200)
             # Tunable multipliers — defaults are the wheel philosophy curve
             mults = p.get('z_target_mults', {
                 'extreme_cheap': 1.4, 'cheap': 1.2, 'neutral': 1.0,
@@ -1501,7 +1509,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 aip_z = p.get('aggressive_itm_put_z')
                 if aip_z is not None and z > aip_z:
                     # Allow ITM only if we're below target shares (room to acquire)
-                    target_check = p.get('z_share_target_base', 6200)
+                    pct_b = p.get('z_share_target_pct_nav')
+                    if pct_b and spot_u > 0:
+                        target_check = int(cur_nav * pct_b / spot_u)
+                    else:
+                        target_check = p.get('z_share_target_base', 6200)
                     if s['shares'] < target_check * 1.2:  # not over-acquired
                         otm_put = p.get('itm_put_pct', -0.05)  # 5% ITM by default
                 # INCOME-MODE strike push: if rolling weekly income < 60% of
@@ -3438,6 +3450,41 @@ STRATEGIES = {
         'cc_aware_cut': True,
         'skip_puts_on_grind_down': True,
     },
+    # SCALE-INVARIANT — same annualized return regardless of starting NAV.
+    # All sizing as % of NAV: put_qty via put_qty_nav_pct, share base via
+    # z_share_target_pct_nav. Tests user's principle: a good algo's return
+    # shouldn't depend heavily on starting capital.
+    'champion_premium_harvest_scale_invariant': {
+        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,  # floor only
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'aggressive_itm_put_z': 0.3, 'itm_put_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_pct_nav': 0.35,  # 35% of NAV in shares at NEUTRAL z
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.08, 'rebuild_put_dte': 30,
+        'elevator_skip_on_momentum': True, 'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cc_aware_cut': True, 'skip_puts_on_grind_down': True,
+        'regime_aware_put_qty': True,
+        # NAV-relative put/call sizing
+        'put_qty_nav_pct': 0.06,   # 6% of NAV in put collateral per cycle
+        'call_qty_nav_pct': 0.04,
+        'put_qty_max': 100, 'call_qty_max': 50,
+    },
     # ULTRA-CONSERVATIVE — tightest WF range ever (51pp). Trades return
     # for ultimate predictability across rolling windows.
     'champion_premium_harvest_ultra': {
@@ -3699,6 +3746,7 @@ _KEEP_STRATEGIES = {
     'champion_target_25_walkforward_safe', # walk-fwd hardened share-cut + cc-aware
     'champion_premium_harvest',           # ITM-put premium harvest, smaller share base
     'champion_premium_harvest_ultra',     # Ultra-conservative WF (51pp range)
+    'champion_premium_harvest_scale_invariant',  # NAV-pct sizing (low CV)
     'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
