@@ -3402,10 +3402,13 @@ STRATEGIES = {
     # ITM-PUT PREMIUM HARVEST — high premium, less shares.
     # EVOLUTIONS BAKED IN (day-by-day analyzer iterations):
     # - V1: put_qty 18→12 (less NEUTRAL noise-zone leverage)
-    # - V2 (this): z_target_cadence_days 14→21 (slower regime response,
-    #   eliminates whipsaws; WF worst Sharpe +1.61→+2.13, range -8pp)
+    # - V2: z_target_cadence_days 14→21 (slower regime response)
+    # - V3 (this): put_qty 12→21 (was flooring to 1 at daily cadence) +
+    #   regime_aware_put_qty=True (smaller in NEUTRAL noise, bigger at extreme z)
+    #   WF worst Sharpe +2.13→+2.35, range 72→54pp, avg ann -1.4pp tradeoff
     'champion_premium_harvest': {
-        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 12,
+        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 21, 'call_qty': 12,
+        'regime_aware_put_qty': True,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
