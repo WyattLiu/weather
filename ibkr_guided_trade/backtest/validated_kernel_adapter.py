@@ -199,8 +199,22 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         return out
     out.update(snap)
 
-    # Target shares
-    target = int(round(base_shares * snap['mult'] / 100) * 100)
+    # Target shares — prefer kernel's scale-invariant pct_nav when defined,
+    # otherwise fall back to fixed base_shares.
+    try:
+        from replay_engine import STRATEGIES as _STR  # type: ignore
+        sp_top = _STR.get(kernel_info['strategy'], {})
+    except Exception:
+        sp_top = {}
+    pct_base_top = sp_top.get('z_share_target_pct_nav')
+    if pct_base_top and spot > 0 and (nav and nav > 0):
+        target = int(round(nav * pct_base_top * snap['mult'] / spot / 100) * 100)
+        out['target_basis'] = f'{pct_base_top*100:.0f}% NAV * mult / spot (scale-invariant)'
+    else:
+        # base_shares-fallback uses kernel's z_share_target_base if set
+        bs = sp_top.get('z_share_target_base', base_shares)
+        target = int(round(bs * snap['mult'] / 100) * 100)
+        out['target_basis'] = f'{bs} base * mult (fixed)'
     out['target_shares'] = target
 
     current_shares = 0
@@ -554,6 +568,67 @@ def _beam_per_kernel(spot, z, nav):
 
 
 _LISTED_STRIKE_CACHE = {'ts': 0.0, 'strikes': None, 'date': None, 'dte': None}
+_LIVE_CHAIN_CACHE = {'ts': 0.0, 'data': None}
+
+
+def _query_live_chain(target_dte=45, right='P', tolerance_dte=14):
+    """Pull TODAY's UNG option chain via yfinance.
+    Returns dict: {'strikes': [...], 'expiration': '2026-07-18',
+                   'liquidity': {strike: {bid, ask, vol, oi}}, 'source': 'yfinance_live'}
+    Falls back to PG ung_iv_surface if yfinance unavailable.
+    Cached 5 min.
+    """
+    import time
+    now = time.time()
+    cache_key = (target_dte, right)
+    if _LIVE_CHAIN_CACHE['data'] and now - _LIVE_CHAIN_CACHE['ts'] < 300:
+        cached = _LIVE_CHAIN_CACHE['data'].get(cache_key)
+        if cached:
+            return cached
+    try:
+        import yfinance as yf
+        from datetime import date as _date, timedelta as _td
+        ung = yf.Ticker('UNG')
+        expirations = ung.options
+        # Pick expiry closest to target_dte
+        today = _date.today()
+        best_exp = None
+        best_diff = 10**9
+        for exp_str in expirations:
+            try:
+                exp_d = _date.fromisoformat(exp_str)
+                diff = abs((exp_d - today).days - target_dte)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_exp = exp_str
+            except Exception:
+                continue
+        if not best_exp:
+            return None
+        chain = ung.option_chain(best_exp)
+        side = chain.puts if right == 'P' else chain.calls
+        strikes = sorted(float(s) for s in side['strike'].unique() if 1 <= s <= 50)
+        liquidity = {}
+        for _, row in side.iterrows():
+            K = float(row['strike'])
+            liquidity[K] = {
+                'bid': float(row.get('bid', 0) or 0),
+                'ask': float(row.get('ask', 0) or 0),
+                'vol': int(row.get('volume', 0) or 0),
+                'oi': int(row.get('openInterest', 0) or 0),
+            }
+        result = {
+            'strikes': strikes, 'expiration': best_exp,
+            'liquidity': liquidity, 'source': 'yfinance_live',
+            'dte': (_date.fromisoformat(best_exp) - today).days,
+        }
+        if _LIVE_CHAIN_CACHE['data'] is None:
+            _LIVE_CHAIN_CACHE['data'] = {}
+        _LIVE_CHAIN_CACHE['data'][cache_key] = result
+        _LIVE_CHAIN_CACHE['ts'] = now
+        return result
+    except Exception as e:
+        return None
 
 
 def _query_real_listed_strikes(target_dte=45, right='P', tolerance_dte=14):
@@ -719,24 +794,71 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
     share_delta = (share_delta // 100) * 100
     if abs(share_delta) >= 100:
         side = 'BUY' if share_delta > 0 else 'SELL'
-        l1 = round(spot * (1.005 if side == 'BUY' else 0.995), 2)
-        l2 = round(spot, 2)
-        l3 = round(spot * (0.995 if side == 'BUY' else 1.005), 2)
-        per_tier_qty = abs(share_delta) // 3
-        orders.append({
-            'order_type': 'SHARES',
-            'side': side,
-            'symbol': 'UNG',
-            'qty_total': abs(share_delta),
-            'limit_ladder': [
-                {'qty': per_tier_qty, 'limit_price': l1},
-                {'qty': per_tier_qty, 'limit_price': l2},
-                {'qty': abs(share_delta) - 2*per_tier_qty, 'limit_price': l3},
-            ],
-            'rationale': f'Rebalance toward {target_total} shares (current {current_shares}, '
-                         f'z={z:+.2f}, mult={mult}). Move 50%/cycle.',
-            'priority': 'high' if abs(share_delta) >= 200 else 'medium',
-        })
+
+        # COVERED-CALLS-ONLY GUARD: cannot sell shares below short-call coverage.
+        # max safe sell = current_shares - current_short_calls * 100
+        desired_sell = -share_delta if side == 'SELL' else 0
+        max_safe_sell = max(0, current_shares - current_short_calls * 100)
+        capped_sell = min(desired_sell, max_safe_sell) if side == 'SELL' else 0
+        shortfall = desired_sell - capped_sell  # shares we WANT to sell but can't yet
+
+        if side == 'SELL' and shortfall > 0:
+            # Emit a precondition order: BTC enough short calls to free shares first
+            calls_to_close = (shortfall + 99) // 100  # round up
+            calls_to_close = min(calls_to_close, current_short_calls)
+            if calls_to_close > 0:
+                orders.append({
+                    'order_type': 'CC_BTC_TO_FREE_SHARES',
+                    'side': 'BUY_TO_CLOSE',
+                    'symbol': 'UNG short calls (pick lowest-extrinsic/nearest-ITM)',
+                    'qty': calls_to_close,
+                    'rationale': (f'PRECONDITION: kernel wants to sell {desired_sell} shares but '
+                                  f'{current_short_calls} short calls cover all {current_short_calls*100} '
+                                  f'of your {current_shares} shares (uncovered: 0). '
+                                  f'BTC {calls_to_close} calls first to free {calls_to_close*100} shares '
+                                  f'for sale. Pick calls with lowest extrinsic (closest to ITM) or '
+                                  f'nearest expiry to minimize buyback cost.'),
+                    'priority': 'high',
+                })
+
+        # Build the SHARES order at the SAFE qty (capped, may be 0)
+        effective_qty = capped_sell if side == 'SELL' else abs(share_delta)
+        if effective_qty >= 100:
+            l1 = round(spot * (1.005 if side == 'BUY' else 0.995), 2)
+            l2 = round(spot, 2)
+            l3 = round(spot * (0.995 if side == 'BUY' else 1.005), 2)
+            per_tier_qty = effective_qty // 3
+            cap_note = ''
+            if side == 'SELL' and capped_sell < desired_sell:
+                cap_note = (f' [CAPPED from {desired_sell} → {capped_sell} by covered-calls '
+                            f'constraint; close calls first to sell the rest]')
+            orders.append({
+                'order_type': 'SHARES',
+                'side': side,
+                'symbol': 'UNG',
+                'qty_total': effective_qty,
+                'limit_ladder': [
+                    {'qty': per_tier_qty, 'limit_price': l1},
+                    {'qty': per_tier_qty, 'limit_price': l2},
+                    {'qty': effective_qty - 2*per_tier_qty, 'limit_price': l3},
+                ],
+                'rationale': (f'Rebalance toward {target_total} shares (current {current_shares}, '
+                              f'z={z:+.2f}, mult={mult}). Move 50%/cycle.{cap_note}'),
+                'priority': 'high' if effective_qty >= 200 else 'medium',
+            })
+        elif side == 'SELL' and capped_sell == 0 and desired_sell > 0:
+            # 100% blocked — surface clearly
+            orders.append({
+                'order_type': 'SHARES_SELL_BLOCKED',
+                'side': 'BLOCKED',
+                'symbol': 'UNG',
+                'qty': 0,
+                'rationale': (f'Kernel wants to sell {desired_sell} shares to reach {target_total}, '
+                              f'but ALL {current_shares} shares are covering {current_short_calls} '
+                              f'short calls. Must BTC calls first (see CC_BTC_TO_FREE_SHARES order). '
+                              f'Covered-calls-only rule.'),
+                'priority': 'high',
+            })
 
         # ─── PUT-CALL PARITY SYNTHETIC ALTERNATIVE ────────────────────────
         # Same delta exposure without paying for shares upfront.

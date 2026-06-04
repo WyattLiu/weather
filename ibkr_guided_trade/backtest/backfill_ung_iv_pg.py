@@ -71,65 +71,80 @@ def insert_rows(rows):
 
 
 def process_one_date(args):
-    """Process all strikes for one date. Returns rows-inserted count."""
+    """Process all strikes for one date. Returns rows-inserted count.
+
+    Tries multiple expiries in fallback order: dte_target, +15, +30, +60, then
+    weekly (~7-14 DTE). ThetaData NBBO populates ~2-3 wks before expiry, so
+    on older dates the first ≥30-DTE contract may have no quotes yet.
+    """
     d_str, adj_spot, expirations, dte_target, n_strikes = args
     sf = split_factor_on(d_str)
     real_spot = adj_spot / sf
+    d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
 
-    # Find front-month expiry
-    target_exp = None
-    for exp in expirations:
-        try:
-            exp_d = datetime.strptime(exp, '%Y-%m-%d').date()
-        except Exception:
-            continue
-        d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
-        if (exp_d - d_obj).days >= dte_target:
-            target_exp = exp
-            break
-    if not target_exp:
-        return 0
+    # Build candidate expiry list, ordered by preference (closer to target first,
+    # then longer-dated fallbacks, then weekly fallback as last resort)
+    candidates = []
+    seen = set()
+    for dte_pref in (dte_target, dte_target + 15, dte_target + 30, dte_target + 60, 14, 7):
+        for exp in expirations:
+            try:
+                exp_d = datetime.strptime(exp, '%Y-%m-%d').date()
+            except Exception:
+                continue
+            actual = (exp_d - d_obj).days
+            if actual >= dte_pref and exp not in seen:
+                candidates.append((exp, actual))
+                seen.add(exp)
+                break
 
-    exp_d = datetime.strptime(target_exp, '%Y-%m-%d').date()
-    actual_dte = (exp_d - datetime.strptime(d_str, '%Y-%m-%d').date()).days
-
-    # Skip if already complete (need to fetch strikes-list to know what's possible)
-    try:
-        strikes = get_strikes('UNG', target_exp)
-    except Exception:
+    if not candidates:
         return 0
-    if not strikes:
-        return 0
-    strikes_near = sorted(strikes, key=lambda k: abs(k - real_spot))[:n_strikes*2 + 1]
 
     existing = get_existing_keys(d_str)
-    pending = []
-    for K_real in strikes_near:
-        K_adj = K_real * sf
-        for right in ['C', 'P']:
-            if (target_exp, K_adj, right) in existing:
+
+    # Try each candidate; first one that yields >=3 valid quotes wins
+    for target_exp, actual_dte in candidates:
+        try:
+            strikes = get_strikes('UNG', target_exp)
+        except Exception:
+            continue
+        if not strikes:
+            continue
+        strikes_near = sorted(strikes, key=lambda k: abs(k - real_spot))[:n_strikes*2 + 1]
+        pending = []
+        for K_real in strikes_near:
+            K_adj = K_real * sf
+            for right in ['C', 'P']:
+                if (target_exp, K_adj, right) in existing:
+                    continue
+                pending.append((K_real, K_adj, right))
+        if not pending:
+            # Already complete for this expiry — count as success, no fallback needed
+            return 0
+
+        rows_to_insert = []
+        for K_real, K_adj, right in pending:
+            mid = get_quote_eod('UNG', target_exp, K_real, right, d_str)
+            if mid is None or mid <= 0:
                 continue
-            pending.append((K_real, K_adj, right))
-    if not pending:
-        return 0
+            T = actual_dte / 365
+            iv = bs_implied_vol(mid, real_spot, K_real, T, 0.045, right)
+            if iv is None or not (0.05 < iv < 3.0):
+                continue
+            rows_to_insert.append((
+                d_str, target_exp, int(actual_dte),
+                float(round(K_adj, 4)), float(round(K_real, 4)), right,
+                float(round(adj_spot, 4)), float(round(real_spot, 4)),
+                float(round(mid, 4)), float(round(iv, 5)), float(round(sf, 4))
+            ))
 
-    rows_to_insert = []
-    for K_real, K_adj, right in pending:
-        mid = get_quote_eod('UNG', target_exp, K_real, right, d_str)
-        if mid is None or mid <= 0:
-            continue
-        T = actual_dte / 365
-        iv = bs_implied_vol(mid, real_spot, K_real, T, 0.045, right)
-        if iv is None or not (0.05 < iv < 3.0):
-            continue
-        rows_to_insert.append((
-            d_str, target_exp, int(actual_dte),
-            float(round(K_adj, 4)), float(round(K_real, 4)), right,
-            float(round(adj_spot, 4)), float(round(real_spot, 4)),
-            float(round(mid, 4)), float(round(iv, 5)), float(round(sf, 4))
-        ))
+        if len(rows_to_insert) >= 3:
+            # Good enough — this expiry has real data
+            return insert_rows(rows_to_insert)
+        # Otherwise fall through to next candidate expiry
 
-    return insert_rows(rows_to_insert)
+    return 0
 
 
 def main(start, end, dte_target, n_strikes, max_workers):
