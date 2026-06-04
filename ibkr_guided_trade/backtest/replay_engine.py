@@ -383,6 +383,63 @@ def regime(z_val):
 
 
 _IV_SURFACE_CACHE = None  # lazy-loaded once per process
+_REAL_STRIKE_GRID = None  # {(date_str, right): sorted_list_of_strikes_adj}
+
+
+def _load_real_strike_grid():
+    """Load real listed UNG strikes per (date, right) from PG ung_iv_surface.
+    Grouped by date — for each backtest day, we know what strikes existed.
+    Cached once per process.
+    """
+    global _REAL_STRIKE_GRID
+    if _REAL_STRIKE_GRID is not None:
+        return _REAL_STRIKE_GRID
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host='192.168.1.172', port=5432, database='market_scanner',
+            user='postgres', password='shinobi2025', connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT date, option_right, strike_adj FROM ung_iv_surface '
+            'ORDER BY date, option_right, strike_adj'
+        )
+        grid = {}
+        for d, r, k in cur.fetchall():
+            key = (d.isoformat(), r)
+            grid.setdefault(key, []).append(float(k))
+        # Dedupe + sort each key
+        for key in grid:
+            grid[key] = sorted(set(grid[key]))
+        conn.close()
+        _REAL_STRIKE_GRID = grid
+        return grid
+    except Exception:
+        _REAL_STRIKE_GRID = {}
+        return {}
+
+
+def snap_to_real_strike(K, date_str, right='P'):
+    """Snap a computed strike to the nearest REAL listed strike for this date.
+    Returns the snapped strike, or original K if no PG data available.
+    """
+    grid = _load_real_strike_grid()
+    if not grid:
+        return K
+    strikes = grid.get((date_str, right))
+    if not strikes:
+        # Find nearest date with data
+        all_dates = sorted({d for (d, r) in grid.keys() if r == right})
+        if not all_dates:
+            return K
+        # Pick nearest date <= or earliest after
+        prior = [d for d in all_dates if d <= date_str]
+        nearest = prior[-1] if prior else all_dates[0]
+        strikes = grid.get((nearest, right), [])
+        if not strikes:
+            return K
+    return min(strikes, key=lambda s: abs(s - K))
 
 
 def _load_iv_surface():
@@ -1569,6 +1626,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
                 K = round(spot_u * (1 - effective_otm))
+                # REAL STRIKE SNAP — opt-in via use_real_strikes flag
+                if p.get('use_real_strikes'):
+                    K = snap_to_real_strike(K, d_str, 'P')
                 # Tunable open-DTE (default 30; tastytrade rule uses 45).
                 open_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
@@ -1709,6 +1769,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 else:
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
+                if p.get('use_real_strikes'):
+                    K = snap_to_real_strike(K, d_str, 'C')
                 qty = min(call_qty, uncovered_shares // 100)
                 cc_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
@@ -2810,6 +2872,7 @@ STRATEGIES = {
         'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.12, 'rebuild_put_dte': 45,
     },
     'champion_cut_rebuild': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'roll_down': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
@@ -2879,6 +2942,7 @@ STRATEGIES = {
     # IMPROVES everything (Sharpe, return, MDD all better). Cash from
     # rich trims funds bigger accumulation at lows.
     'champion_aggressive_z': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
@@ -2903,6 +2967,7 @@ STRATEGIES = {
     # CHAMPION + MOMENTUM GATES (preserve spike capture by not forcing
     # ITM assignment / elevator close during confirmed parabolic move)
     'champion_20pct_protected_mom_gated': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
@@ -2991,6 +3056,7 @@ STRATEGIES = {
         'upside_wing_otm_pct': 0.30,  # 30% above spot
     },
     'champion_20pct_protected_wing_all': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
@@ -3085,6 +3151,7 @@ STRATEGIES = {
     # HIGH-RETURN BASES + protection layer (cut_rebuild + z_target + shoulder)
     # Goal: retain old champion's 140%+ return profile but cap MDD at <-10%
     'champion_20pct_protected': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,
@@ -3139,6 +3206,7 @@ STRATEGIES = {
     # Mechanics: elevator close (lock spike), shoulder hedge (KOLD in weak
     # seasons), z-target sizing (proactive), dd-trim safety net
     'champion_trifecta': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'roll_down': True,
         'regime_skip_puts_z': -0.5, 'bearish_stack': True, 'boxx': True,
@@ -3386,6 +3454,7 @@ STRATEGIES = {
     # SMOOTH variant — continuous tanh-based z-mult eliminates bucket jumps.
     # Lower daily NAV vol, easier to manage psychologically + operationally.
     'champion_target_25_smooth': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3455,6 +3524,7 @@ STRATEGIES = {
     # z_share_target_pct_nav. Tests user's principle: a good algo's return
     # shouldn't depend heavily on starting capital.
     'champion_premium_harvest_scale_invariant': {
+        'use_real_strikes': True,
         'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,  # floor only
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3488,6 +3558,7 @@ STRATEGIES = {
     # ULTRA-CONSERVATIVE — tightest WF range ever (51pp). Trades return
     # for ultimate predictability across rolling windows.
     'champion_premium_harvest_ultra': {
+        'use_real_strikes': True,
         'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 12,
         'entry_cadence': 2,  # bi-daily (less noise)
         'tp_50': True, 'tp_dynamic': False, 'tp_threshold': 0.4,  # faster exit
@@ -3551,6 +3622,7 @@ STRATEGIES = {
     # DD-TRIM variant — best Sharpe variant from walk-forward (2.73 on full sample)
     # Cuts worst 12mo MDD from -24% to -17% with almost no return cost.
     'champion_target_25_dd_trim': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3579,6 +3651,7 @@ STRATEGIES = {
     # MAX-PROTECTED variant — sacrifices ~10pp ann for worst-window MDD -15%
     # Walk-forward worst 12mo MDD: -15% (vs -24% baseline)
     'champion_target_25_max_protected': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 18, 'call_qty': 15,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3606,6 +3679,7 @@ STRATEGIES = {
     # NAV-AWARE variant — sizes puts/calls as % of NAV (capital-scale invariant)
     # Use this if your account is ~$100K-200K (puts sized to your actual cash)
     'champion_target_25_nav_aware': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3637,6 +3711,7 @@ STRATEGIES = {
     # CASH-START variant — best Sharpe (2.96) + best MDD (-4.4%) per init sweep
     # Use this if starting fresh with all cash; no initial share exposure
     'champion_target_25_cash_start': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 8, 'call_qty': 7,
         'entry_cadence': 1,
         'tp_50': True, 'tp_dynamic': True,
@@ -3666,6 +3741,7 @@ STRATEGIES = {
     # WINDOW-SAFE variant — tighter risk controls for rolling-window MDD safety
     # Trades some return for limiting 12mo MDD < -10% in walk-forward
     'champion_target_25_window_safe': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 10,
         'entry_cadence': 2,  # bi-daily (less leverage than daily=1)
         'tp_50': True, 'tp_dynamic': True,
@@ -3694,6 +3770,7 @@ STRATEGIES = {
     },
     # NEW: IV-SHAPE-AWARE — react to real surface term & skew (default real IV)
     'champion_aggressive_z_iv_shape': {
+        'use_real_strikes': True,
         'otm_put': 0.10, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
         'tp_50': True, 'tp_dynamic': True,
         'roll_down': True, 'roll_up_calls': True,

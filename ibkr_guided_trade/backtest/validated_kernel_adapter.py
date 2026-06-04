@@ -553,49 +553,116 @@ def _beam_per_kernel(spot, z, nav):
     return out
 
 
-def _real_strikes_near(target_K, spot, increment=0.5):
-    """Real UNG strikes are at $0.50 increments (mostly).
-    Return the surrounding strikes that bracket target_K, plus weights.
+_LISTED_STRIKE_CACHE = {'ts': 0.0, 'strikes': None, 'date': None, 'dte': None}
+
+
+def _query_real_listed_strikes(target_dte=45, right='P', tolerance_dte=14):
+    """Query PG ung_iv_surface for the actual listed strikes most recently
+    available near target_dte. Returns sorted list of strike_adj values
+    (in yfinance/adjusted units the engine uses).
+
+    Caches result for 10 minutes to avoid hammering DB on every refresh.
     """
+    import time
+    now = time.time()
+    cache_key = (target_dte, right)
+    cached = _LISTED_STRIKE_CACHE
+    if (cached['strikes'] is not None and now - cached['ts'] < 600
+            and cached.get('dte') == target_dte):
+        return cached['strikes']
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host='192.168.1.172', port=5432, database='market_scanner',
+            user='postgres', password='shinobi2025', connect_timeout=5,
+        )
+        cur = conn.cursor()
+        # Get the latest date in surface with dte close to target
+        cur.execute('SELECT MAX(date) FROM ung_iv_surface')
+        latest_date = cur.fetchone()[0]
+        if not latest_date:
+            conn.close()
+            return None
+        cur.execute(
+            """
+            SELECT DISTINCT strike_adj
+            FROM ung_iv_surface
+            WHERE date = %s AND option_right = %s
+              AND ABS(dte - %s) <= %s
+            ORDER BY strike_adj
+            """,
+            (latest_date, right, target_dte, tolerance_dte),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        strikes = sorted(float(r[0]) for r in rows)
+        if not strikes:
+            return None
+        _LISTED_STRIKE_CACHE.update({
+            'ts': now, 'strikes': strikes,
+            'date': str(latest_date), 'dte': target_dte,
+        })
+        return strikes
+    except Exception:
+        return None
+
+
+def _real_strikes_near(target_K, spot, increment=0.5, available=None):
+    """Real UNG strikes. If `available` (sorted list) provided, snap to those.
+    Otherwise fall back to fixed-increment grid.
+    """
+    if available:
+        # Find bracketing strikes in the real available list
+        below = [s for s in available if s <= target_K]
+        above = [s for s in available if s > target_K]
+        if not below and above:
+            return [(above[0], 1.0)]
+        if not above and below:
+            return [(below[-1], 1.0)]
+        if not above or not below:
+            return [(target_K, 1.0)]  # shouldn't happen
+        lo = below[-1]
+        hi = above[0]
+        if abs(target_K - lo) < 0.01:
+            return [(round(lo, 2), 1.0)]
+        w_upper = (target_K - lo) / (hi - lo)
+        return [(round(lo, 2), 1.0 - w_upper), (round(hi, 2), w_upper)]
+    # Fallback: fixed increment
     lower = int(target_K / increment) * increment
     upper = lower + increment
     if abs(target_K - lower) < 0.01:
         return [(round(lower, 2), 1.0)]
-    # Linear interpolation weight
     w_upper = (target_K - lower) / increment
-    w_lower = 1.0 - w_upper
-    return [(round(lower, 2), w_lower), (round(upper, 2), w_upper)]
+    return [(round(lower, 2), 1.0 - w_upper), (round(upper, 2), w_upper)]
 
 
-def _strike_mix_for_target_otm(target_otm_pct, spot, total_qty, increment=0.5):
+def _strike_mix_for_target_otm(target_otm_pct, spot, total_qty,
+                                increment=0.5, available_strikes=None):
     """Build a strike mix that approximates the ideal target OTM%.
-
-    Returns list of {strike, qty} entries summing to total_qty.
-    If target falls between real strikes, splits qty proportionally so the
-    effective avg OTM% matches the target.
+    Uses REAL listed strikes from PG if available, else fixed increments.
     """
     target_K = spot * (1 - target_otm_pct)
-    weighted = _real_strikes_near(target_K, spot, increment)
+    weighted = _real_strikes_near(target_K, spot, increment, available_strikes)
     if total_qty < 2 or len(weighted) == 1:
-        # Single strike — pick closest
         best_K = min((s for s, _ in weighted),
                      key=lambda s: abs(s - target_K))
         return [{'strike': best_K, 'qty': total_qty,
-                 'effective_otm_pct': round((1 - best_K/spot) * 100, 2)}]
-    # Split across both with rounded quantities
+                 'effective_otm_pct': round((1 - best_K/spot) * 100, 2),
+                 'source': 'pg_real' if available_strikes else 'fixed_increment'}]
     qty_upper = max(1, round(total_qty * weighted[1][1]))
     qty_lower = total_qty - qty_upper
     if qty_lower < 1:
         qty_lower = 1
         qty_upper = total_qty - 1
-    eff_K = (weighted[0][0] * qty_lower + weighted[1][0] * qty_upper) / total_qty
     return [
         {'strike': weighted[0][0], 'qty': qty_lower,
          'effective_otm_pct': round((1 - weighted[0][0]/spot) * 100, 2),
-         'target_weight': round(weighted[0][1], 2)},
+         'target_weight': round(weighted[0][1], 2),
+         'source': 'pg_real' if available_strikes else 'fixed_increment'},
         {'strike': weighted[1][0], 'qty': qty_upper,
          'effective_otm_pct': round((1 - weighted[1][0]/spot) * 100, 2),
-         'target_weight': round(weighted[1][1], 2)},
+         'target_weight': round(weighted[1][1], 2),
+         'source': 'pg_real' if available_strikes else 'fixed_increment'},
     ]
 
 
