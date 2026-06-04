@@ -221,6 +221,23 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     current_short_calls = 0
     current_short_puts = 0
     current_put_collateral = 0.0
+    # STATISTICAL ASSIGNMENT MODEL — apply to BOTH short calls and short puts
+    # so the dashboard surfaces probability per leg, and aggregate buckets
+    # feed downstream decisions (don't pay BTC for what assignment does free).
+    pending_assign_shares = 0       # call-side: shares auto-divesting via assignment
+    pending_assign_calls = 0
+    pending_put_assign_shares = 0   # put-side: shares we'd be FORCED to buy
+    pending_put_assign_calls = 0
+    likely_assign_legs = []
+    put_assign_legs = []
+    leg_assignments = []            # full per-leg breakdown for dashboard
+    from datetime import date as _d_today
+    from assignment_model import assignment_probability  # type: ignore
+    _today_iso = _d_today.today()
+    # Quick IV lookup (fallback 0.50 if no surface). We use this for every
+    # short leg's assignment-prob calculation.
+    surf = _iv_shape_today(spot) or {}
+    base_iv = float(surf.get('atm_iv') or 0.50)
     if positions:
         for p in positions:
             sym = p.get('symbol', '').upper()
@@ -229,11 +246,54 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             qty = int(p.get('quantity', 0) or 0)
             if p.get('is_option'):
                 K = float(p.get('strike') or 0)
-                if p.get('option_type') == 'CALL':
+                try:
+                    exp_d = _d_today.fromisoformat(p.get('expiry', ''))
+                    dte = (exp_d - _today_iso).days
+                except Exception:
+                    dte = 999
+                # Market premium per share — convert position market_value
+                mv = float(p.get('market_value') or 0)
+                prem_per_share = abs(mv) / (abs(qty) * 100) if qty != 0 else None
+                right = p.get('option_type', '').upper()
+                assign = assignment_probability(K=K, spot=spot, dte=dte, iv=base_iv,
+                                                right=right, premium_market=prem_per_share)
+                leg_record = {
+                    'right': right, 'qty': abs(qty), 'strike': K,
+                    'expiry': p.get('expiry'), 'dte': dte,
+                    'p_assign': assign['p_assign'],
+                    'regime': assign['regime'],
+                    'intrinsic': assign['intrinsic'],
+                    'extrinsic': assign['extrinsic'],
+                    'mkt_prem_per_share': prem_per_share,
+                }
+                leg_assignments.append(leg_record)
+
+                if right == 'CALL':
                     current_short_calls += abs(qty)
+                    # Call assignment → shares auto-sold at K (kernel-favorable
+                    # when reducing exposure). Count as "pending assignment" if
+                    # p_assign >= 0.55 (likely+ regime).
+                    if assign['p_assign'] >= 0.55:
+                        pending_assign_shares += abs(qty) * 100
+                        pending_assign_calls += abs(qty)
+                        likely_assign_legs.append({
+                            'qty': abs(qty), 'strike': K, 'expiry': p.get('expiry'),
+                            'dte': dte, 'p_assign': assign['p_assign'],
+                            'itm_pct': round((spot - K)/spot*100, 2) if spot > 0 else 0,
+                        })
                 else:
                     current_short_puts += abs(qty)
                     current_put_collateral += abs(qty) * 100 * K
+                    # Put assignment → shares auto-BOUGHT at K. This INCREASES
+                    # exposure (opposite of what kernel may want during cut).
+                    if assign['p_assign'] >= 0.55:
+                        pending_put_assign_shares += abs(qty) * 100
+                        pending_put_assign_calls += abs(qty)
+                        put_assign_legs.append({
+                            'qty': abs(qty), 'strike': K, 'expiry': p.get('expiry'),
+                            'dte': dte, 'p_assign': assign['p_assign'],
+                            'itm_pct': round((K - spot)/spot*100, 2) if spot > 0 else 0,
+                        })
             else:
                 current_shares += qty
 
@@ -242,6 +302,13 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     out['current_short_calls'] = current_short_calls
     out['current_short_puts'] = current_short_puts
     out['current_put_collateral'] = current_put_collateral
+    out['pending_assign_shares'] = pending_assign_shares
+    out['pending_assign_calls'] = pending_assign_calls
+    out['pending_put_assign_shares'] = pending_put_assign_shares
+    out['pending_put_assign_calls'] = pending_put_assign_calls
+    out['likely_assign_legs'] = likely_assign_legs
+    out['put_assign_legs'] = put_assign_legs
+    out['leg_assignments'] = leg_assignments     # full per-leg detail
     # Constraint enforcement — applies across ALL kernels, not kernel-specific
     out['constraints'] = {
         'covered_calls_only': True,  # never short calls without shares to cover
@@ -453,8 +520,10 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     try:
         out['actionable_orders'] = _build_actionable_orders(
             kernel_info, spot, nav or 100000, current_shares,
-            current_short_calls,  # NEW: pass real CC count
-            current_put_collateral, snap,
+            current_short_calls, current_put_collateral, snap,
+            pending_assign_shares=pending_assign_shares,
+            pending_assign_calls=pending_assign_calls,
+            likely_assign_legs=likely_assign_legs,
         )
     except Exception as e:
         out['actionable_orders_error'] = str(e)
@@ -742,10 +811,18 @@ def _strike_mix_for_target_otm(target_otm_pct, spot, total_qty,
 
 
 def _build_actionable_orders(kernel_info, spot, nav, current_shares,
-                              current_short_calls, current_put_collateral, snap):
+                              current_short_calls, current_put_collateral, snap,
+                              pending_assign_shares=0, pending_assign_calls=0,
+                              likely_assign_legs=None):
     """Build directly-executable orders specific to the active kernel.
     Includes OSI option symbols, limit prices, qtys based on current NAV.
+
+    Assignment-aware: pending_assign_shares is the count of shares that will
+    auto-divest within ~7d via ITM call assignment. The builder subtracts
+    these from any BTC-to-free-shares precondition so we don't pay BTC for
+    work that assignment does for free.
     """
+    likely_assign_legs = likely_assign_legs or []
     from datetime import date as _date, timedelta
     import math
     try:
@@ -802,23 +879,48 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
         capped_sell = min(desired_sell, max_safe_sell) if side == 'SELL' else 0
         shortfall = desired_sell - capped_sell  # shares we WANT to sell but can't yet
 
-        if side == 'SELL' and shortfall > 0:
-            # Emit a precondition order: BTC enough short calls to free shares first
-            calls_to_close = (shortfall + 99) // 100  # round up
-            calls_to_close = min(calls_to_close, current_short_calls)
+        # ASSIGNMENT-AWARE: imminent ITM short calls will auto-divest shares
+        # for free. Subtract that from the shortfall before suggesting any BTC.
+        assignment_will_handle = min(pending_assign_shares, shortfall) if side == 'SELL' else 0
+        residual_shortfall = max(0, shortfall - assignment_will_handle)
+
+        if side == 'SELL' and assignment_will_handle > 0:
+            # Surface the "wait for assignment" plan as a first-class order
+            legs_desc = '; '.join(
+                f"{l['qty']}× ${l['strike']:.2f} {l['expiry']} ({l['dte']}d, +{l['itm_pct']}% ITM)"
+                for l in likely_assign_legs[:5]
+            )
+            orders.append({
+                'order_type': 'WAIT_FOR_ASSIGNMENT',
+                'side': 'HOLD',
+                'symbol': 'UNG (ITM short calls near expiry)',
+                'qty': pending_assign_calls,
+                'qty_total': pending_assign_shares,
+                'rationale': (f'Kernel wants to sell {desired_sell} shares. '
+                              f'{pending_assign_calls} ITM short calls (≤14d DTE) will '
+                              f'auto-assign {pending_assign_shares} shares — '
+                              f'don\'t pay BTC for what assignment does for free. '
+                              f'Legs: {legs_desc}.'),
+                'priority': 'high',
+            })
+
+        if side == 'SELL' and residual_shortfall > 0:
+            # Only after assignment, suggest BTC for whatever still doesn't fit
+            calls_to_close = (residual_shortfall + 99) // 100
+            calls_to_close = min(calls_to_close, current_short_calls - pending_assign_calls)
             if calls_to_close > 0:
                 orders.append({
                     'order_type': 'CC_BTC_TO_FREE_SHARES',
                     'side': 'BUY_TO_CLOSE',
-                    'symbol': 'UNG short calls (pick lowest-extrinsic/nearest-ITM)',
+                    'symbol': 'UNG short calls (pick lowest-extrinsic, non-assigning leg)',
                     'qty': calls_to_close,
-                    'rationale': (f'PRECONDITION: kernel wants to sell {desired_sell} shares but '
-                                  f'{current_short_calls} short calls cover all {current_short_calls*100} '
-                                  f'of your {current_shares} shares (uncovered: 0). '
-                                  f'BTC {calls_to_close} calls first to free {calls_to_close*100} shares '
-                                  f'for sale. Pick calls with lowest extrinsic (closest to ITM) or '
-                                  f'nearest expiry to minimize buyback cost.'),
-                    'priority': 'high',
+                    'rationale': (f'RESIDUAL precondition (after assignment): kernel wants to sell '
+                                  f'{desired_sell} shares; assignment handles {assignment_will_handle}; '
+                                  f'still short {residual_shortfall} shares. '
+                                  f'BTC {calls_to_close} more calls (pick legs that are NOT in the '
+                                  f'pending-assignment list — those will assign anyway). '
+                                  f'Prefer lowest-extrinsic legs to minimize buyback cost.'),
+                    'priority': 'medium',
                 })
 
         # Build the SHARES order at the SAFE qty (capped, may be 0)

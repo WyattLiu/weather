@@ -26,6 +26,7 @@ from seasonal_z import add_seasonal_factors  # type: ignore
 from iv_model import precompute_realized_vol, iv_for_quote  # type: ignore
 from attribution import attribute_trades, print_attribution  # type: ignore
 from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
+from assignment_model import assignment_probability, expected_value_wait_vs_btc  # type: ignore
 from scenario_distribution import ScenarioDistribution  # type: ignore
 from quality_scorer import score_portfolio_quality  # type: ignore
 
@@ -667,27 +668,64 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 free_shares = s['shares'] - min_shares_required
                 if desired_trim > free_shares and p.get('cc_aware_cut', True):
                     needed_lots = (desired_trim - free_shares + 99) // 100
-                    # Sort CCs by ascending DTE (close near-expiry first = cheapest)
-                    s['short_calls'].sort(key=lambda sc: (idx - sc['entry']).days - sc['dte'])
-                    while needed_lots > 0 and s['short_calls']:
-                        sc = s['short_calls'][0]
+
+                    # ASSIGNMENT-AWARE FILTER (statistical, not heuristic):
+                    # Use BSM+extrinsic model on each leg. Calls with
+                    # p_assign ≥ 0.55 are "likely+" — defer to assignment.
+                    pending_assign_lots = 0
+                    leg_p_assign = {}  # idx → p_assign
+                    for ci, sc in enumerate(s['short_calls']):
                         days_left = max(1, sc['dte'] - (idx - sc['entry']).days)
-                        T_left = days_left / 365
-                        cur_prem = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], days_left, 'C'))
-                        close_lots = min(sc['qty'], needed_lots)
-                        debit = cur_prem * 100 * close_lots + close_lots * SPREAD_OPTION * 100
-                        if s['cash'] < debit + 500:
-                            break
-                        s['cash'] -= debit
-                        pnl = sc['entry_prem'] * 100 * close_lots - debit
-                        trades.append({'date': idx, 'type': 'CC_CLOSE_FOR_CUT',
-                                       'pnl': pnl, 'qty': close_lots, 'K': sc['K'],
-                                       'spot': spot_u, 'dd_pct': dd_pct})
-                        sc['qty'] -= close_lots
-                        needed_lots -= close_lots
-                        if sc['qty'] <= 0:
-                            s['short_calls'].pop(0)
-                    # Recompute free shares after closing
+                        leg_iv = iv_at(sc['K'], days_left, 'C')
+                        leg_prem = bs_call(spot_u, sc['K'], days_left/365, leg_iv)
+                        a = assignment_probability(K=sc['K'], spot=spot_u, dte=days_left,
+                                                    iv=leg_iv, right='CALL',
+                                                    premium_market=leg_prem)
+                        leg_p_assign[ci] = a['p_assign']
+                        if a['p_assign'] >= 0.55:
+                            pending_assign_lots += sc['qty']
+
+                    deferred_lots = min(pending_assign_lots, needed_lots)
+                    needed_lots -= deferred_lots
+                    if deferred_lots > 0:
+                        trades.append({'date': idx, 'type': 'CC_DEFER_TO_ASSIGN',
+                                       'pnl': 0.0, 'qty': deferred_lots,
+                                       'spot': spot_u, 'dd_pct': dd_pct,
+                                       'note': 'statistical p_assign≥0.55 → wait for natural assignment'})
+
+                    # For RESIDUAL lots, rank by EV(wait) - EV(btc) and BTC
+                    # only legs where btc is genuinely cheaper.
+                    if needed_lots > 0:
+                        candidates = []
+                        for ci, sc in enumerate(s['short_calls']):
+                            if leg_p_assign.get(ci, 0) >= 0.55:
+                                continue  # already deferred
+                            days_left = max(1, sc['dte'] - (idx - sc['entry']).days)
+                            leg_iv = iv_at(sc['K'], days_left, 'C')
+                            leg_prem = bs_call(spot_u, sc['K'], days_left/365, leg_iv)
+                            ev = expected_value_wait_vs_btc(
+                                K=sc['K'], spot=spot_u, dte=days_left, iv=leg_iv,
+                                right='CALL', entry_prem=sc['entry_prem'],
+                                premium_market=leg_prem, contracts=sc['qty'])
+                            # Prefer BTC where ev_btc > ev_wait (i.e. ev_diff < 0)
+                            candidates.append((ev['ev_diff_wait_minus_btc'], ci, sc, leg_prem))
+                        # Sort ascending diff → BTC the leg where wait is WORST
+                        candidates.sort(key=lambda x: x[0])
+                        for _, ci, sc, cur_prem in candidates:
+                            if needed_lots <= 0:
+                                break
+                            close_lots = min(sc['qty'], needed_lots)
+                            debit = cur_prem * 100 * close_lots + close_lots * SPREAD_OPTION * 100
+                            if s['cash'] < debit + 500:
+                                continue
+                            s['cash'] -= debit
+                            pnl = sc['entry_prem'] * 100 * close_lots - debit
+                            trades.append({'date': idx, 'type': 'CC_CLOSE_FOR_CUT',
+                                           'pnl': pnl, 'qty': close_lots, 'K': sc['K'],
+                                           'spot': spot_u, 'dd_pct': dd_pct})
+                            sc['qty'] -= close_lots
+                            needed_lots -= close_lots
+                        s['short_calls'] = [c for c in s['short_calls'] if c['qty'] > 0]
                     short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
                     min_shares_required = short_call_lots * 100
                     free_shares = s['shares'] - min_shares_required
@@ -1014,6 +1052,25 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if bool(row.get('ung_uptrend', False)):
                     # Uptrend → let it recover, skip the roll
                     roll_eligible = False
+            # ASSIGNMENT-AWARE roll skip: if put is deep ITM AND we WANT shares
+            # at this strike (e.g., extreme cheap regime), let it assign rather
+            # than roll. Wheel mechanic: assignment = "accumulate at the strike
+            # we picked". Only skip when kernel wants accumulation (regime cheap).
+            if roll_eligible and p.get('assignment_aware_put_skip', True):
+                leg_iv = iv_at(sp['K'], int(dte_left), 'P')
+                leg_prem = bs_put(spot_u, sp['K'], T_left, leg_iv)
+                a = assignment_probability(K=sp['K'], spot=spot_u, dte=int(dte_left),
+                                            iv=leg_iv, right='PUT',
+                                            premium_market=leg_prem)
+                # If assignment is certain/very-likely AND extrinsic is gone,
+                # rolling pays the loss now instead of letting wheel mechanic
+                # complete. Skip the roll in those cases.
+                if a['p_assign'] >= 0.85 and a['extrinsic'] < 0.10:
+                    roll_eligible = False
+                    trades.append({'date': idx, 'type': 'PUT_DEFER_TO_ASSIGN',
+                                   'pnl': 0.0, 'qty': sp['qty'], 'K': sp['K'],
+                                   'spot': spot_u, 'p_assign': a['p_assign'],
+                                   'note': 'deep-ITM low-extrinsic → assignment cheaper than roll'})
             if roll_eligible:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
