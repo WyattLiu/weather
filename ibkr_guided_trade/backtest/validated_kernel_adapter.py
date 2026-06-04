@@ -835,9 +835,39 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
     z = snap['z_surprise']
     today = _date.today()
     # Target expiry: 45 DTE → Friday closest to that date
-    target_date = today + timedelta(days=sp.get('open_dte', 45))
-    while target_date.weekday() != 4:
-        target_date += timedelta(days=1)
+    # LIQUIDITY-AWARE EXPIRY SELECTION:
+    # Try live chain (yfinance) first — picks an expiration that actually
+    # has open contracts. Fallback to "nearest 3rd-Friday monthly" which
+    # is the most reliably liquid expiry for UNG.
+    target_dte_pref = sp.get('open_dte', 45)
+    target_date = None
+    try:
+        chain = _query_live_chain(target_dte=target_dte_pref, right='P')
+        if chain and chain.get('strikes'):
+            target_date = _date.fromisoformat(chain['expiration'])
+    except Exception:
+        target_date = None
+    if target_date is None:
+        # Fallback: nearest monthly = 3rd Friday of nearest month to target DTE
+        ideal = today + timedelta(days=target_dte_pref)
+        # Find 3rd Friday of ideal.month
+        def _third_friday(year, month):
+            from datetime import date as _date2
+            d = _date2(year, month, 1)
+            # 1st Friday
+            offset = (4 - d.weekday()) % 7
+            return _date2(year, month, 1 + offset + 14)
+        candidates = []
+        for delta in (-1, 0, 1):
+            y, m = ideal.year, ideal.month + delta
+            if m < 1:  y -= 1; m += 12
+            if m > 12: y += 1; m -= 12
+            try:
+                candidates.append(_third_friday(y, m))
+            except Exception:
+                continue
+        # Pick the candidate closest to ideal (prefer post-ideal if tie)
+        target_date = min(candidates, key=lambda d: (abs((d - ideal).days), -d.toordinal()))
     exp_str = target_date.isoformat()
     exp_osi = target_date.strftime('%y%m%d')
 
