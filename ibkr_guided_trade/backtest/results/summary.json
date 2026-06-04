@@ -146,6 +146,13 @@
     "max_dd_pct": -4.725565639006931,
     "sharpe": 2.76838359196382
   },
+  "champion_premium_harvest_scale_invariant": {
+    "final": 746577.2902522613,
+    "return_pct": 134.71958244274478,
+    "annual_pct": 18.606875359878927,
+    "max_dd_pct": -3.5210185295899907,
+    "sharpe": 2.9100523126000373
+  },
   "champion_premium_harvest_ultra": {
     "final": 677639.2891571992,
     "return_pct": 113.04587358133134,
@@ -205,5 +212,5 @@
   "ung_return_pct": -74.86226018353807,
   "initial_nav": 318072.0085144043,
   "years": 5.0,
-  "updated_at": "2026-06-03T22:48:38.649950"
+  "updated_at": "2026-06-03T23:12:28.987347"
 }
