@@ -238,6 +238,22 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     # short leg's assignment-prob calculation.
     surf = _iv_shape_today(spot) or {}
     base_iv = float(surf.get('atm_iv') or 0.50)
+    # SURGE-Z for mean-reversion adjustment in assignment model.
+    # Compute spot's z-score against recent 20d MA. Big positive z → spot
+    # surged → calls less likely to assign (might revert).
+    surge_z = None
+    try:
+        import pandas as _pd
+        _df = _pd.read_csv(os.path.join(THIS_DIR, 'cache', 'master_dataset.csv'),
+                            index_col=0, parse_dates=True)
+        recent = _df['UNG'].dropna().tail(20)
+        if len(recent) >= 10:
+            ma, sd = recent.mean(), recent.std()
+            if sd > 0:
+                surge_z = float((spot - ma) / sd)
+    except Exception as _e:
+        surge_z = None
+    out['surge_z'] = surge_z
     if positions:
         for p in positions:
             sym = p.get('symbol', '').upper()
@@ -256,7 +272,8 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                 prem_per_share = abs(mv) / (abs(qty) * 100) if qty != 0 else None
                 right = p.get('option_type', '').upper()
                 assign = assignment_probability(K=K, spot=spot, dte=dte, iv=base_iv,
-                                                right=right, premium_market=prem_per_share)
+                                                right=right, premium_market=prem_per_share,
+                                                mean_reversion_z=surge_z)
                 leg_record = {
                     'right': right, 'qty': abs(qty), 'strike': K,
                     'expiry': p.get('expiry'), 'dte': dte,
@@ -677,14 +694,32 @@ def _query_live_chain(target_dte=45, right='P', tolerance_dte=14):
         chain = ung.option_chain(best_exp)
         side = chain.puts if right == 'P' else chain.calls
         strikes = sorted(float(s) for s in side['strike'].unique() if 1 <= s <= 50)
+        def _safe_int(v):
+            try:
+                import math
+                if v is None: return 0
+                v = float(v)
+                if math.isnan(v): return 0
+                return int(v)
+            except Exception:
+                return 0
+        def _safe_float(v):
+            try:
+                import math
+                if v is None: return 0.0
+                v = float(v)
+                if math.isnan(v): return 0.0
+                return v
+            except Exception:
+                return 0.0
         liquidity = {}
         for _, row in side.iterrows():
             K = float(row['strike'])
             liquidity[K] = {
-                'bid': float(row.get('bid', 0) or 0),
-                'ask': float(row.get('ask', 0) or 0),
-                'vol': int(row.get('volume', 0) or 0),
-                'oi': int(row.get('openInterest', 0) or 0),
+                'bid': _safe_float(row.get('bid')),
+                'ask': _safe_float(row.get('ask')),
+                'vol': _safe_int(row.get('volume')),
+                'oi': _safe_int(row.get('openInterest')),
             }
         result = {
             'strikes': strikes, 'expiration': best_exp,
@@ -1110,9 +1145,28 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
 
     if max_qty >= 1:
         # MIX-AND-MATCH: split across nearest real strikes so effective
-        # OTM matches the kernel's ideal target.
+        # OTM matches the kernel's ideal target. CRITICAL: use real strikes
+        # for the CHOSEN expiry, not a generic grid — different expiries
+        # list different strikes (e.g., monthly expiries are integer-only
+        # while weeklies may include half-strikes).
         target_otm = (spot - K) / spot
-        strike_mix = _strike_mix_for_target_otm(target_otm, spot, max_qty)
+        live_strikes_for_exp = None
+        try:
+            live_chain = _query_live_chain(target_dte=(target_date - today).days, right='P')
+            if live_chain and live_chain.get('expiration') == exp_str:
+                live_strikes_for_exp = live_chain.get('strikes')
+        except Exception:
+            live_strikes_for_exp = None
+        # Infer increment from the strike list (median spacing) — falls back to 0.5
+        inc = 0.5
+        if live_strikes_for_exp and len(live_strikes_for_exp) >= 2:
+            diffs = [live_strikes_for_exp[i+1] - live_strikes_for_exp[i]
+                     for i in range(len(live_strikes_for_exp)-1)]
+            diffs.sort()
+            inc = diffs[len(diffs)//2]  # median
+        strike_mix = _strike_mix_for_target_otm(target_otm, spot, max_qty,
+                                                 increment=inc,
+                                                 available_strikes=live_strikes_for_exp)
         # Build OSI legs for each strike in the mix
         legs = []
         total_credit = 0

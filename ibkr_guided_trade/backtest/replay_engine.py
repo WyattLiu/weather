@@ -163,6 +163,10 @@ def precompute_factor_z(df):
         # Falling-knife signals: 20d low + 5d momentum
         df['ung_20d_low'] = df['UNG'].rolling(20).min()
         df['ung_at_20d_low'] = df['UNG'] <= df['ung_20d_low'] * 1.005
+        # Surge-z for assignment model: spot vs 20d MA/sd (mean-reversion signal)
+        _ma20 = df['UNG'].rolling(20).mean()
+        _sd20 = df['UNG'].rolling(20).std()
+        df['ung_surge_z'] = ((df['UNG'] - _ma20) / _sd20.replace(0, float('nan'))).fillna(0.0)
         df['ung_5d_mom'] = df['UNG'].pct_change(5)
         df['ung_30d_return'] = df['UNG'].pct_change(30)  # for grind-down detection
         # 60d high (for called-away cycle peak detection)
@@ -674,13 +678,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     # p_assign ≥ 0.55 are "likely+" — defer to assignment.
                     pending_assign_lots = 0
                     leg_p_assign = {}  # idx → p_assign
+                    _surge_z = float(row.get('ung_surge_z') or 0.0)
                     for ci, sc in enumerate(s['short_calls']):
                         days_left = max(1, sc['dte'] - (idx - sc['entry']).days)
                         leg_iv = iv_at(sc['K'], days_left, 'C')
                         leg_prem = bs_call(spot_u, sc['K'], days_left/365, leg_iv)
                         a = assignment_probability(K=sc['K'], spot=spot_u, dte=days_left,
                                                     iv=leg_iv, right='CALL',
-                                                    premium_market=leg_prem)
+                                                    premium_market=leg_prem,
+                                                    mean_reversion_z=_surge_z)
                         leg_p_assign[ci] = a['p_assign']
                         if a['p_assign'] >= 0.55:
                             pending_assign_lots += sc['qty']
@@ -1061,7 +1067,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 leg_prem = bs_put(spot_u, sp['K'], T_left, leg_iv)
                 a = assignment_probability(K=sp['K'], spot=spot_u, dte=int(dte_left),
                                             iv=leg_iv, right='PUT',
-                                            premium_market=leg_prem)
+                                            premium_market=leg_prem,
+                                            mean_reversion_z=float(row.get('ung_surge_z') or 0.0))
                 # If assignment is certain/very-likely AND extrinsic is gone,
                 # rolling pays the loss now instead of letting wheel mechanic
                 # complete. Skip the roll in those cases.

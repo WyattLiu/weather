@@ -25,7 +25,8 @@ def _norm_cdf(x: float) -> float:
 
 def assignment_probability(K: float, spot: float, dte: int, iv: float,
                             right: str, premium_market: Optional[float] = None,
-                            r: float = 0.045) -> dict:
+                            r: float = 0.045,
+                            mean_reversion_z: Optional[float] = None) -> dict:
     """Return a structured P(assignment) for one short option leg.
 
     Args:
@@ -100,7 +101,24 @@ def assignment_probability(K: float, spot: float, dte: int, iv: float,
             elif itm_pct > 5 and dte <= 14:
                 p_early_kicker = 0.08
 
-    p_assign = min(0.99, p_itm + p_early_kicker)
+    # SURGE-AWARE ADJUSTMENT (mean-reversion blend):
+    # BSM uses risk-neutral drift; if there's been a large recent move
+    # (mean_reversion_z != 0), realized drift differs and the option is
+    # more likely to revert. Scale p_itm by a soft factor:
+    #   - call assignment: discounted when spot >> recent mean (likely to fall back → expire OTM)
+    #   - put assignment:  discounted when spot << recent mean (likely to rise → expire OTM)
+    # The factor: 1 - 0.25 * |z| clipped to [0.4, 1.0] when the move is
+    # AGAINST the option's intrinsic direction. Zero adjustment otherwise.
+    mr_factor = 1.0
+    if mean_reversion_z is not None and dte <= 30:
+        z = mean_reversion_z
+        if right == 'CALL' and z > 0.5:
+            # Spot pumped → calls deeper ITM but may revert down
+            mr_factor = max(0.4, 1.0 - 0.25 * z)
+        elif right == 'PUT' and z < -0.5:
+            # Spot dumped → puts deeper ITM but may revert up
+            mr_factor = max(0.4, 1.0 + 0.25 * z)
+    p_assign = min(0.99, p_itm * mr_factor + p_early_kicker)
 
     if p_assign >= 0.85:    regime = 'cert'
     elif p_assign >= 0.55:  regime = 'likely'
@@ -112,6 +130,7 @@ def assignment_probability(K: float, spot: float, dte: int, iv: float,
         'p_expiry_itm': round(p_itm, 4),
         'p_early_kicker': round(p_early_kicker, 4),
         'p_assign': round(p_assign, 4),
+        'mr_factor': round(mr_factor, 3),
         'intrinsic': round(intrinsic, 4),
         'extrinsic': round(extrinsic, 4),
         'regime': regime,
