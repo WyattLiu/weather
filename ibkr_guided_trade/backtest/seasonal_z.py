@@ -11,26 +11,51 @@ import pandas as pd
 import numpy as np
 
 
-def fit_seasonal_storage(df: pd.DataFrame) -> pd.Series:
+def fit_seasonal_storage(df: pd.DataFrame, point_in_time: bool = True) -> pd.Series:
     """For each row, compute expected storage based on day-of-year.
 
-    Uses median storage per DOY across all available history. Returns
-    a series indexed by df.index with the seasonal expectation.
+    POINT-IN-TIME mode (default): for each date D, the expected storage
+    is computed using ONLY data BEFORE D. Eliminates the look-ahead bias
+    where today's z used future seasonal medians.
+
+    Set point_in_time=False to use whole-sample median (faster but leaks
+    future info — only valid for non-trading analysis like data viz).
     """
     if 'eia_storage_weekly' not in df.columns:
         return pd.Series(dtype=float, index=df.index)
 
-    # Group by day-of-year and take median
     df2 = df.copy()
     df2['doy'] = pd.DatetimeIndex(df2.index).dayofyear
-    storage_by_doy = df2.groupby('doy')['eia_storage_weekly'].median()
 
-    # Smooth (rolling 14-day) to remove noise
-    storage_by_doy = storage_by_doy.rolling(14, min_periods=1, center=True).mean()
+    if not point_in_time:
+        # OLD behavior — uses future data. Look-ahead bias.
+        storage_by_doy = df2.groupby('doy')['eia_storage_weekly'].median()
+        storage_by_doy = storage_by_doy.rolling(14, min_periods=1, center=True).mean()
+        return df2['doy'].map(storage_by_doy)
 
-    # Map each date back to its expected storage
-    expected = df2['doy'].map(storage_by_doy)
-    return expected
+    # POINT-IN-TIME: for each date, compute median across PRIOR years' same DOY.
+    # Need at least 1 prior year of data; until then, use NaN (or fall back to
+    # raw value so engine just doesn't trade on z).
+    expanding_medians = {}
+    out = pd.Series(index=df2.index, dtype=float)
+    sorted_idx = df2.index.sort_values()
+    for d in sorted_idx:
+        doy_d = d.timetuple().tm_yday
+        # All PRIOR rows with this DOY (or nearby ±7 days for smoothing)
+        prior = df2.loc[df2.index < d]
+        if len(prior) == 0:
+            out.loc[d] = pd.NA
+            continue
+        prior_doy = prior['doy']
+        # ±7-day window around target DOY
+        mask = ((prior_doy - doy_d).abs() <= 7) | \
+               ((prior_doy - doy_d + 365).abs() <= 7) | \
+               ((prior_doy - doy_d - 365).abs() <= 7)
+        if mask.sum() == 0:
+            out.loc[d] = pd.NA
+        else:
+            out.loc[d] = prior.loc[mask, 'eia_storage_weekly'].median()
+    return out
 
 
 def compute_seasonal_z(series: pd.Series, df: pd.DataFrame,

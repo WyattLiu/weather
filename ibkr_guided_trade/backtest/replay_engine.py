@@ -922,6 +922,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if rv30 > 0.80:   tp_thresh = 0.7
                     elif rv30 < 0.40: tp_thresh = 0.3
                     else:             tp_thresh = 0.5
+                # GRIND-AWARE TP: during slow chronic declines, exit puts
+                # earlier (lower tp_thresh = exit at higher premium-capture %).
+                if p.get('grind_tp_accelerate') and detect_grind_down(row):
+                    tp_thresh = min(tp_thresh, 0.3)
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 if cv < sp['entry_prem'] * tp_thresh:
@@ -1000,6 +1004,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     if rv30 > 0.80:   tp_thresh = 0.7
                     elif rv30 < 0.40: tp_thresh = 0.3
                     else:             tp_thresh = 0.5
+                # GRIND-AWARE TP: during slow chronic declines, exit puts
+                # earlier (lower tp_thresh = exit at higher premium-capture %).
+                if p.get('grind_tp_accelerate') and detect_grind_down(row):
+                    tp_thresh = min(tp_thresh, 0.3)
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 if cv < sc['entry_prem'] * tp_thresh:
