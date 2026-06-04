@@ -925,35 +925,8 @@ async function refresh() {
     cv.className = 'card-value ' + (cp>0.8?'negative':cp>0.5?'warn':'positive');
     $('collat-warn').innerText = cp>0.8 ? '⚠ over-leveraged' : cp>0.5 ? 'elevated' : 'healthy';
 
-    // Recommendations — production rec-card pattern with rank/type/urgency badges
-    const recs = (v.recommendations || []).map((r, i) => {
-      const urgency = (r.priority || 'low').toLowerCase();
-      const rank = `#${i+1}`;
-      const typeLabel = r.action.includes('BUY') ? 'ACCUMULATE'
-                       : r.action.includes('SELL') ? 'DIVEST'
-                       : r.action.includes('CC') ? 'CC'
-                       : r.action.includes('CLOSE') ? 'CLOSE'
-                       : r.action.includes('WAIT') ? 'PASSIVE'
-                       : 'ACTION';
-      let ladderHtml = '';
-      if (r.order_draft && r.order_draft.ladder) {
-        const ladder = r.order_draft.ladder.map(l => `<tr><td class="mono" style="text-align:right">${l.qty}</td><td>@</td><td class="mono">$${l.price}</td></tr>`).join('');
-        ladderHtml = `<div style="margin-top:8px;padding:8px;background:rgba(13,17,23,0.5);border-radius:4px;border-left:2px solid var(--cyan)"><div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">Order ladder (split fills):</div><table style="font-size:0.82rem">${ladder}</table>${r.est_cost_dollar?'<div style="margin-top:4px;font-size:0.72rem;color:var(--text-dim)">est cost: $'+fmt(r.est_cost_dollar,0)+'</div>':''}</div>`;
-      }
-      const whenSpan = r.when ? `<span style="color:var(--text-dim);font-size:0.72rem;margin-left:auto">⏱ ${r.when}</span>` : '';
-      return `<div class="rec-card">
-        <div class="rec-header">
-          <span class="rec-rank">${rank}</span>
-          <span class="rec-type-badge">${typeLabel}</span>
-          <span class="rec-urgency-badge ${urgency}">${r.priority || 'low'}</span>
-          ${whenSpan}
-        </div>
-        <div class="rec-action">${r.action}</div>
-        <div class="rec-why">${r.why || ''}</div>
-        ${ladderHtml}
-      </div>`;
-    }).join('');
-    $('recs').innerHTML = recs || '<div class="rec-why">No active recommendations</div>';
+    // (Recommendations section removed in unified layout — orders surface in
+    //  "Directly Usable Orders" panel below via v.actionable_orders)
 
     // Expiry cards: group positions by expiry, classify card priority
     const positions = (s.positions || []).filter(p => p.symbol === 'UNG' && p.is_option);
@@ -1536,7 +1509,9 @@ async function refresh() {
     $('positions').innerHTML = rows || '<tr><td colspan="6" class="rec-why">No UNG positions</td></tr>';
 
   } catch (e) {
-    $('error-row').innerHTML = `<div class="error">fetch failed: ${e.message}</div>`;
+    console.error('refresh() threw', e);
+    const stack = (e.stack || '').split('\n').slice(0,3).join(' | ');
+    $('error-row').innerHTML = `<div class="error">render failed: ${e.message} <span style="font-size:0.7rem;opacity:0.7">[${stack}]</span></div>`;
   }
 }
 async function refreshWithKernel() {
