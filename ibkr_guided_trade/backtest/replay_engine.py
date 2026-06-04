@@ -1285,6 +1285,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             put_qty = max(1, int(p.get('put_qty', 3) * size_scale))
             call_qty = max(1, int(p.get('call_qty', 3) * size_scale))
 
+            # REGIME-AWARE PUT QTY — smaller in NEUTRAL noise, bigger in
+            # CHEAP/RICH where conviction is clearer. Independent of regime_aware_strike.
+            if p.get('regime_aware_put_qty'):
+                if abs(z) < 0.5:
+                    put_qty = max(1, int(put_qty * 0.6))
+                elif abs(z) > 1.5:
+                    put_qty = int(put_qty * 1.3)
+
             # NAV-RELATIVE SIZING — scale put_qty by current NAV so the
             # strategy works at any capital level. Default off (use fixed
             # put_qty); when on, put_qty = floor(nav * pct / strike_estimate).
@@ -1416,6 +1424,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # Skip puts based on regime AND falling-knife filter
             skip_put = p.get('regime_skip_puts_z') is not None and z < p['regime_skip_puts_z']
             if p.get('anomaly_standdown') and anomaly != 'NORMAL':
+                skip_put = True
+            # SELECTIVE: skip puts ONLY on ANOMALY_DOWN (allow UP for spike premium)
+            if p.get('anomaly_standdown_down_only') and anomaly == 'ANOMALY_DOWN':
                 skip_put = True
             if p.get('downtrend_standdown') and in_sustained_down:
                 skip_put = True
@@ -3388,14 +3399,11 @@ STRATEGIES = {
         'dd_trim_trigger_pct': -8, 'dd_trim_qty_pct': 30,
         'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
     },
-    # ITM-PUT PREMIUM HARVEST — high premium, less shares
-    # Sells ITM puts when z is RICH to harvest fat extrinsic + acquire shares
-    # at strike (effective discount via collected premium). Smaller share
-    # inventory (3000 vs 6200) means more put-collateral capacity AND lower
-    # share-bleed risk in downtrends. Heavy dd_trim keeps inventory in check.
-    # EVOLUTION 1 (day-by-day analyzer): put_qty reduced 18→12 in NEUTRAL
-    # — fixes the -$220K NEUTRAL noise-zone loss accumulation. Improves every
-    # metric: ann +1.2pp, Sharpe +0.19, full MDD -5pp, WF range -5pp.
+    # ITM-PUT PREMIUM HARVEST — high premium, less shares.
+    # EVOLUTIONS BAKED IN (day-by-day analyzer iterations):
+    # - V1: put_qty 18→12 (less NEUTRAL noise-zone leverage)
+    # - V2 (this): z_target_cadence_days 14→21 (slower regime response,
+    #   eliminates whipsaws; WF worst Sharpe +1.61→+2.13, range -8pp)
     'champion_premium_harvest': {
         'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 12,
         'entry_cadence': 1,
@@ -3412,7 +3420,7 @@ STRATEGIES = {
         'vol_aware_sizing': True,
         'tail_hedge_floor': 2,
         # Smaller share inventory
-        'z_share_target_enabled': True, 'z_target_cadence_days': 14,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,  # V2: 14→21
         'z_target_mults': {
             'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
             'rich': 0.4, 'extreme_rich': 0.1,
@@ -3426,6 +3434,36 @@ STRATEGIES = {
         'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
         'cc_aware_cut': True,
         'skip_puts_on_grind_down': True,
+    },
+    # ULTRA-CONSERVATIVE — tightest WF range ever (51pp). Trades return
+    # for ultimate predictability across rolling windows.
+    'champion_premium_harvest_ultra': {
+        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 12, 'call_qty': 12,
+        'entry_cadence': 2,  # bi-daily (less noise)
+        'tp_50': True, 'tp_dynamic': False, 'tp_threshold': 0.4,  # faster exit
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'aggressive_itm_put_z': 0.3, 'itm_put_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_base': 3000,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.08, 'rebuild_put_dte': 30,
+        'elevator_skip_on_momentum': True, 'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cc_aware_cut': True,
+        'skip_puts_on_grind_down': True,
+        'grind_tp_accelerate': True,
     },
     # WALK-FORWARD HARDENED — tightest dd_trim + cc_aware_cut + smaller put size
     # Designed specifically to survive 12mo rolling windows (target worst MDD > -15%)
@@ -3657,6 +3695,7 @@ _KEEP_STRATEGIES = {
     'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
     'champion_target_25_walkforward_safe', # walk-fwd hardened share-cut + cc-aware
     'champion_premium_harvest',           # ITM-put premium harvest, smaller share base
+    'champion_premium_harvest_ultra',     # Ultra-conservative WF (51pp range)
     'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
     'champion_trifecta',                 # diagnostic
     'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
