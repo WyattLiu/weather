@@ -531,6 +531,18 @@ td.neutral { color: var(--blue); }
         min-width: 100%;
         display: table;
     }
+    /* Per-kernel beam: keep tables scrollable inside their containers */
+    #beam-by-kernel > div {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    #beam-by-kernel table { font-size: 0.7rem; min-width: 460px; }
+    /* Actionable orders: keep OSI symbol from overflowing */
+    #actionable-orders .rec-card { word-break: break-all; }
+    #actionable-orders .mono { font-size: 0.78rem; }
+    /* Kernel selector readable */
+    #kernel-selector { font-size: 0.78rem; }
+    #kernel-label { font-size: 1.1rem; }
 
     /* Charts: shorter on phone to fit more above the fold */
     #chart-regime { height: 280px !important; }
@@ -560,6 +572,55 @@ td.neutral { color: var(--blue); }
   </div>
 
   <div id="error-row"></div>
+
+  <!-- ACTIVE KERNEL: prominently displayed with OOS metrics + selector -->
+  <div class="section" style="border:2px solid var(--blue);background:linear-gradient(135deg,rgba(88,166,255,0.08),rgba(88,166,255,0.02))">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+      <div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Active Kernel</div>
+      <select id="kernel-selector" style="flex:1;min-width:240px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px 8px;border-radius:4px;font-size:0.9rem">
+      </select>
+    </div>
+    <div id="kernel-label" style="font-size:1.3rem;font-weight:700;color:var(--blue);margin-bottom:4px">Loading...</div>
+    <div id="kernel-why" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:8px;line-height:1.5"></div>
+    <div class="summary-row" style="margin-bottom:0;grid-template-columns:repeat(3,1fr)">
+      <div class="card">
+        <div class="card-label">Out-of-Sample Ann %</div>
+        <div class="card-value positive" id="oos-ann">–</div>
+        <div class="card-sub" id="is-ann">(in-sample: –)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Out-of-Sample Sharpe</div>
+        <div class="card-value positive" id="oos-sharpe">–</div>
+        <div class="card-sub" id="is-sharpe">(in-sample: –)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Out-of-Sample MDD</div>
+        <div class="card-value negative" id="oos-mdd">–</div>
+        <div class="card-sub" id="is-mdd">(in-sample: –)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DIRECTLY USABLE ORDERS — concrete trades with OSI + ladders -->
+  <div class="section">
+    <h2>📋 Directly Usable Orders (from active kernel)</h2>
+    <div id="actionable-orders">Loading kernel orders...</div>
+    <div class="rec-why" style="margin-top:8px">
+      Each order shows: side, OSI symbol, qty, limit ladder. Sized to current NAV.
+      Risk-aware: throttles puts to keep collateral &lt; 80% of NAV.
+    </div>
+  </div>
+
+  <!-- SOPHISTICATED BEAM — per-kernel candidate scoring -->
+  <div class="section">
+    <h2>🎯 Sophisticated Beam Search — what each kernel would do</h2>
+    <div id="beam-by-kernel">Loading kernel beams...</div>
+    <div class="rec-why" style="margin-top:8px">
+      For each kernel option, scores its candidate strikes using its OWN selection logic
+      (OTM%, DTE, IV preference). Winner highlighted. Lets you compare alternative
+      kernels side-by-side before switching.
+    </div>
+  </div>
 
   <!-- Daily Status Banner (production verbatim) -->
   <div class="daily-banner status-green" id="daily-status-banner">
@@ -830,7 +891,10 @@ function regimeClass(r) {
 }
 async function refresh() {
   try {
-    const r = await fetch('/api/state');
+    const urlParams = new URLSearchParams(window.location.search);
+    const k = urlParams.get('kernel');
+    const url = k ? `/api/state?kernel=${encodeURIComponent(k)}` : '/api/state';
+    const r = await fetch(url);
     const s = await r.json();
     const v = s.verdict || {};
 
@@ -963,6 +1027,95 @@ async function refresh() {
 
     // Warnings
     $('warnings').innerHTML = (v.warnings || []).map(w => `<div class="warning">⚠ ${w}</div>`).join('');
+
+    // Active kernel banner + selector population
+    if (v.available_kernels) {
+      const sel = $('kernel-selector');
+      if (sel && sel.options.length === 0) {
+        v.available_kernels.forEach(k => {
+          const opt = document.createElement('option');
+          opt.value = k.key;
+          opt.text = `${k.label}  (OOS: ${k.oos_ann.toFixed(0)}% / Sh ${k.oos_sharpe.toFixed(2)} / MDD ${k.oos_mdd.toFixed(0)}%)`;
+          sel.appendChild(opt);
+        });
+        sel.value = v.kernel_key;
+        sel.addEventListener('change', () => {
+          const newKey = sel.value;
+          window.location.href = '?kernel=' + encodeURIComponent(newKey);
+        });
+      } else if (sel) {
+        sel.value = v.kernel_key;
+      }
+    }
+    if (v.kernel_oos) {
+      $('kernel-label').innerText = v.kernel_label || v.kernel;
+      $('kernel-why').innerText = v.kernel_why || '';
+      $('oos-ann').innerText = '+' + v.kernel_oos.ann_pct.toFixed(1) + '%';
+      $('oos-sharpe').innerText = '+' + v.kernel_oos.sharpe.toFixed(2);
+      $('oos-mdd').innerText = v.kernel_oos.mdd_pct.toFixed(1) + '%';
+      if (v.kernel_is) {
+        $('is-ann').innerText = `(in-sample: ${v.kernel_is.ann_pct.toFixed(1)}%)`;
+        $('is-sharpe').innerText = `(in-sample: ${v.kernel_is.sharpe.toFixed(2)})`;
+        $('is-mdd').innerText = `(in-sample: ${v.kernel_is.mdd_pct.toFixed(1)}%)`;
+      }
+    }
+
+    // Actionable orders — concrete trades with OSI + limit ladder
+    const orders = v.actionable_orders;
+    if (orders && orders.length) {
+      $('actionable-orders').innerHTML = orders.map(o => {
+        const priClass = o.priority === 'high' ? 'priority-h' : o.priority === 'medium' ? 'priority-m' : 'priority-l';
+        let detail = '';
+        if (o.order_type === 'SHARES' && o.limit_ladder) {
+          detail = '<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px;border-left:2px solid var(--cyan)">'
+                 + '<div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">Limit ladder:</div>'
+                 + '<table style="font-size:0.85rem">'
+                 + o.limit_ladder.map(l => `<tr><td class="mono" style="text-align:right">${l.qty}</td><td>shares @</td><td class="mono">$${l.limit_price}</td></tr>`).join('')
+                 + '</table></div>';
+        } else if (o.order_type.includes('PUT') || o.order_type.includes('CALL')) {
+          detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px">`
+                 + `<div class="mono" style="font-size:0.85rem"><span style="color:var(--text-dim)">OSI:</span> ${o.symbol}</div>`
+                 + `<div class="mono" style="font-size:0.82rem;margin-top:4px"><span style="color:var(--text-dim)">Limit range:</span> $${o.limit_low} – $${o.limit_high}/contract</div>`
+                 + `<div class="mono" style="font-size:0.82rem"><span style="color:var(--text-dim)">Est credit:</span> $${fmt(o.est_credit_total,0)}` +
+                   (o.collateral_required ? ` &nbsp; <span style="color:var(--text-dim)">Collateral:</span> $${fmt(o.collateral_required,0)}` : '') + `</div></div>`;
+        }
+        return `<div class="rec-card">
+          <div class="rec-header">
+            <span class="rec-type-badge">${o.order_type}</span>
+            <span class="rec-urgency-badge ${o.priority}">${o.priority}</span>
+            <span style="margin-left:auto;font-weight:600">${o.side}</span>
+            <span class="mono">${o.symbol}</span>
+            <span class="mono">×${o.qty || o.qty_total}</span>
+          </div>
+          <div class="rec-why">${o.rationale || ''}</div>
+          ${detail}
+        </div>`;
+      }).join('');
+    } else {
+      $('actionable-orders').innerHTML = '<div class="rec-why">No active orders from this kernel right now.</div>';
+    }
+
+    // Per-kernel beam — comparison table
+    const beamByK = v.beam_by_kernel;
+    if (beamByK) {
+      let html = '';
+      Object.entries(beamByK).forEach(([key, b]) => {
+        const isActive = key === v.kernel_key;
+        const borderColor = isActive ? 'var(--blue)' : 'var(--border)';
+        html += `<div style="background:var(--bg);border:1px solid ${borderColor};border-radius:6px;padding:12px;margin-bottom:8px${isActive ? ';box-shadow:0 0 0 1px var(--blue)' : ''}">`;
+        html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><strong>${b.label}</strong>`;
+        if (isActive) html += ' <span class="tag tag-cheap">ACTIVE</span>';
+        html += `<span style="color:var(--text-dim);font-size:0.72rem;margin-left:auto">mode: ${b.mode}</span></div>`;
+        html += '<table style="font-size:0.78rem"><thead><tr><th>Strike</th><th>OTM%</th><th>DTE</th><th>IV</th><th>Prem/ct</th><th>Qty</th><th>Income</th><th>P(ITM)</th><th>Net</th></tr></thead><tbody>';
+        b.candidates.forEach((c, i) => {
+          const isWinner = c.strike === b.winner_strike;
+          const bg = isWinner ? 'style="background:rgba(63,185,80,0.1)"' : '';
+          html += `<tr ${bg}><td class="mono">${isWinner ? '🏆' : ''} $${c.strike}</td><td class="mono">${c.otm_pct}%</td><td class="mono">${c.dte}d</td><td class="mono">${(c.iv*100).toFixed(1)}%</td><td class="mono">$${c.premium_per_contract}</td><td class="mono">${c.qty_recommended}</td><td class="mono positive">$${fmt(c.total_income, 0)}</td><td class="mono">${c.p_itm_pct}%</td><td class="mono ${isWinner?'positive':''}">$${fmt(c.net_score,0)}</td></tr>`;
+        });
+        html += '</tbody></table></div>';
+      });
+      $('beam-by-kernel').innerHTML = html;
+    }
 
     // Daily status banner (production status-green/yellow/red classes)
     const ds = v.daily_status;
@@ -1365,6 +1518,21 @@ async function refresh() {
     $('error-row').innerHTML = `<div class="error">fetch failed: ${e.message}</div>`;
   }
 }
+async function refreshWithKernel() {
+  // Force refresh with active kernel key in URL
+  const key = window._activeKernel;
+  const url = key ? `/api/state?kernel=${encodeURIComponent(key)}` : '/api/state';
+  try {
+    const r = await fetch(url);
+    const s = await r.json();
+    window._lastState = s;
+    // Re-render by calling refresh path (it reads same JSON shape)
+    refresh._renderFrom(s);
+  } catch (e) {
+    console.error('kernel switch failed', e);
+  }
+}
+
 refresh();
 setInterval(refresh, 30000);
 
@@ -1489,8 +1657,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(HTML.encode('utf-8'))
         elif parsed.path == '/api/state':
-            with _STATE_LOCK:
-                body = json.dumps(_STATE_CACHE, default=str)
+            # Support ?kernel=KEY param to swap kernel without restart
+            params = urllib.parse.parse_qs(parsed.query or '')
+            kernel_key = params.get('kernel', [None])[0]
+            if kernel_key:
+                # Re-compute verdict with requested kernel
+                with _STATE_LOCK:
+                    spot = _STATE_CACHE.get('spot') or 11.51
+                    pos = _STATE_CACHE.get('positions', [])
+                    nav_live = (_STATE_CACHE.get('balance') or {}).get('net_liquidation')
+                    verdict = validated_verdict(spot, pos, nav=nav_live, kernel_key=kernel_key)
+                    body = json.dumps({**_STATE_CACHE, 'verdict': verdict}, default=str)
+            else:
+                with _STATE_LOCK:
+                    body = json.dumps(_STATE_CACHE, default=str)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Cache-Control', 'no-store')
