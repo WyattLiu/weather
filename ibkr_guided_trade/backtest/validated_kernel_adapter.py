@@ -1176,7 +1176,33 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
     else:
         max_qty = max(1, int(sp.get('put_qty', 5) * sp.get('entry_cadence', 7) / 7))
 
-    # Check current collateral usage
+    # ─── HIGH-CONVICTION ASSIGNMENT ANTICIPATION ─────────────────────────
+    # Statistical model: only act when p_assign per leg is HUGELY convinced
+    # (≥0.85 = 'cert' regime). Low/medium conviction → no action.
+    # For each leg passing the threshold, treat its full qty as "expected to
+    # be lost." Sum to expected_share_loss, then scale puts to replace a
+    # fraction (default 50%) of those losses.
+    #
+    # This is gated per-leg (asynchronous belief): the 4× 1-DTE deep-ITM
+    # calls trigger; the 14× 22-DTE coin-flip calls do not.
+    huge_conviction_threshold = 0.85
+    replacement_factor = 0.5  # replace 50% of expected losses
+    expected_loss_shares = 0
+    contributing_legs = []
+    for leg in (likely_assign_legs or []):
+        # likely_assign_legs already filters p_assign ≥ 0.55; re-check ≥ 0.85
+        if leg.get('p_assign', 0) >= huge_conviction_threshold:
+            expected_loss_shares += leg.get('qty', 0) * 100
+            contributing_legs.append(leg)
+    anticipation_bonus = 0
+    if expected_loss_shares >= 100:  # at least one full contract worth
+        anticipation_bonus = int((expected_loss_shares / 100) * replacement_factor)
+        # Don't go nuts — cap bonus at +5 contracts and at 50% of base qty
+        anticipation_bonus = min(anticipation_bonus, 5, max_qty)
+        if anticipation_bonus > 0:
+            max_qty += anticipation_bonus
+
+    # Check current collateral usage (account for anticipated puts too)
     proposed_collateral = max_qty * K * 100
     total_after = current_put_collateral + proposed_collateral
     collateral_pct_after = total_after / nav if nav > 0 else 0
@@ -1252,9 +1278,25 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
             'est_credit_total': round(total_credit, 0),
             'collateral_required': round(total_collateral, 0),
             'legs': legs,
-            'rationale': (f'{order_label}. Kernel target {target_otm*100:.1f}% OTM; '
-                          f'real strikes split into {len(legs)} legs to match. '
-                          f'Achieved avg {avg_eff_otm:.1f}% OTM.'),
+            'anticipation': {
+                'bonus_qty': anticipation_bonus,
+                'expected_loss_shares': expected_loss_shares,
+                'contributing_legs': [
+                    {'qty': l['qty'], 'strike': l['strike'],
+                     'expiry': l['expiry'], 'p_assign': l['p_assign']}
+                    for l in contributing_legs
+                ],
+                'huge_conviction_threshold': huge_conviction_threshold,
+                'replacement_factor': replacement_factor,
+            } if anticipation_bonus > 0 else None,
+            'rationale': (
+                f'{order_label}. Kernel target {target_otm*100:.1f}% OTM; '
+                f'real strikes split into {len(legs)} legs to match. '
+                f'Achieved avg {avg_eff_otm:.1f}% OTM.'
+                + (f' +{anticipation_bonus} contracts anticipating high-conviction '
+                   f'assignment of {expected_loss_shares} shares (p≥{huge_conviction_threshold}, '
+                   f'replacement factor {replacement_factor}).' if anticipation_bonus > 0 else '')
+            ),
             'priority': 'medium',
         })
 
