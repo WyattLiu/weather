@@ -845,6 +845,48 @@ def _strike_mix_for_target_otm(target_otm_pct, spot, total_qty,
     ]
 
 
+def _premium_limit_ladder(mid_estimate, qty, side='SELL', max_tiers=4):
+    """Build a passive→aggressive limit-price ladder so ONE order set fills
+    without modification. Avoids spread chasing.
+
+    Auto-shrinks tier count when qty < max_tiers so we never emit ladder
+    rows with no real qty backing.
+    """
+    if qty < 1: return []
+    # Use min(qty, max_tiers) tiers — never more rows than contracts
+    n_tiers = min(qty, max_tiers)
+    if n_tiers == 1:
+        # Single contract: just one passive tier at mid
+        return [{'tier': 1, 'qty': 1, 'limit_price': round(max(0.01, mid_estimate), 2),
+                 'kind': 'mid'}]
+    # Quantity split favors passive (40/30/20/10 for 4-tier; auto-prorated)
+    full_weights = [0.4, 0.3, 0.2, 0.1]
+    weights = full_weights[:n_tiers]
+    weights = [w / sum(weights) for w in weights]
+    qtys = [max(1, int(round(qty * w))) for w in weights]
+    diff = qty - sum(qtys)
+    if diff > 0: qtys[0] += diff
+    elif diff < 0:
+        # Need to subtract — pull from largest-qty tier
+        for i in range(n_tiers):
+            while qtys[i] > 1 and sum(qtys) > qty:
+                qtys[i] -= 1
+            if sum(qtys) == qty: break
+    if side == 'SELL':
+        full_offsets = [0.05, 0.02, -0.01, -0.04]
+    else:
+        full_offsets = [-0.05, -0.02, 0.01, 0.04]
+    offsets = full_offsets[:n_tiers]
+    full_labels = ['passive', 'near-mid', 'mid', 'cross']
+    labels = full_labels[:n_tiers]
+    return [
+        {'tier': i + 1, 'qty': q,
+         'limit_price': round(max(0.01, mid_estimate * (1 + off)), 2),
+         'kind': label}
+        for i, (q, off, label) in enumerate(zip(qtys, offsets, labels))
+    ]
+
+
 def _build_actionable_orders(kernel_info, spot, nav, current_shares,
                               current_short_calls, current_put_collateral, snap,
                               pending_assign_shares=0, pending_assign_calls=0,
@@ -1179,6 +1221,9 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
             d2s = d1s - iv*math.sqrt(T)
             slot_prem = sK*math.exp(-0.045*T)*norm.cdf(-d2s) - spot*norm.cdf(-d1s)
             strike_osi = f'{int(sK * 1000):08d}'
+            # LIMIT LADDER (4 tiers, passive → aggressive) — submit as a single
+            # ladder so one fills without modifying. Avoids spread chase.
+            ladder = _premium_limit_ladder(slot_prem, sQ, side='SELL')
             legs.append({
                 'symbol': f'UNG   {exp_osi}P{strike_osi}',
                 'strike': sK,
@@ -1187,6 +1232,7 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
                 'est_premium_per': round(slot_prem, 3),
                 'limit_low': round(slot_prem * 0.90, 2),
                 'limit_high': round(slot_prem * 1.10, 2),
+                'limit_ladder': ladder,   # NEW: 4-tier price ladder
                 'credit_total': round(slot_prem * 100 * sQ, 0),
                 'collateral': round(sK * 100 * sQ, 0),
             })
@@ -1254,12 +1300,46 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
                 'qty': max_cc,
                 'limit_low': round(bsm_cc * 0.90, 2),
                 'limit_high': round(bsm_cc * 1.10, 2),
+                'limit_ladder': _premium_limit_ladder(bsm_cc, max_cc, side='SELL'),
                 'est_premium_per': round(bsm_cc, 3),
                 'est_credit_total': round(bsm_cc * 100 * max_cc, 0),
                 'shares_covered': max_cc * 100,
                 'rationale': f'CC at K=${Kc} (5% OTM), {cc_dte}d, covers {max_cc * 100} shares.',
                 'priority': 'low',
             })
+
+    # ─── BEST PLAY SCORING — rank orders by expected dollar value ────────
+    # Each actionable order gets a score = expected $EV * priority weight.
+    # Surface the top pick at the front of the list with a "best_play" flag.
+    pri_mult = {'high': 1.0, 'medium': 0.7, 'low': 0.4}
+    for o in orders:
+        ev = 0.0
+        kind = o.get('order_type', '')
+        if kind == 'PUT_SHORT_MIX':
+            # EV = credit collected * (1 - p_assign_avg * 0.5)
+            # Conservatively assume avg p_assign 25% for OTM puts
+            ev = float(o.get('est_credit_total', 0)) * 0.75
+        elif kind == 'CALL_SHORT_COVERED':
+            ev = float(o.get('est_credit_total', 0)) * 0.65
+        elif kind == 'SHARES':
+            ev = abs(float(o.get('qty_total', 0))) * spot * 0.001  # tiny score
+        elif kind == 'CC_BTC_TO_FREE_SHARES':
+            # Negative EV — we're paying to free shares — but enables high-priority sell
+            ev = -100 * o.get('qty', 0)
+        elif kind == 'WAIT_FOR_ASSIGNMENT':
+            # Implicit gain from assignment = (spot - K) avoided BTC cost
+            ev = o.get('qty', 0) * 50  # heuristic
+        elif kind in ('SYNTHETIC_SHORT_BLOCKED', 'CC_SKIPPED', 'SHARES_SELL_BLOCKED'):
+            ev = 0  # not actionable
+        o['expected_ev_dollars'] = round(ev, 0)
+        o['ranked_score'] = round(ev * pri_mult.get(o.get('priority', 'low'), 0.4), 0)
+
+    # Mark the best play
+    actionable = [o for o in orders if o['ranked_score'] > 0]
+    if actionable:
+        best = max(actionable, key=lambda o: o['ranked_score'])
+        best['best_play'] = True
+        best['rationale'] = '⭐ BEST PLAY TODAY: ' + best.get('rationale', '')
 
     return orders
 
