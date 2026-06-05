@@ -1,0 +1,2135 @@
+{
+  "pareto_frontier": [
+    "champion_target_25_smooth",
+    "champion_premium_harvest_scale_invariant",
+    "champion_target_25_dd_trim"
+  ],
+  "diagnostics": {
+    "champion_premium_harvest_scale_invariant": {
+      "name": "champion_premium_harvest_scale_invariant",
+      "days": 1225,
+      "final_nav": 754510.1200795266,
+      "total_return_pct": 136.7926762313104,
+      "worst_10_days": [
+        {
+          "date": "2026-02-02",
+          "daily_pnl": -11498.0,
+          "daily_pct": -1.53,
+          "spot": 12.699999809265137,
+          "n_trades": 6,
+          "lead_types": {
+            "CALL_ROLL_UP": 2,
+            "PUT_ROLL_DOWN": 1,
+            "CALL_TP": 1
+          }
+        },
+        {
+          "date": "2022-02-03",
+          "daily_pnl": -8685.0,
+          "daily_pct": -1.8,
+          "spot": 68.95999908447266,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 1,
+            "CALL_TP": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2024-01-16",
+          "daily_pnl": -8484.0,
+          "daily_pct": -1.32,
+          "spot": 23.1200008392334,
+          "n_trades": 7,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 2,
+            "CALL_ASSIGN": 2,
+            "CALL_TP": 1
+          }
+        },
+        {
+          "date": "2021-09-07",
+          "daily_pnl": -8317.0,
+          "daily_pct": -2.01,
+          "spot": 63.880001068115234,
+          "n_trades": 11,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 2,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-06-15",
+          "daily_pnl": -8041.0,
+          "daily_pct": -2.4,
+          "spot": 45.20000076293945,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-04-01",
+          "daily_pnl": -8011.0,
+          "daily_pct": -1.62,
+          "spot": 79.68000030517578,
+          "n_trades": 10,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 8,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-01-13",
+          "daily_pnl": -7924.0,
+          "daily_pct": -1.7,
+          "spot": 56.79999923706055,
+          "n_trades": 2,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2024-05-20",
+          "daily_pnl": -7388.0,
+          "daily_pct": -1.13,
+          "spot": 19.81999969482422,
+          "n_trades": 9,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-07-27",
+          "daily_pnl": -6421.0,
+          "daily_pct": -1.7,
+          "spot": 54.959999084472656,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-02-04",
+          "daily_pnl": -6169.0,
+          "daily_pct": -1.3,
+          "spot": 63.36000061035156,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 4,
+            "PUT_ROLL_DOWN": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 12542.0,
+          "daily_pct": 3.33,
+          "spot": 58.79999923706055,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2023-02-27",
+          "daily_pnl": 10814.0,
+          "daily_pct": 1.97,
+          "spot": 35.84000015258789,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 1,
+            "LONG_PUT_EXPIRE": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-02-02",
+          "daily_pnl": 10418.0,
+          "daily_pct": 2.2,
+          "spot": 75.91999816894531,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 3,
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-01-12",
+          "daily_pnl": 9437.0,
+          "daily_pct": 2.06,
+          "spot": 63.880001068115234,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-09-01",
+          "daily_pnl": 9109.0,
+          "daily_pct": 2.28,
+          "spot": 64.4000015258789,
+          "n_trades": 4,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 1,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-08-27",
+          "daily_pnl": 8438.0,
+          "daily_pct": 2.17,
+          "spot": 61.36000061035156,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-11",
+          "daily_pnl": 7865.0,
+          "daily_pct": 2.44,
+          "spot": 46.15999984741211,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-08",
+          "daily_pnl": 7812.0,
+          "daily_pct": 1.93,
+          "spot": 68.72000122070312,
+          "n_trades": 3,
+          "lead_types": {
+            "PUT_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-24",
+          "daily_pnl": 6655.0,
+          "daily_pct": 1.99,
+          "spot": 48.040000915527344,
+          "n_trades": 3,
+          "lead_types": {
+            "PUT_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-07-20",
+          "daily_pnl": 6353.0,
+          "daily_pct": 1.75,
+          "spot": 54.36000061035156,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 439,
+          "total_pnl": 108140.54427239473,
+          "avg_pnl": 246.33381383233424,
+          "std_pnl": 149.21672834474703
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 56,
+          "total_pnl": 66435.85539167639,
+          "avg_pnl": 1186.3545605656498,
+          "std_pnl": 453.6598759756964
+        },
+        "PUT_TP": {
+          "count": 373,
+          "total_pnl": 50116.221752762154,
+          "avg_pnl": 134.3598438411854,
+          "std_pnl": 116.24938779412354
+        },
+        "CALL_ROLL_UP": {
+          "count": 99,
+          "total_pnl": -46428.73519878558,
+          "avg_pnl": -468.97712322005634,
+          "std_pnl": 634.9070853795914
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 283,
+          "total_pnl": -41068.843465626895,
+          "avg_pnl": -145.11958821776287,
+          "std_pnl": 184.9676776731104
+        },
+        "CALL_ASSIGN": {
+          "count": 161,
+          "total_pnl": -15457.594900704447,
+          "avg_pnl": -96.00990621555557,
+          "std_pnl": 250.37076078330517
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 12,
+          "total_pnl": -13747.851854605578,
+          "avg_pnl": -1145.6543212171316,
+          "std_pnl": 1264.6828793806255
+        },
+        "OPEN_LONG_PUT": {
+          "count": 8,
+          "total_pnl": -5201.171436888099,
+          "avg_pnl": -650.1464296110124,
+          "std_pnl": 302.4451575508465
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 5176.476156173945,
+          "avg_pnl": 272.4461134828392,
+          "std_pnl": 1780.086149979788
+        },
+        "PUT_ASSIGN": {
+          "count": 1,
+          "total_pnl": -194.00101742863035,
+          "avg_pnl": -194.00101742863035,
+          "std_pnl": 0
+        }
+      },
+      "risk": {
+        "sharpe_252": 2.794551737221625,
+        "sortino_252": 3.6669198730399044,
+        "downside_vol": 0.0030852392390850695,
+        "upside_vol": 0.0034747563601357674,
+        "downside_freq": 0.38562091503267976,
+        "avg_down_day": -0.2194514657034089,
+        "avg_up_day": 0.25373967166850897,
+        "worst_day_pct": -2.398633952777296,
+        "best_day_pct": 3.32708416080012
+      }
+    },
+    "champion_target_25_max_protected": {
+      "name": "champion_target_25_max_protected",
+      "days": 1225,
+      "final_nav": 605239.6125431634,
+      "total_return_pct": 90.34022325039119,
+      "worst_10_days": [
+        {
+          "date": "2021-06-15",
+          "daily_pnl": -12388.0,
+          "daily_pct": -3.62,
+          "spot": 45.20000076293945,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-27",
+          "daily_pnl": -10471.0,
+          "daily_pct": -2.62,
+          "spot": 81.23999786376953,
+          "n_trades": 6,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 4,
+            "CALL_ASSIGN": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-07-07",
+          "daily_pnl": -8554.0,
+          "daily_pct": -2.3,
+          "spot": 50.15999984741211,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_ASSIGN": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2024-01-16",
+          "daily_pnl": -8299.0,
+          "daily_pct": -1.6,
+          "spot": 23.1200008392334,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 2,
+            "CALL_ASSIGN": 2,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2026-02-02",
+          "daily_pnl": -8188.0,
+          "daily_pct": -1.35,
+          "spot": 12.699999809265137,
+          "n_trades": 2,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2024-05-20",
+          "daily_pnl": -7050.0,
+          "daily_pct": -1.32,
+          "spot": 19.81999969482422,
+          "n_trades": 8,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 6,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-07-01",
+          "daily_pnl": -6866.0,
+          "daily_pct": -1.82,
+          "spot": 51.15999984741211,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-07-27",
+          "daily_pnl": -6581.0,
+          "daily_pct": -1.7,
+          "spot": 54.959999084472656,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-07",
+          "daily_pnl": -6277.0,
+          "daily_pct": -1.54,
+          "spot": 63.880001068115234,
+          "n_trades": 10,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-07-30",
+          "daily_pnl": -5341.0,
+          "daily_pct": -1.39,
+          "spot": 55.040000915527344,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-06-11",
+          "daily_pnl": 11390.0,
+          "daily_pct": 3.52,
+          "spot": 46.15999984741211,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2023-02-27",
+          "daily_pnl": 10499.0,
+          "daily_pct": 2.38,
+          "spot": 35.84000015258789,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 2,
+            "LONG_PUT_EXPIRE": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-06-24",
+          "daily_pnl": 9404.0,
+          "daily_pct": 2.77,
+          "spot": 48.040000915527344,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 8385.0,
+          "daily_pct": 2.19,
+          "spot": 58.79999923706055,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 4,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-07-20",
+          "daily_pnl": 8084.0,
+          "daily_pct": 2.16,
+          "spot": 54.36000061035156,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-25",
+          "daily_pnl": 7903.0,
+          "daily_pct": 2.26,
+          "spot": 49.27999877929688,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-30",
+          "daily_pnl": 7241.0,
+          "daily_pct": 1.96,
+          "spot": 52.31999969482422,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-14",
+          "daily_pnl": 6992.0,
+          "daily_pct": 2.09,
+          "spot": 47.2400016784668,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-07-08",
+          "daily_pnl": 6808.0,
+          "daily_pct": 1.87,
+          "spot": 51.43999862670898,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 1,
+            "CALL_ASSIGN": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-06-28",
+          "daily_pnl": 6587.0,
+          "daily_pct": 1.84,
+          "spot": 50.27999877929688,
+          "n_trades": 3,
+          "lead_types": {
+            "PUT_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 199,
+          "total_pnl": 64604.94097064767,
+          "avg_pnl": 324.64794457611896,
+          "std_pnl": 253.56533956764545
+        },
+        "CALL_ASSIGN": {
+          "count": 166,
+          "total_pnl": -56348.036893559954,
+          "avg_pnl": -339.4460053828913,
+          "std_pnl": 576.5098019098318
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 37,
+          "total_pnl": 45869.570640494145,
+          "avg_pnl": 1239.7181254187606,
+          "std_pnl": 804.6824780036801
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 148,
+          "total_pnl": -28202.00878692914,
+          "avg_pnl": -190.55411342519687,
+          "std_pnl": 173.53065100416543
+        },
+        "PUT_TP": {
+          "count": 432,
+          "total_pnl": 25371.47897593716,
+          "avg_pnl": 58.73027540726194,
+          "std_pnl": 82.07659089306559
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 12,
+          "total_pnl": -13642.106849731656,
+          "avg_pnl": -1136.842237477638,
+          "std_pnl": 1260.5955424142558
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 5682.221161047869,
+          "avg_pnl": 299.06427163409836,
+          "std_pnl": 1763.5147484028696
+        },
+        "OPEN_LONG_PUT": {
+          "count": 8,
+          "total_pnl": -5201.171436888099,
+          "avg_pnl": -650.1464296110124,
+          "std_pnl": 302.4451575508465
+        },
+        "CALL_EXPIRE_OTM": {
+          "count": 2,
+          "total_pnl": 455.9279003790344,
+          "avg_pnl": 227.9639501895172,
+          "std_pnl": 67.94128306014645
+        },
+        "PUT_ASSIGN": {
+          "count": 1,
+          "total_pnl": -187.6410996429533,
+          "avg_pnl": -187.6410996429533,
+          "std_pnl": 0
+        }
+      },
+      "risk": {
+        "sharpe_252": 2.116351230997746,
+        "sortino_252": 2.474865142080475,
+        "downside_vol": 0.0034251648349200264,
+        "upside_vol": 0.003469271265880561,
+        "downside_freq": 0.36764705882352944,
+        "avg_down_day": -0.21297995758229765,
+        "avg_up_day": 0.20827043790547767,
+        "worst_day_pct": -3.6201407864282387,
+        "best_day_pct": 3.5174238145083914
+      }
+    },
+    "champion_target_25_nav_aware": {
+      "name": "champion_target_25_nav_aware",
+      "days": 1225,
+      "final_nav": 738393.9435648172,
+      "total_return_pct": 132.276281434976,
+      "worst_10_days": [
+        {
+          "date": "2022-02-03",
+          "daily_pnl": -14222.0,
+          "daily_pct": -2.65,
+          "spot": 68.95999908447266,
+          "n_trades": 4,
+          "lead_types": {
+            "CALL_ASSIGN": 1,
+            "CALL_TP": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2022-01-13",
+          "daily_pnl": -13352.0,
+          "daily_pct": -2.6,
+          "spot": 56.79999923706055,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-15",
+          "daily_pnl": -12516.0,
+          "daily_pct": -3.66,
+          "spot": 45.20000076293945,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-07",
+          "daily_pnl": -11283.0,
+          "daily_pct": -2.58,
+          "spot": 63.880001068115234,
+          "n_trades": 10,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-10-06",
+          "daily_pnl": -11079.0,
+          "daily_pct": -2.35,
+          "spot": 79.0,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2026-02-02",
+          "daily_pnl": -9930.0,
+          "daily_pct": -1.35,
+          "spot": 12.699999809265137,
+          "n_trades": 2,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2022-02-04",
+          "daily_pnl": -9481.0,
+          "daily_pct": -1.81,
+          "spot": 63.36000061035156,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 4,
+            "CALL_ASSIGN": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-07-27",
+          "daily_pnl": -9429.0,
+          "daily_pct": -2.39,
+          "spot": 54.959999084472656,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-12-06",
+          "daily_pnl": -8958.0,
+          "daily_pct": -1.88,
+          "spot": 48.20000076293945,
+          "n_trades": 8,
+          "lead_types": {
+            "PUT_ROLL_DOWN": 3,
+            "CALL_TP": 3,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-08-12",
+          "daily_pnl": -8336.0,
+          "daily_pct": -2.11,
+          "spot": 54.84000015258789,
+          "n_trades": 9,
+          "lead_types": {
+            "CALL_TP": 6,
+            "CALL_ASSIGN": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 16712.0,
+          "daily_pct": 4.29,
+          "spot": 58.79999923706055,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-12",
+          "daily_pnl": 15963.0,
+          "daily_pct": 3.21,
+          "spot": 63.880001068115234,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-08",
+          "daily_pnl": 14475.0,
+          "daily_pct": 3.4,
+          "spot": 68.72000122070312,
+          "n_trades": 3,
+          "lead_types": {
+            "PUT_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2022-02-02",
+          "daily_pnl": 13382.0,
+          "daily_pct": 2.55,
+          "spot": 75.91999816894531,
+          "n_trades": 3,
+          "lead_types": {
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-01",
+          "daily_pnl": 12896.0,
+          "daily_pct": 3.07,
+          "spot": 64.4000015258789,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 1,
+            "ELEVATOR_CLOSE": 1,
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2021-08-27",
+          "daily_pnl": 11448.0,
+          "daily_pct": 2.82,
+          "spot": 61.36000061035156,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-06-11",
+          "daily_pnl": 11276.0,
+          "daily_pct": 3.49,
+          "spot": 46.15999984741211,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2023-02-27",
+          "daily_pnl": 10974.0,
+          "daily_pct": 2.0,
+          "spot": 35.84000015258789,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 2,
+            "LONG_PUT_EXPIRE": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-01-27",
+          "daily_pnl": 10073.0,
+          "daily_pct": 2.01,
+          "spot": 60.79999923706055,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 4,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-07-20",
+          "daily_pnl": 9713.0,
+          "daily_pct": 2.59,
+          "spot": 54.36000061035156,
+          "n_trades": 8,
+          "lead_types": {
+            "PUT_TP": 6,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 356,
+          "total_pnl": 102188.66178904964,
+          "avg_pnl": 287.04680277822933,
+          "std_pnl": 160.335517500466
+        },
+        "CALL_ASSIGN": {
+          "count": 214,
+          "total_pnl": -59047.541814771466,
+          "avg_pnl": -275.92309259239005,
+          "std_pnl": 479.85412568305816
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 43,
+          "total_pnl": 54002.02640727446,
+          "avg_pnl": 1255.8610792389409,
+          "std_pnl": 499.69414465457726
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 167,
+          "total_pnl": -37803.00654920784,
+          "avg_pnl": -226.36530867789128,
+          "std_pnl": 177.16340083593155
+        },
+        "PUT_TP": {
+          "count": 463,
+          "total_pnl": 35617.62848676814,
+          "avg_pnl": 76.92792329755538,
+          "std_pnl": 67.98682232553969
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 12,
+          "total_pnl": -13642.106849731656,
+          "avg_pnl": -1136.842237477638,
+          "std_pnl": 1260.5955424142558
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 5682.221161047869,
+          "avg_pnl": 299.06427163409836,
+          "std_pnl": 1763.5147484028696
+        },
+        "OPEN_LONG_PUT": {
+          "count": 8,
+          "total_pnl": -5201.171436888099,
+          "avg_pnl": -650.1464296110124,
+          "std_pnl": 302.4451575508465
+        },
+        "CALL_EXPIRE_OTM": {
+          "count": 3,
+          "total_pnl": 1093.3034132000525,
+          "avg_pnl": 364.4344710666842,
+          "std_pnl": 356.50451251408145
+        },
+        "PUT_ASSIGN": {
+          "count": 1,
+          "total_pnl": -187.6410996429533,
+          "avg_pnl": -187.6410996429533,
+          "std_pnl": 0
+        }
+      },
+      "risk": {
+        "sharpe_252": 2.0756152829180667,
+        "sortino_252": 2.580308947345446,
+        "downside_vol": 0.004325914562812271,
+        "upside_vol": 0.004901143822127797,
+        "downside_freq": 0.39624183006535946,
+        "avg_down_day": -0.2565919642579496,
+        "avg_up_day": 0.2848619200911047,
+        "worst_day_pct": -3.664947538252228,
+        "best_day_pct": 4.285952686507377
+      }
+    },
+    "champion_target_25_smooth": {
+      "name": "champion_target_25_smooth",
+      "days": 1225,
+      "final_nav": 996146.1041238328,
+      "total_return_pct": 213.27576793139292,
+      "worst_10_days": [
+        {
+          "date": "2021-10-06",
+          "daily_pnl": -22632.0,
+          "daily_pct": -4.08,
+          "spot": 79.0,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-04-01",
+          "daily_pnl": -21721.0,
+          "daily_pct": -3.15,
+          "spot": 79.68000030517578,
+          "n_trades": 11,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 9,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-02-03",
+          "daily_pnl": -20873.0,
+          "daily_pct": -3.11,
+          "spot": 68.95999908447266,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_TP": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-13",
+          "daily_pnl": -20004.0,
+          "daily_pct": -3.18,
+          "spot": 56.79999923706055,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_TP": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-12-06",
+          "daily_pnl": -19025.0,
+          "daily_pct": -3.32,
+          "spot": 48.20000076293945,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 3,
+            "PUT_ROLL_DOWN": 2,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-11-29",
+          "daily_pnl": -16812.0,
+          "daily_pct": -2.74,
+          "spot": 63.52000045776367,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 4,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-09-29",
+          "daily_pnl": -16571.0,
+          "daily_pct": -3.09,
+          "spot": 75.36000061035156,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-12-01",
+          "daily_pnl": -15838.0,
+          "daily_pct": -2.66,
+          "spot": 55.63999938964844,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 2,
+            "PUT_ROLL_DOWN": 1,
+            "LONG_PUT_EXPIRE": 1
+          }
+        },
+        {
+          "date": "2021-09-07",
+          "daily_pnl": -14069.0,
+          "daily_pct": -3.0,
+          "spot": 63.880001068115234,
+          "n_trades": 10,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-02-04",
+          "daily_pnl": -13288.0,
+          "daily_pct": -2.05,
+          "spot": 63.36000061035156,
+          "n_trades": 8,
+          "lead_types": {
+            "CALL_TP": 6,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-10-25",
+          "daily_pnl": 29820.0,
+          "daily_pct": 5.44,
+          "spot": 81.5999984741211,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-08",
+          "daily_pnl": 26139.0,
+          "daily_pct": 5.75,
+          "spot": 68.72000122070312,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 24711.0,
+          "daily_pct": 6.19,
+          "spot": 58.79999923706055,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-12",
+          "daily_pnl": 24151.0,
+          "daily_pct": 3.99,
+          "spot": 63.880001068115234,
+          "n_trades": 3,
+          "lead_types": {
+            "PUT_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-02-02",
+          "daily_pnl": 23163.0,
+          "daily_pct": 3.58,
+          "spot": 75.91999816894531,
+          "n_trades": 3,
+          "lead_types": {
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-27",
+          "daily_pnl": 22084.0,
+          "daily_pct": 4.31,
+          "spot": 81.23999786376953,
+          "n_trades": 9,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-01",
+          "daily_pnl": 19049.0,
+          "daily_pct": 4.31,
+          "spot": 64.4000015258789,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 1,
+            "CALL_ROLL_UP": 1,
+            "ELEVATOR_CLOSE": 1
+          }
+        },
+        {
+          "date": "2021-10-05",
+          "daily_pnl": 18998.0,
+          "daily_pct": 3.55,
+          "spot": 87.12000274658203,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-30",
+          "daily_pnl": 18759.0,
+          "daily_pct": 3.61,
+          "spot": 80.63999938964844,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 1,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-09-23",
+          "daily_pnl": 17749.0,
+          "daily_pct": 3.67,
+          "spot": 70.5199966430664,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 443,
+          "total_pnl": 218118.66817318805,
+          "avg_pnl": 492.3671967792055,
+          "std_pnl": 428.0170369105508
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 59,
+          "total_pnl": 104228.48991672567,
+          "avg_pnl": 1766.5845748597571,
+          "std_pnl": 1133.6199829320149
+        },
+        "CALL_ROLL_UP": {
+          "count": 102,
+          "total_pnl": -99682.12469595326,
+          "avg_pnl": -977.2757323132672,
+          "std_pnl": 1689.8926208935568
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 152,
+          "total_pnl": -37237.302063395575,
+          "avg_pnl": -244.98225041707616,
+          "std_pnl": 282.13948763708635
+        },
+        "PUT_TP": {
+          "count": 437,
+          "total_pnl": 32161.4426378152,
+          "avg_pnl": 73.59597857623615,
+          "std_pnl": 126.51392965040039
+        },
+        "CALL_ASSIGN": {
+          "count": 141,
+          "total_pnl": -19251.090652101877,
+          "avg_pnl": -136.53255781632538,
+          "std_pnl": 355.6032614792875
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 12,
+          "total_pnl": -13642.106849731656,
+          "avg_pnl": -1136.842237477638,
+          "std_pnl": 1260.5955424142558
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 5682.221161047869,
+          "avg_pnl": 299.06427163409836,
+          "std_pnl": 1763.5147484028696
+        },
+        "OPEN_LONG_PUT": {
+          "count": 8,
+          "total_pnl": -5201.171436888099,
+          "avg_pnl": -650.1464296110124,
+          "std_pnl": 302.4451575508465
+        },
+        "PUT_ASSIGN": {
+          "count": 1,
+          "total_pnl": -187.6410996429533,
+          "avg_pnl": -187.6410996429533,
+          "std_pnl": 0
+        }
+      },
+      "risk": {
+        "sharpe_252": 1.9938266008193128,
+        "sortino_252": 2.474165494275507,
+        "downside_vol": 0.006175397970608274,
+        "upside_vol": 0.007159474678653246,
+        "downside_freq": 0.38562091503267976,
+        "avg_down_day": -0.35092440469235875,
+        "avg_up_day": 0.3769206842805405,
+        "worst_day_pct": -4.081815348103746,
+        "best_day_pct": 6.193948786316672
+      }
+    },
+    "champion_target_25_dd_trim": {
+      "name": "champion_target_25_dd_trim",
+      "days": 1225,
+      "final_nav": 972134.0529569128,
+      "total_return_pct": 205.7238965103764,
+      "worst_10_days": [
+        {
+          "date": "2022-04-01",
+          "daily_pnl": -21642.0,
+          "daily_pct": -3.14,
+          "spot": 79.68000030517578,
+          "n_trades": 11,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 9,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-10-06",
+          "daily_pnl": -21049.0,
+          "daily_pct": -3.85,
+          "spot": 79.0,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-02-03",
+          "daily_pnl": -20914.0,
+          "daily_pct": -3.12,
+          "spot": 68.95999908447266,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_TP": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-13",
+          "daily_pnl": -19661.0,
+          "daily_pct": -3.13,
+          "spot": 56.79999923706055,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_TP": 1,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-12-06",
+          "daily_pnl": -18000.0,
+          "daily_pct": -3.16,
+          "spot": 48.20000076293945,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 3,
+            "PUT_ROLL_DOWN": 2,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-11-29",
+          "daily_pnl": -15563.0,
+          "daily_pct": -2.56,
+          "spot": 63.52000045776367,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 4,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2021-09-29",
+          "daily_pnl": -15549.0,
+          "daily_pct": -2.94,
+          "spot": 75.36000061035156,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-12-01",
+          "daily_pnl": -14901.0,
+          "daily_pct": -2.53,
+          "spot": 55.63999938964844,
+          "n_trades": 7,
+          "lead_types": {
+            "CALL_TP": 2,
+            "PUT_ROLL_DOWN": 1,
+            "LONG_PUT_EXPIRE": 1
+          }
+        },
+        {
+          "date": "2021-09-07",
+          "daily_pnl": -13715.0,
+          "daily_pct": -2.95,
+          "spot": 63.880001068115234,
+          "n_trades": 10,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "PUT_TP": 1,
+            "OPEN_PUT": 1
+          }
+        },
+        {
+          "date": "2022-07-25",
+          "daily_pnl": -13656.0,
+          "daily_pct": -2.0,
+          "spot": 118.83999633789062,
+          "n_trades": 3,
+          "lead_types": {
+            "CALL_ROLL_UP": 2,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-10-25",
+          "daily_pnl": 28270.0,
+          "daily_pct": 5.22,
+          "spot": 81.5999984741211,
+          "n_trades": 5,
+          "lead_types": {
+            "PUT_TP": 3,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-08",
+          "daily_pnl": 25192.0,
+          "daily_pct": 5.58,
+          "spot": 68.72000122070312,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-12",
+          "daily_pnl": 24289.0,
+          "daily_pct": 4.03,
+          "spot": 63.880001068115234,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 2,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 23994.0,
+          "daily_pct": 6.03,
+          "spot": 58.79999923706055,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 4,
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-02-02",
+          "daily_pnl": 23719.0,
+          "daily_pct": 3.67,
+          "spot": 75.91999816894531,
+          "n_trades": 3,
+          "lead_types": {
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-27",
+          "daily_pnl": 20346.0,
+          "daily_pct": 4.01,
+          "spot": 81.23999786376953,
+          "n_trades": 9,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 7,
+            "OPEN_PUT": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-01",
+          "daily_pnl": 18426.0,
+          "daily_pct": 4.19,
+          "spot": 64.4000015258789,
+          "n_trades": 6,
+          "lead_types": {
+            "PUT_TP": 1,
+            "CALL_ROLL_UP": 1,
+            "ELEVATOR_CLOSE": 1
+          }
+        },
+        {
+          "date": "2021-10-05",
+          "daily_pnl": 17926.0,
+          "daily_pct": 3.39,
+          "spot": 87.12000274658203,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-30",
+          "daily_pnl": 17739.0,
+          "daily_pct": 3.45,
+          "spot": 80.63999938964844,
+          "n_trades": 4,
+          "lead_types": {
+            "PUT_TP": 1,
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1
+          }
+        },
+        {
+          "date": "2021-09-23",
+          "daily_pnl": 16992.0,
+          "daily_pct": 3.54,
+          "spot": 70.5199966430664,
+          "n_trades": 3,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 424,
+          "total_pnl": 202163.70556650477,
+          "avg_pnl": 476.801192373832,
+          "std_pnl": 426.16423368056024
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 59,
+          "total_pnl": 105777.82813488557,
+          "avg_pnl": 1792.8445446590774,
+          "std_pnl": 1132.399485366278
+        },
+        "CALL_ROLL_UP": {
+          "count": 99,
+          "total_pnl": -91944.87456811692,
+          "avg_pnl": -928.7361067486557,
+          "std_pnl": 1623.5113617402853
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 159,
+          "total_pnl": -40112.25881821547,
+          "avg_pnl": -252.27835734726713,
+          "std_pnl": 295.1768467517037
+        },
+        "PUT_TP": {
+          "count": 439,
+          "total_pnl": 33618.26146521925,
+          "avg_pnl": 76.57918329207118,
+          "std_pnl": 120.7084712026445
+        },
+        "CALL_ASSIGN": {
+          "count": 140,
+          "total_pnl": -20715.878401055277,
+          "avg_pnl": -147.9705600075377,
+          "std_pnl": 359.3383577511387
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 12,
+          "total_pnl": -13642.106849731656,
+          "avg_pnl": -1136.842237477638,
+          "std_pnl": 1260.5955424142558
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 5682.221161047869,
+          "avg_pnl": 299.06427163409836,
+          "std_pnl": 1763.5147484028696
+        },
+        "OPEN_LONG_PUT": {
+          "count": 8,
+          "total_pnl": -5201.171436888099,
+          "avg_pnl": -650.1464296110124,
+          "std_pnl": 302.4451575508465
+        },
+        "PUT_ASSIGN": {
+          "count": 1,
+          "total_pnl": -187.6410996429533,
+          "avg_pnl": -187.6410996429533,
+          "std_pnl": 0
+        }
+      },
+      "risk": {
+        "sharpe_252": 2.008188660968387,
+        "sortino_252": 2.483414860532202,
+        "downside_vol": 0.0060140551625863055,
+        "upside_vol": 0.00694138153372751,
+        "downside_freq": 0.3815359477124183,
+        "avg_down_day": -0.3421042315497505,
+        "avg_up_day": 0.36317262981807685,
+        "worst_day_pct": -3.84806217183864,
+        "best_day_pct": 6.032753226469412
+      }
+    },
+    "champion_20pct_protected": {
+      "name": "champion_20pct_protected",
+      "days": 1225,
+      "final_nav": 842322.9031576302,
+      "total_return_pct": 164.69240285076964,
+      "worst_10_days": [
+        {
+          "date": "2021-10-06",
+          "daily_pnl": -37492.0,
+          "daily_pct": -6.68,
+          "spot": 79.0,
+          "n_trades": 1,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2021-11-29",
+          "daily_pnl": -31420.0,
+          "daily_pct": -6.07,
+          "spot": 63.52000045776367,
+          "n_trades": 2,
+          "lead_types": {
+            "CALL_TP": 1,
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2022-05-09",
+          "daily_pnl": -29195.0,
+          "daily_pct": -4.65,
+          "spot": 97.23999786376952,
+          "n_trades": 2,
+          "lead_types": {
+            "CALL_TP": 2
+          }
+        },
+        {
+          "date": "2022-02-03",
+          "daily_pnl": -28467.0,
+          "daily_pct": -5.08,
+          "spot": 68.95999908447266,
+          "n_trades": 1,
+          "lead_types": {
+            "CALL_TP": 1
+          }
+        },
+        {
+          "date": "2022-01-13",
+          "daily_pnl": -27704.0,
+          "daily_pct": -5.48,
+          "spot": 56.79999923706055,
+          "n_trades": 1,
+          "lead_types": {
+            "CALL_TP": 1
+          }
+        },
+        {
+          "date": "2021-09-29",
+          "daily_pnl": -25283.0,
+          "daily_pct": -4.75,
+          "spot": 75.36000061035156,
+          "n_trades": 1,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2021-11-09",
+          "daily_pnl": -24730.0,
+          "daily_pct": -4.75,
+          "spot": 66.23999786376953,
+          "n_trades": 2,
+          "lead_types": {
+            "CALL_TP": 1,
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2022-05-06",
+          "daily_pnl": -24164.0,
+          "daily_pct": -3.71,
+          "spot": 110.72000122070312,
+          "n_trades": 0,
+          "lead_types": {}
+        },
+        {
+          "date": "2022-02-04",
+          "daily_pnl": -24056.0,
+          "daily_pct": -4.52,
+          "spot": 63.36000061035156,
+          "n_trades": 0,
+          "lead_types": {}
+        },
+        {
+          "date": "2026-02-02",
+          "daily_pnl": -23359.0,
+          "daily_pct": -2.7,
+          "spot": 12.699999809265137,
+          "n_trades": 2,
+          "lead_types": {
+            "CALL_ROLL_UP": 1,
+            "CALL_TP": 1
+          }
+        }
+      ],
+      "best_10_days": [
+        {
+          "date": "2021-09-27",
+          "daily_pnl": 40565.0,
+          "daily_pct": 8.19,
+          "spot": 81.23999786376953,
+          "n_trades": 1,
+          "lead_types": {
+            "ELEVATOR_CLOSE": 1
+          }
+        },
+        {
+          "date": "2021-10-25",
+          "daily_pnl": 37148.0,
+          "daily_pct": 7.21,
+          "spot": 81.5999984741211,
+          "n_trades": 1,
+          "lead_types": {
+            "PUT_TP": 1
+          }
+        },
+        {
+          "date": "2022-02-02",
+          "daily_pnl": 34754.0,
+          "daily_pct": 6.61,
+          "spot": 75.91999816894531,
+          "n_trades": 3,
+          "lead_types": {
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2022-01-12",
+          "daily_pnl": 34182.0,
+          "daily_pct": 7.25,
+          "spot": 63.880001068115234,
+          "n_trades": 2,
+          "lead_types": {
+            "OPEN_PUT": 1,
+            "OPEN_CC": 1
+          }
+        },
+        {
+          "date": "2021-09-08",
+          "daily_pnl": 26650.0,
+          "daily_pct": 5.98,
+          "spot": 68.72000122070312,
+          "n_trades": 1,
+          "lead_types": {
+            "PUT_TP": 1
+          }
+        },
+        {
+          "date": "2021-11-02",
+          "daily_pnl": 26157.0,
+          "daily_pct": 5.22,
+          "spot": 73.68000030517578,
+          "n_trades": 3,
+          "lead_types": {
+            "Z_TARGET_ADD": 1,
+            "OPEN_PUT_REJECTED_MARGIN": 1,
+            "OPEN_ITM_CC": 1
+          }
+        },
+        {
+          "date": "2021-10-05",
+          "daily_pnl": 24670.0,
+          "daily_pct": 4.6,
+          "spot": 87.12000274658203,
+          "n_trades": 0,
+          "lead_types": {}
+        },
+        {
+          "date": "2021-09-30",
+          "daily_pnl": 24436.0,
+          "daily_pct": 4.82,
+          "spot": 80.63999938964844,
+          "n_trades": 1,
+          "lead_types": {
+            "KOLD_SHOULDER_ENTRY": 1
+          }
+        },
+        {
+          "date": "2021-08-26",
+          "daily_pnl": 23633.0,
+          "daily_pct": 6.02,
+          "spot": 58.79999923706055,
+          "n_trades": 1,
+          "lead_types": {
+            "PUT_TP": 1
+          }
+        },
+        {
+          "date": "2022-05-23",
+          "daily_pnl": 23437.0,
+          "daily_pct": 3.7,
+          "spot": 120.27999877929688,
+          "n_trades": 0,
+          "lead_types": {}
+        }
+      ],
+      "trade_type_contribution": {
+        "CALL_TP": {
+          "count": 111,
+          "total_pnl": 151642.67136656144,
+          "avg_pnl": 1366.1501924915444,
+          "std_pnl": 1084.1758563470764
+        },
+        "ELEVATOR_CLOSE": {
+          "count": 18,
+          "total_pnl": 88640.96188525269,
+          "avg_pnl": 4924.497882514039,
+          "std_pnl": 4817.539106284488
+        },
+        "CALL_ROLL_UP": {
+          "count": 19,
+          "total_pnl": -53865.99401693114,
+          "avg_pnl": -2835.052316680586,
+          "std_pnl": 5151.8799665089
+        },
+        "PUT_TP": {
+          "count": 87,
+          "total_pnl": 20080.813441755843,
+          "avg_pnl": 230.813947606389,
+          "std_pnl": 376.09492227270715
+        },
+        "PUT_ROLL_DOWN": {
+          "count": 27,
+          "total_pnl": -15754.958083040301,
+          "avg_pnl": -583.5169660385296,
+          "std_pnl": 472.78729427243167
+        },
+        "OPEN_LONG_PUT_FLOOR": {
+          "count": 14,
+          "total_pnl": -13433.171476370526,
+          "avg_pnl": -959.5122483121804,
+          "std_pnl": 1017.7533642596908
+        },
+        "CALL_ASSIGN": {
+          "count": 43,
+          "total_pnl": -9427.48258750858,
+          "avg_pnl": -219.2437811048507,
+          "std_pnl": 885.409811904536
+        },
+        "OPEN_LONG_PUT": {
+          "count": 6,
+          "total_pnl": -3907.981955151117,
+          "avg_pnl": -651.3303258585195,
+          "std_pnl": 353.57640590903196
+        },
+        "LONG_PUT_EXPIRE": {
+          "count": 19,
+          "total_pnl": 3526.817054318736,
+          "avg_pnl": 185.6219502273019,
+          "std_pnl": 1465.3291237534688
+        },
+        "KOLD_SHOULDER_ENTRY": {
+          "count": 60,
+          "total_pnl": 0.0,
+          "avg_pnl": 0.0,
+          "std_pnl": 0.0
+        }
+      },
+      "risk": {
+        "sharpe_252": 1.1776249250089852,
+        "sortino_252": 1.5040122115077263,
+        "downside_vol": 0.009107261117843709,
+        "upside_vol": 0.010185816780673713,
+        "downside_freq": 0.4673202614379085,
+        "avg_down_day": -0.5998771249753206,
+        "avg_up_day": 0.6882568052065177,
+        "worst_day_pct": -6.683699872683824,
+        "best_day_pct": 8.191334978639375
+      }
+    }
+  },
+  "what_if": [
+    {
+      "date": "2026-02-02",
+      "actual_pnl": -11497.540778307826,
+      "spot_t0": 12.699999809265137,
+      "spot_t5": 12.170000076293944,
+      "spot_t10": 11.899999618530272,
+      "spot_t20": 12.279999732971191,
+      "mean_revert_t5": 4.173226306543234,
+      "mean_revert_t20": 3.3070872645804226,
+      "trades_fired": {
+        "CALL_ROLL_UP": 2,
+        "PUT_ROLL_DOWN": 1,
+        "CALL_TP": 1,
+        "OPEN_PUT_REJECTED_MARGIN": 1,
+        "OPEN_CC": 1
+      }
+    },
+    {
+      "date": "2022-02-03",
+      "actual_pnl": -8685.422076141229,
+      "spot_t0": 68.95999908447266,
+      "spot_t5": 55.560001373291016,
+      "spot_t10": 62.68000030517578,
+      "spot_t20": 69.36000061035156,
+      "mean_revert_t5": 19.431551463287132,
+      "mean_revert_t20": 0.5800486241145737,
+      "trades_fired": {
+        "PUT_ROLL_DOWN": 1,
+        "CALL_TP": 1,
+        "OPEN_PUT_REJECTED_MARGIN": 1,
+        "OPEN_CC": 1
+      }
+    },
+    {
+      "date": "2024-01-16",
+      "actual_pnl": -8483.859724404057,
+      "spot_t0": 23.1200008392334,
+      "spot_t5": 20.1200008392334,
+      "spot_t10": 19.399999618530277,
+      "spot_t20": 15.520000457763672,
+      "mean_revert_t5": 12.975778075704744,
+      "mean_revert_t20": 32.871972775074184,
+      "trades_fired": {
+        "PUT_ROLL_DOWN": 2,
+        "CALL_ASSIGN": 2,
+        "CALL_TP": 1,
+        "OPEN_PUT": 1,
+        "OPEN_ITM_CC": 1
+      }
+    },
+    {
+      "date": "2021-09-07",
+      "actual_pnl": -8317.48096483096,
+      "spot_t0": 63.880001068115234,
+      "spot_t5": 73.87999725341797,
+      "spot_t10": 67.4800033569336,
+      "spot_t20": 87.12000274658203,
+      "mean_revert_t5": 15.654345676418727,
+      "mean_revert_t20": 36.3807158576688,
+      "trades_fired": {
+        "ELEVATOR_CLOSE": 7,
+        "PUT_TP": 2,
+        "OPEN_PUT": 1,
+        "OPEN_ITM_CC": 1
+      }
+    },
+    {
+      "date": "2021-06-15",
+      "actual_pnl": -8040.61448977876,
+      "spot_t0": 45.20000076293945,
+      "spot_t5": 45.880001068115234,
+      "spot_t10": 51.20000076293945,
+      "spot_t20": 51.20000076293945,
+      "mean_revert_t5": 1.5044254285352348,
+      "mean_revert_t20": 13.27433605912578,
+      "trades_fired": {
+        "PUT_TP": 2,
+        "OPEN_PUT": 1,
+        "OPEN_CC": 1
+      }
+    },
+    {
+      "date": "2022-04-01",
+      "actual_pnl": -8011.003992880287,
+      "spot_t0": 79.68000030517578,
+      "spot_t5": 88.36000061035156,
+      "spot_t10": 108.5199966430664,
+      "spot_t20": 100.0,
+      "mean_revert_t5": 10.893574638467909,
+      "mean_revert_t20": 25.502007551453648,
+      "trades_fired": {
+        "ELEVATOR_CLOSE": 8,
+        "KOLD_SHOULDER_ENTRY": 1,
+        "OPEN_PUT": 1
+      }
+    },
+    {
+      "date": "2022-01-13",
+      "actual_pnl": -7924.1453065253445,
+      "spot_t0": 56.79999923706055,
+      "spot_t5": 52.400001525878906,
+      "spot_t10": 65.08000183105469,
+      "spot_t20": 55.79999923706055,
+      "mean_revert_t5": 7.746474947680554,
+      "mean_revert_t20": 1.7605634039296354,
+      "trades_fired": {
+        "PUT_ROLL_DOWN": 1,
+        "OPEN_PUT": 1
+      }
+    },
+    {
+      "date": "2024-05-20",
+      "actual_pnl": -7387.574052145821,
+      "spot_t0": 19.81999969482422,
+      "spot_t5": 19.36000061035156,
+      "spot_t10": 18.020000457763672,
+      "spot_t20": 19.940000534057617,
+      "mean_revert_t5": 2.320883408453249,
+      "mean_revert_t20": 0.605453284970208,
+      "trades_fired": {
+        "ELEVATOR_CLOSE": 7,
+        "PUT_TP": 1,
+        "OPEN_PUT": 1
+      },
+      "regret": "BTC-too-early: spot reverted toward strike within 5d"
+    },
+    {
+      "date": "2021-07-27",
+      "actual_pnl": -6421.31346202374,
+      "spot_t0": 54.959999084472656,
+      "spot_t5": 57.0,
+      "spot_t10": 57.560001373291016,
+      "spot_t20": 54.68000030517578,
+      "mean_revert_t5": 3.7117921206510474,
+      "mean_revert_t20": 0.5094592139030448,
+      "trades_fired": {
+        "OPEN_PUT_REJECTED_MARGIN": 1,
+        "OPEN_CC": 1
+      }
+    },
+    {
+      "date": "2022-02-04",
+      "actual_pnl": -6169.1156976016355,
+      "spot_t0": 63.36000061035156,
+      "spot_t5": 55.79999923706055,
+      "spot_t10": 61.63999938964844,
+      "spot_t20": 69.36000061035156,
+      "mean_revert_t5": 11.931820234319703,
+      "mean_revert_t20": 9.46969687847468,
+      "trades_fired": {
+        "CALL_TP": 4,
+        "PUT_ROLL_DOWN": 1,
+        "OPEN_PUT_REJECTED_MARGIN": 1,
+        "OPEN_CC": 1
+      }
+    }
+  ],
+  "metrics": {
+    "champion_cut_rebuild": {
+      "ret": 79.87836784528753,
+      "ann": 12.459406615781576,
+      "sharpe": 0.932472823374341,
+      "mdd": -20.05358562610194
+    },
+    "champion_aggressive_z": {
+      "ret": 164.4269653585703,
+      "ann": 21.467795100280984,
+      "sharpe": 1.2168923135010286,
+      "mdd": -24.118954703740695
+    },
+    "champion_20pct_protected_mom_gated": {
+      "ret": 162.0581802222958,
+      "ann": 21.2493849219062,
+      "sharpe": 1.1228936752660874,
+      "mdd": -24.118954703740695
+    },
+    "champion_20pct_protected_wing_all": {
+      "ret": 161.72346974594424,
+      "ann": 21.21839623906776,
+      "sharpe": 1.167945317461777,
+      "mdd": -24.090538408153687
+    },
+    "champion_20pct_protected": {
+      "ret": 164.8214494232945,
+      "ann": 21.50401571876881,
+      "sharpe": 1.1776249250089839,
+      "mdd": -24.118954703740695
+    },
+    "champion_trifecta": {
+      "ret": 77.42533727333745,
+      "ann": 12.150994202161392,
+      "sharpe": 0.9168934378904904,
+      "mdd": -19.553456997119767
+    },
+    "champion_target_25_smooth": {
+      "ret": 213.18257421533556,
+      "ann": 25.6491392675553,
+      "sharpe": 1.9938266008193102,
+      "mdd": -9.94816547095805
+    },
+    "champion_premium_harvest_scale_invariant": {
+      "ret": 137.21361826322345,
+      "ann": 18.85786463538601,
+      "sharpe": 2.7945517372216258,
+      "mdd": -4.8303723402913095
+    },
+    "champion_premium_harvest_ultra": {
+      "ret": 113.36390486747176,
+      "ann": 16.36548667328801,
+      "sharpe": 1.7498192562867794,
+      "mdd": -7.00545035912815
+    },
+    "champion_target_25_dd_trim": {
+      "ret": 205.6333241951683,
+      "ann": 25.037459459960807,
+      "sharpe": 2.008188660968385,
+      "mdd": -9.343499660164923
+    },
+    "champion_target_25_max_protected": {
+      "ret": 90.28383395634587,
+      "ann": 13.731398281551321,
+      "sharpe": 2.1163512309977524,
+      "mdd": -4.755526982411213
+    },
+    "champion_target_25_nav_aware": {
+      "ret": 132.1467855702172,
+      "ann": 18.345714202162533,
+      "sharpe": 2.075615282918063,
+      "mdd": -8.616641359366803
+    },
+    "champion_target_25_cash_start": {
+      "ret": 132.1467855702172,
+      "ann": 18.345714202162533,
+      "sharpe": 2.075615282918063,
+      "mdd": -8.616641359366803
+    },
+    "champion_target_25_window_safe": {
+      "ret": 152.14465245614372,
+      "ann": 20.31781942319959,
+      "sharpe": 1.2190407964585237,
+      "mdd": -25.04763677450858
+    },
+    "champion_aggressive_z_iv_shape": {
+      "ret": 123.61512748130549,
+      "ann": 17.462769426599458,
+      "sharpe": 1.0248994426541724,
+      "mdd": -23.14103363388826
+    }
+  }
+}
