@@ -20,8 +20,8 @@ echo "--- replay_engine ---" | tee -a "$LOG"
 $VENV backtest/replay_engine.py >> "$LOG" 2>&1
 REPLAY_EXIT=$?
 
-# 2) Ablation on top strategies
-for strat in elevator_close_surprise regime_aware_surprise regime_aware_roll_up; do
+# 2) Ablation on top real-strikes strategies (post-retire 2026-06-05)
+for strat in champion_premium_harvest_scale_invariant champion_target_25_smooth champion_target_25_dd_trim; do
     echo "--- ablation:$strat ---" | tee -a "$LOG"
     $VENV backtest/ablation.py --strategy "$strat" >> "$LOG" 2>&1
 done

@@ -16,7 +16,7 @@ import json
 import argparse
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from scipy.stats import norm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -3933,39 +3933,41 @@ STRATEGIES = {
 }
 
 
-# RETIRE old format. Keep only Pareto winners + key baselines.
-# All remaining strategies default to use_real_iv_surface=True (set in
-# run_strategy_simple). The strategies below are intentionally kept short
-# for clarity; reference ablations live in git history.
+# RETIRE old format. Keep only strategies that use real strikes (per-expiry
+# snap to actually-listed strikes via PG ung_iv_surface + heuristic fallback).
+# All remaining strategies use real IV surface (default) AND real strikes.
+# This makes backtest decisions match live constraints exactly.
+#
+# Retired 2026-06-05 (15 strategies dropped — see git history for definitions):
+#   naive_atm, otm_managed, beam_put_only, elevator_close_surprise (baselines)
+#   kelly_firmness, kelly_short_dd_balanced, kelly_short_dd_minimal, kelly_z_target_winner
+#   champion_20pct_plus_floor (no real strikes)
+#   champion_aggressive_z_real_iv (superseded by champion_aggressive_z which has real strikes)
+#   champion_cut_rebuild_fast, champion_cut_rebuild_slow
+#   champion_premium_harvest (superseded by _scale_invariant which has real strikes)
+#   champion_target_25 (superseded by _smooth / _dd_trim / _window_safe)
+#   champion_target_25_walkforward_safe (no real strikes; superseded by _window_safe)
 _KEEP_STRATEGIES = {
-    # Sanity / unprotected reference baselines
-    'naive_atm', 'otm_managed', 'champion_20pct_plus_floor',
-    'kelly_firmness', 'beam_put_only',
-    # Diagnostic bases (used by ablation.py / bug_watch sample-bias check)
-    'elevator_close_surprise',
-    # Pareto-frontier protected family
+    # Pareto-frontier protected family (real strikes ✓)
     'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
-    'champion_cut_rebuild', 'champion_cut_rebuild_slow', 'champion_cut_rebuild_fast',
-    'kelly_z_target_winner', 'kelly_short_dd_balanced', 'kelly_short_dd_minimal',
-    # Winner family
-    'champion_aggressive_z',            # proxy version for ablation
-    'champion_aggressive_z_real_iv',    # prior CHAMPION (Sharpe 1.91)
-    'champion_aggressive_z_iv_shape',   # term+skew aware
-    'champion_target_25',                # NEW CHAMPION (ann 25.7%, Sharpe 2.82, MDD -7.1%)
-    'champion_target_25_nav_aware',      # NAV-relative sizing (capital-scale invariant)
-    'champion_target_25_cash_start',     # Optimized for all-cash start
-    'champion_target_25_window_safe',    # Tighter rolling-MDD controls
-    'champion_target_25_dd_trim',        # WALK-FWD WINNER: same MDD, better Sharpe
-    'champion_target_25_max_protected',  # Worst 12mo MDD only -15% (vs -24%)
-    'champion_target_25_walkforward_safe', # walk-fwd hardened share-cut + cc-aware
-    'champion_premium_harvest',           # ITM-put premium harvest, smaller share base
-    'champion_premium_harvest_ultra',     # Ultra-conservative WF (51pp range)
-    'champion_premium_harvest_scale_invariant',  # NAV-pct sizing (low CV)
-    'champion_target_25_smooth',         # tanh-continuous z-mult, smoother NAV
-    'champion_trifecta',                 # diagnostic
-    'champion_20pct_protected_wing_all', # diagnostic for wing mechanic
+    'champion_cut_rebuild',
+    # Winner family (real strikes ✓)
+    'champion_aggressive_z',
+    'champion_aggressive_z_iv_shape',
+    'champion_target_25_nav_aware',
+    'champion_target_25_cash_start',
+    'champion_target_25_window_safe',
+    'champion_target_25_dd_trim',
+    'champion_target_25_max_protected',
+    'champion_premium_harvest_ultra',
+    'champion_premium_harvest_scale_invariant',  # production kernel
+    'champion_target_25_smooth',
+    'champion_trifecta',
+    'champion_20pct_protected_wing_all',
 }
-STRATEGIES = {k: v for k, v in STRATEGIES.items() if k in _KEEP_STRATEGIES}
+# Defense-in-depth: also filter out any strategy missing use_real_strikes
+STRATEGIES = {k: v for k, v in STRATEGIES.items()
+              if k in _KEEP_STRATEGIES and v.get('use_real_strikes')}
 
 
 # ─── STALE FILTER (lifecycle) ────────────────────────────────────────────────
