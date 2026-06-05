@@ -50,10 +50,23 @@ else
     echo "📝 paper mode — planned actions logged only" | tee -a "$RUN_LOG"
 fi
 
+# 3a) FIRST: escalation sweep — cancel + tag stale unfilled orders
+echo "--- escalation sweep ---" | tee -a "$RUN_LOG"
+$VENV live/cancel_escalate.py $LIVE_FLAG 2>&1 | tee -a "$RUN_LOG" || true
+
+# 3b) NOW: submit new orders for today's best play
+echo "--- execute kernel plan ---" | tee -a "$RUN_LOG"
 $VENV live/execute_kernel_plan.py $LIVE_FLAG 2>&1 | tee -a "$RUN_LOG"
 
-# 4) Show last 3 log entries
+# 4) Daily digest on every 24th cycle (~every 12hr if cycle every 30min)
+HOUR=$(date +%H)
+if [ "$HOUR" = "12" ] || [ "$HOUR" = "00" ]; then
+    echo "--- daily digest ---" | tee -a "$RUN_LOG"
+    $VENV live/daily_digest.py --hours 24 2>&1 | tee -a "$RUN_LOG"
+fi
+
+# 5) Always show last 3 log entries
 echo "--- recent trading actions ---" | tee -a "$RUN_LOG"
-$VENV live/trading_log.py 3 2>&1 | head -60 | tee -a "$RUN_LOG"
+$VENV live/trading_log.py 3 2>&1 | head -40 | tee -a "$RUN_LOG"
 
 exit 0
