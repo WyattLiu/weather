@@ -36,7 +36,10 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # WS = zero commission
 COMMISSION = 0.0
-SPREAD_OPTION = 0.03  # $0.03/share bid-ask half-spread typical UNG
+SPREAD_OPTION = 0.05  # $0.05/share half-spread (pessimistic): UNG NBBO
+                      # on ATM is typically $0.04-0.10 wide → half ≈ 0.02-0.05
+                      # Bumped from 0.03 for realism; honest_walkforward also
+                      # adds 5% slippage on opens — together = full-cycle realism.
 SPREAD_SHARE = 0.005
 
 
@@ -1118,6 +1121,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if bool(row.get('ung_uptrend', False)):
                     # Uptrend → let it recover, skip the roll
                     roll_eligible = False
+            # SURGE-Z GATE: when UNG has dumped hard (surge_z < -1.5),
+            # rolling down LOCKS IN the loss right before mean reversion.
+            # Per session analysis: 2022-02-03 PUT_ROLL_DOWN locked -$8.6K
+            # right before spot rallied -19.4% in 5d. PUT_ROLL_DOWN is the
+            # single biggest losing trade type (-$41K cumulative on
+            # premium_harvest_scale_invariant). Skip rolls during outsized
+            # down-moves; let position ride to recovery or assignment.
+            if roll_eligible and p.get('surge_gate_roll', True):
+                _sz = float(row.get('ung_surge_z') or 0.0)
+                if _sz < -1.5:
+                    roll_eligible = False
+                    trades.append({'date': idx, 'type': 'PUT_ROLL_SKIP_SURGE',
+                                   'pnl': 0.0, 'qty': sp['qty'], 'K': sp['K'],
+                                   'spot': spot_u, 'surge_z': round(_sz, 2),
+                                   'note': 'spot dumped hard; mean reversion likely → skip roll'})
             # ASSIGNMENT-AWARE roll skip: if put is deep ITM AND we WANT shares
             # at this strike (e.g., extreme cheap regime), let it assign rather
             # than roll. Wheel mechanic: assignment = "accumulate at the strike
