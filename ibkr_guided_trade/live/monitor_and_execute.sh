@@ -41,22 +41,28 @@ fi
 curl -s --max-time 15 http://127.0.0.1:10001/api/refresh > /dev/null 2>&1 || true
 sleep 2
 
-# 3) Execute kernel plan (PAPER by default; set --live + KERNEL_LIVE=1 to submit)
-LIVE_FLAG=""
-if [ "${KERNEL_LIVE:-0}" = "1" ]; then
-    LIVE_FLAG="--live"
-    echo "🔴 LIVE MODE — orders WILL be submitted" | tee -a "$RUN_LOG"
+# 3) Mode selection (auto = will submit up to daily cap if KERNEL_LIVE=1)
+MODE="${KERNEL_MODE:-paper}"          # paper | review | auto
+DAILY_MAX="${KERNEL_DAILY_MAX:-4}"    # cap orders/24h in auto mode
+if [ "${KERNEL_LIVE:-0}" = "1" ] && [ "$MODE" = "auto" ]; then
+    echo "🔴 AUTO+LIVE — will submit up to $DAILY_MAX orders/24h" | tee -a "$RUN_LOG"
+elif [ "$MODE" = "review" ]; then
+    echo "👁  review mode — interactive confirm (non-tty = decline)" | tee -a "$RUN_LOG"
+elif [ "$MODE" = "auto" ]; then
+    echo "🟡 auto mode but KERNEL_LIVE!=1 → orders blocked by env_guard" | tee -a "$RUN_LOG"
 else
     echo "📝 paper mode — planned actions logged only" | tee -a "$RUN_LOG"
 fi
 
-# 3a) FIRST: escalation sweep — cancel + tag stale unfilled orders
+# 3a) Escalation sweep — cancel stale unfilled orders (live-aware)
 echo "--- escalation sweep ---" | tee -a "$RUN_LOG"
-$VENV live/cancel_escalate.py $LIVE_FLAG 2>&1 | tee -a "$RUN_LOG" || true
+ESC_LIVE_FLAG=""
+[ "${KERNEL_LIVE:-0}" = "1" ] && ESC_LIVE_FLAG="--live"
+$VENV live/cancel_escalate.py $ESC_LIVE_FLAG 2>&1 | tee -a "$RUN_LOG" || true
 
-# 3b) NOW: submit new orders for today's best play
-echo "--- execute kernel plan ---" | tee -a "$RUN_LOG"
-$VENV live/execute_kernel_plan.py $LIVE_FLAG 2>&1 | tee -a "$RUN_LOG"
+# 3b) Submit new orders for today's best play
+echo "--- execute kernel plan ($MODE) ---" | tee -a "$RUN_LOG"
+$VENV live/execute_kernel_plan.py --mode "$MODE" --daily-max "$DAILY_MAX" 2>&1 | tee -a "$RUN_LOG"
 
 # 4) Daily digest on every 24th cycle (~every 12hr if cycle every 30min)
 HOUR=$(date +%H)

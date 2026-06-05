@@ -91,11 +91,41 @@ def check_existing_order(ws_orders: list, expected_symbol: str, side: str) -> Op
     return None
 
 
-def execute_best_play(verdict: dict, live: bool = False, dry_run_only: bool = True) -> dict:
-    """Translate verdict.best_play into orders. Returns dict for logging."""
+def count_recent_submissions(hours: int = 24) -> int:
+    """Count distinct submitted orders in the trading log over last N hours."""
+    import json, time
+    from datetime import datetime
+    if not os.path.exists(os.path.join(os.path.dirname(__file__), 'log', 'trading_actions.jsonl')):
+        return 0
+    log_path = os.path.join(os.path.dirname(__file__), 'log', 'trading_actions.jsonl')
+    cutoff = time.time() - hours * 3600
+    n = 0
+    with open(log_path) as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+                t = datetime.strptime(e['ts'], '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                if t < cutoff: continue
+                if e.get('action_taken') in ('submitted', 'submitted_partial'):
+                    n += len(e.get('submitted_orders') or [])
+            except Exception:
+                continue
+    return n
+
+
+def execute_best_play(verdict: dict, mode: str = 'paper',
+                       daily_max_submissions: int = 4) -> dict:
+    """Translate verdict.best_play into orders. Mode controls live/review/paper.
+
+    Modes:
+      paper  — log intent only, never submit (cron-safe default)
+      review — print plan to stderr, read stdin y/n per order set
+      auto   — submit if under daily_max_submissions cap; else fall back to review log
+    """
     actionable = [o for o in (verdict.get('actionable_orders') or []) if o.get('best_play')]
     if not actionable:
-        return {'action_taken': 'no_best_play', 'notes': 'kernel surfaced nothing actionable today'}
+        return {'action_taken': 'no_best_play', 'mode': mode,
+                'notes': 'kernel surfaced nothing actionable today'}
 
     best = actionable[0]
     kind = best.get('order_type')
@@ -104,22 +134,44 @@ def execute_best_play(verdict: dict, live: bool = False, dry_run_only: bool = Tr
     pass_kinds = {'WAIT_FOR_ASSIGNMENT', 'CC_SKIPPED', 'SHARES_SELL_BLOCKED',
                   'SYNTHETIC_SHORT_BLOCKED'}
     if kind in pass_kinds:
-        return {'action_taken': 'pass_no_order_needed',
+        return {'action_taken': 'pass_no_order_needed', 'mode': mode,
                 'notes': f'{kind}: {best.get("rationale", "")[:120]}'}
+
+    # Daily-cap gate: applies ONLY in auto mode. Paper/review unconstrained.
+    if mode == 'auto':
+        recent = count_recent_submissions(hours=24)
+        if recent >= daily_max_submissions:
+            return {'action_taken': 'auto_cap_reached', 'mode': 'auto',
+                    'recent_submissions_24h': recent,
+                    'daily_max': daily_max_submissions,
+                    'notes': f'{recent}/{daily_max_submissions} daily-cap reached; falling back to paper-log only. Override: KERNEL_LIVE=1 + --mode review for next action.'}
 
     # We currently support: PUT_SHORT_MIX (laddered), CALL_SHORT_COVERED (laddered)
     if kind == 'PUT_SHORT_MIX':
-        return _execute_put_short_mix(best, live, dry_run_only)
+        return _execute_put_short_mix(best, mode=mode)
     if kind == 'CALL_SHORT_COVERED':
-        return _execute_cc(best, live, dry_run_only)
+        return _execute_cc(best, mode=mode)
     if kind == 'CC_BTC_TO_FREE_SHARES':
-        return {'action_taken': 'manual_review',
+        return {'action_taken': 'manual_review', 'mode': mode,
                 'notes': f'BTC {best.get("qty")} calls — requires manual leg-picking by extrinsic; not auto-executed'}
-    return {'action_taken': 'unhandled',
+    return {'action_taken': 'unhandled', 'mode': mode,
             'notes': f'unhandled best-play type: {kind}'}
 
 
-def _execute_put_short_mix(order: dict, live: bool, dry_run_only: bool) -> dict:
+def _confirm_interactive(prompt: str) -> bool:
+    """Read y/n from stdin. If stdin isn't a tty (e.g. cron), default to no."""
+    import sys
+    if not sys.stdin.isatty():
+        print(f'[review] non-interactive stdin — auto-declining: {prompt}', file=sys.stderr)
+        return False
+    try:
+        ans = input(f'\n{prompt} [y/N]: ').strip().lower()
+        return ans in ('y', 'yes')
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def _execute_put_short_mix(order: dict, mode: str = 'paper') -> dict:
     """Submit ONLY the passive tier for each leg, anchored to LIVE bid/ask.
 
     Conservative defaults in live mode:
@@ -182,9 +234,10 @@ def _execute_put_short_mix(order: dict, live: bool, dry_run_only: bool) -> dict:
         resolved_data.append(resolved)
 
     total_credit = sum(o.get('est_credit', 0) for o in intent if 'error' not in o)
-    review_required = total_credit > review_threshold_credit
+    review_required_by_amount = total_credit > review_threshold_credit
 
-    if dry_run_only or not live:
+    # PAPER mode: log intent, never submit
+    if mode == 'paper':
         return {
             'action_taken': 'planned_only',
             'mode': 'paper',
@@ -192,15 +245,40 @@ def _execute_put_short_mix(order: dict, live: bool, dry_run_only: bool) -> dict:
                       f'across {total_contracts} contracts (capped from kernel: '
                       f'{sum(l.get("kernel_qty", l.get("qty", 0)) for l in intent if "error" not in l)})'),
             'planned_orders': intent,
-            'review_required': review_required,
+            'review_required_by_amount': review_required_by_amount,
         }
 
-    # LIVE submission
-    if review_required:
+    # REVIEW mode: print plan, ask confirm per leg
+    if mode == 'review':
+        print(f'\n=== REVIEW: {len(intent)} legs, total credit ~${total_credit:.0f} ===', file=sys.stderr)
+        for i, o in enumerate(intent):
+            if 'error' in o:
+                print(f'  [{i}] SKIP {o["symbol"]} — {o["error"]}', file=sys.stderr)
+                continue
+            print(f'  [{i}] {o["side"]} {o["qty"]}× {o["symbol_human"]} @ ${o["limit_price"]}'
+                  f'  (live bid {o["live_bid"]} / ask {o["live_ask"]} / OI {o["oi"]})  est credit ${o["est_credit"]:.0f}',
+                  file=sys.stderr)
+        if not _confirm_interactive('Submit ALL legs above? (no = skip all)'):
+            return {'action_taken': 'review_declined', 'mode': 'review',
+                    'planned_orders': intent,
+                    'notes': 'user declined or non-interactive stdin'}
+        # User said yes — fall through to live submit
+
+    # LIVE / AUTO submission path (review fell through, or auto mode)
+    if mode == 'auto' and review_required_by_amount:
         return {
             'action_taken': 'consult_required',
-            'mode': 'live',
-            'notes': f'Total credit ${total_credit:.0f} > ${review_threshold_credit} threshold; manual approval needed',
+            'mode': 'auto',
+            'notes': f'AUTO: total credit ${total_credit:.0f} > ${review_threshold_credit} threshold; requires --mode review approval',
+            'planned_orders': intent,
+        }
+
+    # Live env var still required as belt-and-suspenders
+    if os.environ.get('KERNEL_LIVE') != '1':
+        return {
+            'action_taken': 'env_guard_blocked',
+            'mode': mode,
+            'notes': f'mode={mode} requires env KERNEL_LIVE=1 to actually submit; refusing without it',
             'planned_orders': intent,
         }
     try:
@@ -228,10 +306,11 @@ def _execute_put_short_mix(order: dict, live: bool, dry_run_only: bool) -> dict:
     }
 
 
-def _execute_cc(order: dict, live: bool, dry_run_only: bool) -> dict:
+def _execute_cc(order: dict, mode: str = 'paper') -> dict:
+    """CC live not yet supported in this code path — surface intent only."""
     ladder = order.get('limit_ladder') or []
     if not ladder:
-        return {'action_taken': 'no_ladder', 'notes': 'CC had no ladder'}
+        return {'action_taken': 'no_ladder', 'mode': mode, 'notes': 'CC had no ladder'}
     passive = ladder[0]
     intent = {
         'symbol': order['symbol'],
@@ -241,22 +320,26 @@ def _execute_cc(order: dict, live: bool, dry_run_only: bool) -> dict:
         'limit_price': float(passive['limit_price']),
         'tier': passive['kind'],
     }
-    if dry_run_only or not live:
-        return {'action_taken': 'planned_only', 'mode': 'paper',
-                'notes': f'PAPER: would submit CC passive tier',
-                'planned_orders': [intent]}
-    return {'action_taken': 'live_not_implemented',
-            'notes': 'CC live submission not yet wired'}
+    return {'action_taken': 'planned_only' if mode == 'paper' else 'cc_live_not_implemented',
+            'mode': mode,
+            'notes': 'CC submission not wired to live yet; will be enabled after PUT_SHORT_MIX validated',
+            'planned_orders': [intent]}
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--live', action='store_true',
-                   help='Actually submit orders (requires KERNEL_LIVE=1 env var)')
+    p.add_argument('--mode', choices=['paper', 'review', 'auto'], default='paper',
+                   help='paper=log only (safe), review=confirm per leg interactively, '
+                        'auto=submit up to --daily-max per 24h then fall back to paper')
+    p.add_argument('--daily-max', type=int, default=4,
+                   help='Auto mode: max submitted orders per 24h before falling back to paper')
+    # Backward-compat: --live → --mode auto + sets KERNEL_LIVE assumed
+    p.add_argument('--live', action='store_true', help='Alias for --mode auto')
     args = p.parse_args()
+    if args.live:
+        args.mode = 'auto'
 
-    live = args.live and os.environ.get('KERNEL_LIVE') == '1'
-    dry_run_only = not live
+    mode = args.mode
 
     acquire_lock()
     try:
@@ -298,7 +381,7 @@ def main():
                 'passive_tier_price': (best_play.get('limit_ladder') or [{}])[0].get('limit_price') if best_play.get('limit_ladder') else None,
             }
 
-        result = execute_best_play(verdict, live=live, dry_run_only=dry_run_only)
+        result = execute_best_play(verdict, mode=mode, daily_max_submissions=args.daily_max)
 
         log_entry = {
             'kernel': verdict.get('kernel'),
@@ -307,15 +390,22 @@ def main():
             'surge_z': verdict.get('surge_z'),
             'positions_snapshot': snapshot,
             'verdict_best_play': verdict_best_play_log,
-            'mode': 'live' if live else 'paper',
-            **result,
+            **result,  # result already has 'mode'
         }
         log_action(log_entry)
 
-        print(f'[{log_entry["ts"]}] mode={log_entry["mode"]} action={log_entry["action_taken"]}')
+        print(f'[{log_entry["ts"]}] mode={log_entry.get("mode", mode)} action={log_entry["action_taken"]}')
         if log_entry.get('planned_orders'):
             for po in log_entry['planned_orders']:
-                print(f'  PLAN: {po["side"]} {po["qty"]}× {po["symbol_human"]} @ ${po["limit_price"]} ({po["tier"]})')
+                if 'error' in po:
+                    print(f'  SKIP: {po.get("symbol","?")} — {po["error"]}')
+                else:
+                    print(f'  PLAN: {po.get("side","?")} {po.get("qty","?")}× {po.get("symbol_human", po.get("symbol","?"))} @ ${po.get("limit_price","?")}')
+        if log_entry.get('submitted_orders'):
+            for so in log_entry['submitted_orders']:
+                print(f'  ✓ SUBMITTED: {so.get("side","?")} {so.get("qty","?")}× {so.get("symbol_human","?")} @ ${so.get("limit_price","?")} → {so.get("external_id","?")}')
+        if log_entry.get('recent_submissions_24h') is not None:
+            print(f'  📊 daily counter: {log_entry["recent_submissions_24h"]}/{log_entry.get("daily_max", "?")} in last 24h')
         return 0
     finally:
         release_lock()
