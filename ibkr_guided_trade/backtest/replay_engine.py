@@ -664,7 +664,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # DD-aware risk dial — generic protection against any adverse
         # regime (sharp crash or slow decline). Track NAV peak; if
         # current NAV is significantly below peak, scale down all sizing.
-        cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117 + s['kold'] * spot_k
+        cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float(row.get('BOXX') or 117.0) + s['kold'] * spot_k
         if cur_nav > nav_peak:
             nav_peak = cur_nav
         dd_pct = (cur_nav - nav_peak) / nav_peak * 100 if nav_peak > 0 else 0
@@ -1358,7 +1358,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
         # BOXX yield
         if s['boxx'] > 0:
-            s['cash'] += s['boxx'] * 117 * 0.04 / 365
+            s['cash'] += s['boxx'] * float(row.get('BOXX') or 117.0) * 0.04 / 365
 
         # KOLD exit
         if s['kold'] > 0 and z > -0.3:
@@ -1469,7 +1469,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             elif in_shoulder and z > -0.5 and s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
                 # Scale entry by z-score richness — richer NG → larger hedge
                 z_scale = min(1.0, max(0.3, 0.5 + z * 0.3))  # 0.3 at z=-0.5, 1.0 at z=+1.5
-                nav_now = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117
+                nav_now = s['cash'] + s['shares'] * spot_u + s['boxx'] * float(row.get('BOXX') or 117.0)
                 if nav_now > 0:
                     try:
                         tq = int(nav_now * shoulder_pct * z_scale / spot_k)
@@ -2042,7 +2042,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
                 # Guard against NaN spot_k or NaN nav
                 if s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
-                    nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117
+                    nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float(row.get('BOXX') or 117.0)
                     if pd.isna(nav) or nav <= 0:
                         tq = 0
                     else:
@@ -2054,14 +2054,33 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         s['kold'] += tq
                         s['cash'] -= tq * spot_k + tq * SPREAD_SHARE
 
-            # BOXX management
+            # BOXX management — use REAL price from master_dataset, not hardcoded.
+            # 50% margin requirement → can hold 2x free cash in BOXX with margin.
+            # Decision: hold BOXX up to (excess_cash * margin_factor) where
+            # excess = cash - put_collateral_required - cash_buffer.
+            spot_boxx = float(row.get('BOXX') or 117.0)
             if p.get('boxx'):
-                excess = s['cash'] - 20000
+                put_collat = sum(sp['K'] * 100 * sp['qty'] for sp in s['short_puts'])
+                cash_buffer = 20000  # keep this much liquid
+                excess = s['cash'] - put_collat - cash_buffer
+                margin_factor = p.get('boxx_margin_factor', 0.6)  # default conservative
                 if excess > 5000:
-                    nb = int(excess * 0.6 / 117)
-                    if nb >= 10:
-                        s['boxx'] += nb
-                        s['cash'] -= nb * 117 + nb * SPREAD_SHARE
+                    target_boxx_dollars = excess * margin_factor
+                    target_boxx_shares = int(target_boxx_dollars / spot_boxx)
+                    delta = target_boxx_shares - s['boxx']
+                    if delta >= 10:
+                        # Buy more BOXX
+                        s['boxx'] += delta
+                        s['cash'] -= delta * spot_boxx + delta * SPREAD_SHARE
+                elif excess < -1000 and s['boxx'] > 0:
+                    # Need cash for puts — sell BOXX
+                    needed = min(s['boxx'], int(abs(excess) / spot_boxx) + 10)
+                    s['boxx'] -= needed
+                    s['cash'] += needed * spot_boxx - needed * SPREAD_SHARE
+
+            # BOXX yield (use realized 4.74% from data, daily accrual)
+            if s['boxx'] > 0:
+                s['cash'] += s['boxx'] * spot_boxx * 0.0474 / 365
 
         # Track weekly premium for income-mode awareness (every Monday-ish)
         if i % 7 == 0 and i > 0:
@@ -2073,7 +2092,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             recent_premium.append(wk_credit)
             if len(recent_premium) > 12:
                 recent_premium.pop(0)
-        nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * 117 + s['kold'] * spot_k
+        # NAV uses real BOXX price now
+        nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float(row.get('BOXX') or 117.0) + s['kold'] * spot_k
         history.append({
             'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
             'cash': s['cash'], 'shares': s['shares'], 'boxx': s['boxx'], 'kold': s['kold'],

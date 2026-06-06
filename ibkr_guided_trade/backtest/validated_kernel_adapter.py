@@ -509,6 +509,45 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             out['warnings'].append('Short-put collateral > 60% of NAV — elevated; '
                                    'avoid adding new put exposure')
 
+    # ─── BOXX CASH OPTIMIZATION ──────────────────────────────────────────
+    # When idle cash is sitting (above put collateral + buffer), park it in
+    # BOXX for risk-free ~4.74% yield. 50% margin requirement → can hold
+    # up to 2× free cash with margin.
+    boxx_qty = 0
+    boxx_mkt_value = 0.0
+    for p in (positions or []):
+        if p.get('symbol', '').upper() == 'BOXX' and not p.get('is_option'):
+            boxx_qty += int(p.get('quantity', 0))
+            boxx_mkt_value += float(p.get('market_value', 0))
+    # Estimate cash from NAV breakdown
+    share_value = current_shares * spot
+    est_cash = (nav or 0) - share_value - boxx_mkt_value
+    # Free cash for puts: cash - existing put collateral
+    free_cash_after_puts = est_cash - current_put_collateral
+    # BOXX margin: 50% of position uses cash, 50% on margin
+    boxx_cash_locked = boxx_mkt_value * 0.5
+    # Suggested BOXX max position (conservative — leave $20K buffer)
+    cash_buffer = 20000
+    excess_cash = max(0, free_cash_after_puts + boxx_cash_locked - cash_buffer)
+    if excess_cash > 5000 and (nav or 0) > 0:
+        # How much more BOXX can we add?
+        more_boxx_dollars = int(excess_cash * 0.6)  # conservative margin use
+        boxx_spot_est = 117.0  # live yfinance fetch could override
+        more_boxx_shares = int(more_boxx_dollars / boxx_spot_est)
+        if more_boxx_shares >= 10:
+            out['recommendations'].append({
+                'action': f'BUY ~{more_boxx_shares} BOXX (~${more_boxx_shares*boxx_spot_est:,.0f}, captures ~4.74%/yr yield on idle cash)',
+                'why': f'Free cash ${free_cash_after_puts:,.0f} + BOXX margin freed ${boxx_cash_locked:,.0f} = ${excess_cash:,.0f} above buffer. Risk-free ~4.74% beats sitting in cash at 0%.',
+                'priority': 'low',
+            })
+    out['boxx_state'] = {
+        'qty': boxx_qty, 'market_value': round(boxx_mkt_value, 0),
+        'pct_nav': round(boxx_mkt_value / nav * 100, 1) if (nav or 0) > 0 else 0,
+        'cash_locked_50pct_margin': round(boxx_cash_locked, 0),
+        'free_cash_after_puts_est': round(free_cash_after_puts, 0),
+        'suggest_more_boxx_shares': more_boxx_shares if excess_cash > 5000 else 0,
+    }
+
     # Shoulder
     import datetime
     month = datetime.date.today().month

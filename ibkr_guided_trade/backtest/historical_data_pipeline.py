@@ -35,7 +35,7 @@ def fetch_ung_kold_boil(years=5):
     print(f"[data] Fetching ETF + futures prices ({years}yr)...")
     period = f'{years}y'
     out = {}
-    for sym in ['UNG', 'KOLD', 'BOIL', 'NG=F', 'CL=F', 'DX-Y.NYB', '^VIX']:
+    for sym in ['UNG', 'KOLD', 'BOIL', 'BOXX', 'NG=F', 'CL=F', 'DX-Y.NYB', '^VIX']:
         try:
             t = yf.Ticker(sym)
             df = t.history(period=period)
