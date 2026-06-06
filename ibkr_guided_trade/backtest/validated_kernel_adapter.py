@@ -509,27 +509,42 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             out['warnings'].append('Short-put collateral > 60% of NAV — elevated; '
                                    'avoid adding new put exposure')
 
-    # ─── BOXX CASH OPTIMIZATION ──────────────────────────────────────────
-    # When idle cash is sitting (above put collateral + buffer), park it in
-    # BOXX for risk-free ~4.74% yield. 50% margin requirement → can hold
-    # up to 2× free cash with margin.
+    # ─── BOXX CASH OPTIMIZATION (cash + margin are SEPARATE) ────────────
+    # Query WS for REAL cash + buying_power (do NOT derive from NAV).
+    # Cash = actual liquid USD in account (includes premium collected).
+    # Buying power = remaining margin headroom (depleted by puts + BOXX).
+    # BOXX requires 50% margin: each $X of BOXX uses $0.5X cash + $0.5X margin.
+    # Short puts INCREASE cash (premium collected) but DECREASE margin
+    # (collateral requirement).
     boxx_qty = 0
     boxx_mkt_value = 0.0
     for p in (positions or []):
         if p.get('symbol', '').upper() == 'BOXX' and not p.get('is_option'):
             boxx_qty += int(p.get('quantity', 0))
             boxx_mkt_value += float(p.get('market_value', 0))
-    # Estimate cash from NAV breakdown
-    share_value = current_shares * spot
-    est_cash = (nav or 0) - share_value - boxx_mkt_value
-    # Free cash for puts: cash - existing put collateral
-    free_cash_after_puts = est_cash - current_put_collateral
-    # BOXX margin: 50% of position uses cash, 50% on margin
-    boxx_cash_locked = boxx_mkt_value * 0.5
-    # Suggested BOXX max position (conservative — leave $20K buffer)
-    cash_buffer = 20000
-    excess_cash = max(0, free_cash_after_puts + boxx_cash_locked - cash_buffer)
-    # Get BOXX price from master_dataset (last close) — avoids fragile GraphQL
+    # Fetch REAL cash + buying_power via WS
+    real_cash = None
+    real_buying_power = None
+    try:
+        from ws_sdk import WSClient, get_session, graphql_query
+        from ws_sdk.queries import QUERY_TRADING_BALANCE
+        _c = WSClient()
+        _session = get_session()
+        for _a in _c.list_accounts():
+            if 'non-registered' in _a.id and 'MARGIN' in str(_a.type).upper():
+                _d = graphql_query(_session, 'FetchTradingBalanceBuyingPower',
+                                    QUERY_TRADING_BALANCE,
+                                    {'accountCanonicalId': _a.id, 'currency': 'USD'})
+                _v = ((_d or {}).get('account') or {}).get('financials', {}).get('current', {}).get('tradingBalanceView') or {}
+                _cash_q = float((_v.get('cash') or {}).get('quantity') or 0)
+                _bp_q = float((_v.get('buyingPower') or {}).get('quantity') or 0)
+                if _cash_q > 0 or _bp_q > 0:
+                    real_cash = _cash_q
+                    real_buying_power = _bp_q
+                    break
+    except Exception:
+        pass
+    # BOXX price from master_dataset
     boxx_spot_est = 117.0
     try:
         import pandas as _pd
@@ -540,29 +555,38 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             boxx_spot_est = float(_bx.iloc[-1])
     except Exception:
         pass
+
+    # Decide BUY_BOXX qty based on REAL cash + margin (not derived)
     more_boxx_shares = 0
-    if excess_cash > 5000 and (nav or 0) > 0:
-        # How much more BOXX can we add?
-        more_boxx_dollars = int(excess_cash * 0.6)  # conservative margin use
-        more_boxx_shares = int(more_boxx_dollars / boxx_spot_est)
-        if more_boxx_shares >= 10:
-            out['recommendations'].append({
-                'action': f'BUY ~{more_boxx_shares} BOXX (~${more_boxx_shares*boxx_spot_est:,.0f}, captures ~4.74%/yr yield on idle cash)',
-                'why': f'Free cash ${free_cash_after_puts:,.0f} + BOXX margin freed ${boxx_cash_locked:,.0f} = ${excess_cash:,.0f} above buffer. Risk-free ~4.74% beats sitting in cash at 0%.',
-                'priority': 'low',
-            })
+    cash_buffer = 5000  # keep this much liquid
+    max_boxx_dollars = 0
+    cash_available = 0
+    margin_available = real_buying_power if real_buying_power is not None else 0
+    if real_cash is not None and real_buying_power is not None:
+        # Each $X BOXX uses $0.5X cash + $0.5X margin
+        cash_available = max(0, real_cash - cash_buffer)
+        max_boxx_from_cash = cash_available * 2     # if margin allows
+        max_boxx_from_margin = real_buying_power * 2  # if cash allows
+        max_boxx_dollars = min(max_boxx_from_cash, max_boxx_from_margin)
+        if max_boxx_dollars > 1000:
+            more_boxx_shares = int(max_boxx_dollars * 0.7 / boxx_spot_est)
+
     out['boxx_state'] = {
-        'qty': boxx_qty, 'market_value': round(boxx_mkt_value, 0),
+        'qty': boxx_qty,
+        'market_value': round(boxx_mkt_value, 0),
         'pct_nav': round(boxx_mkt_value / nav * 100, 1) if (nav or 0) > 0 else 0,
-        'cash_locked_50pct_margin': round(boxx_cash_locked, 0),
-        'free_cash_after_puts_est': round(free_cash_after_puts, 0),
-        'suggest_more_boxx_shares': more_boxx_shares if excess_cash > 5000 else 0,
+        'real_cash_usd': real_cash,
+        'real_buying_power_usd': real_buying_power,
+        'cash_available_after_buffer': round(cash_available, 0),
+        'max_boxx_buy_dollars': round(max_boxx_dollars, 0),
+        'suggest_more_boxx_shares': more_boxx_shares,
     }
 
     # ─── BOXX ACTIONABLE ORDERS ──────────────────────────────────────────
-    # Emit BUY_BOXX or SELL_BOXX action when meaningful, with a ladder.
+    # Emit BUY_BOXX based on REAL cash + buying_power from WS.
+    # SELL_BOXX only when cash is genuinely critical (real_cash < buffer).
     BOXX_SEC_ID = 'sec-s-aed53cd42a354b0fa104745054d0daa6'
-    if excess_cash > 5000 and more_boxx_shares >= 10:
+    if more_boxx_shares >= 10:
         # Estimate bid/ask from master close (BOXX spreads very tight, ~$0.01-0.05)
         live_boxx_price = boxx_spot_est
         bid = round(boxx_spot_est - 0.02, 2)
@@ -593,14 +617,16 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             'live_bid': bid, 'live_ask': ask, 'live_mid': live_boxx_price,
             'est_cost': round(more_boxx_shares * live_boxx_price, 0),
             'expected_yield_dollars_per_year': round(more_boxx_shares * live_boxx_price * 0.0474, 0),
-            'rationale': (f'Park ${more_boxx_shares * live_boxx_price:,.0f} excess cash in BOXX for risk-free ~4.74%/yr. '
-                          f'Current BOXX {boxx_qty} shares = ${boxx_mkt_value:,.0f} ({out["boxx_state"]["pct_nav"]:.0f}% NAV). '
-                          f'Free cash after puts est ${free_cash_after_puts:,.0f}.'),
+            'rationale': (f'Park ${more_boxx_shares * live_boxx_price:,.0f} of available cash in BOXX for risk-free ~4.74%/yr. '
+                          f'Real cash ${real_cash:,.0f}, buying power ${real_buying_power:,.0f} '
+                          f'(50% margin: ${more_boxx_shares * live_boxx_price * 0.5:,.0f} cash + ${more_boxx_shares * live_boxx_price * 0.5:,.0f} margin). '
+                          f'Current BOXX position {boxx_qty} shares = ${boxx_mkt_value:,.0f} ({out["boxx_state"]["pct_nav"]:.0f}% NAV). '
+                          f'Assignments tonight add ~$4,600 more cash (no interest carry).'),
             'priority': 'low',
         })
-    elif free_cash_after_puts < -5000 and boxx_qty > 0:
-        # SELL BOXX to fund put collateral or share trim
-        deficit = abs(free_cash_after_puts)
+    elif real_cash is not None and real_cash < 1000 and boxx_qty > 0:
+        # SELL BOXX only if real cash is critically low (not derived deficit)
+        deficit = max(5000, 1000 - real_cash + cash_buffer)
         live_boxx_price = boxx_spot_est
         try:
             from ws_sdk import get_session, graphql_query
@@ -638,9 +664,8 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             'live_bid': bid, 'live_ask': ask, 'live_mid': live_boxx_price,
             'est_proceeds': round(sell_shares * live_boxx_price, 0),
             'rationale': (f'SELL {sell_shares} BOXX to free ${sell_shares * live_boxx_price:,.0f} '
-                          f'cash. Negative free cash ${free_cash_after_puts:,.0f} indicates put '
-                          f'collateral exceeds available cash + margin headroom.'),
-            'priority': 'high' if free_cash_after_puts < -20000 else 'medium',
+                          f'cash. Real cash ${real_cash:,.0f} below critical buffer.'),
+            'priority': 'high' if real_cash < 500 else 'medium',
         })
 
     # Shoulder
