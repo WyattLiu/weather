@@ -529,10 +529,21 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     # Suggested BOXX max position (conservative — leave $20K buffer)
     cash_buffer = 20000
     excess_cash = max(0, free_cash_after_puts + boxx_cash_locked - cash_buffer)
+    # Get BOXX price from master_dataset (last close) — avoids fragile GraphQL
+    boxx_spot_est = 117.0
+    try:
+        import pandas as _pd
+        _df = _pd.read_csv(os.path.join(THIS_DIR, 'cache', 'master_dataset.csv'),
+                            index_col=0, parse_dates=True)
+        _bx = _df['BOXX'].dropna()
+        if len(_bx) > 0:
+            boxx_spot_est = float(_bx.iloc[-1])
+    except Exception:
+        pass
+    more_boxx_shares = 0
     if excess_cash > 5000 and (nav or 0) > 0:
         # How much more BOXX can we add?
         more_boxx_dollars = int(excess_cash * 0.6)  # conservative margin use
-        boxx_spot_est = 117.0  # live yfinance fetch could override
         more_boxx_shares = int(more_boxx_dollars / boxx_spot_est)
         if more_boxx_shares >= 10:
             out['recommendations'].append({
@@ -547,6 +558,90 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         'free_cash_after_puts_est': round(free_cash_after_puts, 0),
         'suggest_more_boxx_shares': more_boxx_shares if excess_cash > 5000 else 0,
     }
+
+    # ─── BOXX ACTIONABLE ORDERS ──────────────────────────────────────────
+    # Emit BUY_BOXX or SELL_BOXX action when meaningful, with a ladder.
+    BOXX_SEC_ID = 'sec-s-aed53cd42a354b0fa104745054d0daa6'
+    if excess_cash > 5000 and more_boxx_shares >= 10:
+        # Estimate bid/ask from master close (BOXX spreads very tight, ~$0.01-0.05)
+        live_boxx_price = boxx_spot_est
+        bid = round(boxx_spot_est - 0.02, 2)
+        ask = round(boxx_spot_est + 0.02, 2)
+        last = boxx_spot_est
+        # 3-tier ladder for stock (tight spread)
+        boxx_ladder = [
+            {'tier': 1, 'qty': max(1, int(more_boxx_shares * 0.5)),
+             'limit_price': round(bid if bid > 0 else live_boxx_price - 0.05, 2),
+             'kind': 'passive'},
+            {'tier': 2, 'qty': max(1, int(more_boxx_shares * 0.3)),
+             'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
+            {'tier': 3, 'qty': max(1, int(more_boxx_shares * 0.2)),
+             'limit_price': round(ask if ask > 0 else live_boxx_price + 0.05, 2),
+             'kind': 'cross'},
+        ]
+        # Reconcile ladder qtys to total
+        total_q = sum(t['qty'] for t in boxx_ladder)
+        if total_q != more_boxx_shares:
+            boxx_ladder[0]['qty'] += (more_boxx_shares - total_q)
+        out.setdefault('_pending_boxx_orders', []).append({
+            'order_type': 'BUY_BOXX',
+            'side': 'BUY',
+            'symbol': 'BOXX',
+            'sec_id': BOXX_SEC_ID,
+            'qty': more_boxx_shares,
+            'limit_ladder': boxx_ladder,
+            'live_bid': bid, 'live_ask': ask, 'live_mid': live_boxx_price,
+            'est_cost': round(more_boxx_shares * live_boxx_price, 0),
+            'expected_yield_dollars_per_year': round(more_boxx_shares * live_boxx_price * 0.0474, 0),
+            'rationale': (f'Park ${more_boxx_shares * live_boxx_price:,.0f} excess cash in BOXX for risk-free ~4.74%/yr. '
+                          f'Current BOXX {boxx_qty} shares = ${boxx_mkt_value:,.0f} ({out["boxx_state"]["pct_nav"]:.0f}% NAV). '
+                          f'Free cash after puts est ${free_cash_after_puts:,.0f}.'),
+            'priority': 'low',
+        })
+    elif free_cash_after_puts < -5000 and boxx_qty > 0:
+        # SELL BOXX to fund put collateral or share trim
+        deficit = abs(free_cash_after_puts)
+        live_boxx_price = boxx_spot_est
+        try:
+            from ws_sdk import get_session, graphql_query
+            session = get_session()
+            q = """query Q($id: ID!) { security(id: $id) { quoteV2 { bid ask last } } }"""
+            data = graphql_query(session, 'BoxxQuote', q, {'id': BOXX_SEC_ID})
+            quote = ((data or {}).get('security') or {}).get('quoteV2') or {}
+            bid = float(quote.get('bid') or 0)
+            ask = float(quote.get('ask') or 0)
+            if bid > 0 and ask > 0:
+                live_boxx_price = (bid + ask) / 2
+        except Exception:
+            bid = ask = 0
+        sell_shares = min(boxx_qty, int(deficit / live_boxx_price) + 10)
+        boxx_ladder = [
+            {'tier': 1, 'qty': max(1, int(sell_shares * 0.5)),
+             'limit_price': round(ask if ask > 0 else live_boxx_price + 0.05, 2),
+             'kind': 'passive'},
+            {'tier': 2, 'qty': max(1, int(sell_shares * 0.3)),
+             'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
+            {'tier': 3, 'qty': max(1, int(sell_shares * 0.2)),
+             'limit_price': round(bid if bid > 0 else live_boxx_price - 0.05, 2),
+             'kind': 'cross'},
+        ]
+        total_q = sum(t['qty'] for t in boxx_ladder)
+        if total_q != sell_shares:
+            boxx_ladder[0]['qty'] += (sell_shares - total_q)
+        out.setdefault('_pending_boxx_orders', []).append({
+            'order_type': 'SELL_BOXX',
+            'side': 'SELL',
+            'symbol': 'BOXX',
+            'sec_id': BOXX_SEC_ID,
+            'qty': sell_shares,
+            'limit_ladder': boxx_ladder,
+            'live_bid': bid, 'live_ask': ask, 'live_mid': live_boxx_price,
+            'est_proceeds': round(sell_shares * live_boxx_price, 0),
+            'rationale': (f'SELL {sell_shares} BOXX to free ${sell_shares * live_boxx_price:,.0f} '
+                          f'cash. Negative free cash ${free_cash_after_puts:,.0f} indicates put '
+                          f'collateral exceeds available cash + margin headroom.'),
+            'priority': 'high' if free_cash_after_puts < -20000 else 'medium',
+        })
 
     # Shoulder
     import datetime
@@ -583,6 +678,36 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         )
     except Exception as e:
         out['actionable_orders_error'] = str(e)
+
+    # ─── MERGE BOXX ORDERS + RE-SCORE ────────────────────────────────────
+    # BOXX orders were computed before _build_actionable_orders; now merge
+    # them in and re-run the EV scoring loop so they compete for best_play.
+    boxx_orders = out.pop('_pending_boxx_orders', None)
+    if boxx_orders:
+        existing = out.get('actionable_orders') or []
+        for bo in boxx_orders:
+            # Score BOXX orders
+            kind = bo.get('order_type', '')
+            if kind == 'BUY_BOXX':
+                ev = float(bo.get('est_cost', 0)) * 0.0474 / 365 * 30
+            elif kind == 'SELL_BOXX':
+                ev = float(bo.get('est_proceeds', 0)) * 0.01
+            else:
+                ev = 0
+            pri_mult = {'high': 1.0, 'medium': 0.7, 'low': 0.4}.get(
+                bo.get('priority', 'low'), 0.4)
+            bo['expected_ev_dollars'] = round(ev, 0)
+            bo['ranked_score'] = round(ev * pri_mult, 0)
+            existing.append(bo)
+        out['actionable_orders'] = existing
+        # Re-pick best play across combined set
+        actionable = [o for o in existing if o.get('ranked_score', 0) > 0]
+        if actionable:
+            # Clear prior best_play flag
+            for o in existing:
+                o.pop('best_play', None)
+            best = max(actionable, key=lambda o: o.get('ranked_score', 0))
+            best['best_play'] = True
 
     # ─── PER-POSITION ANALYSIS + GREEKS ──────────────────────────────────
     try:
@@ -1410,6 +1535,12 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
         elif kind == 'WAIT_FOR_ASSIGNMENT':
             # Implicit gain from assignment = (spot - K) avoided BTC cost
             ev = o.get('qty', 0) * 50  # heuristic
+        elif kind == 'BUY_BOXX':
+            # 4.74% annual / 365 × est_cost = daily yield captured
+            ev = float(o.get('est_cost', 0)) * 0.0474 / 365 * 30  # 1-mo lookahead
+        elif kind == 'SELL_BOXX':
+            # Enables put-collateral relief — score by deficit unlocked
+            ev = float(o.get('est_proceeds', 0)) * 0.01  # 1% value for unlock
         elif kind in ('SYNTHETIC_SHORT_BLOCKED', 'CC_SKIPPED', 'SHARES_SELL_BLOCKED'):
             ev = 0  # not actionable
         o['expected_ev_dollars'] = round(ev, 0)

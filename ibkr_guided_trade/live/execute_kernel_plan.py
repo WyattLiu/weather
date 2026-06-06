@@ -146,16 +146,89 @@ def execute_best_play(verdict: dict, mode: str = 'paper',
                     'daily_max': daily_max_submissions,
                     'notes': f'{recent}/{daily_max_submissions} daily-cap reached; falling back to paper-log only. Override: KERNEL_LIVE=1 + --mode review for next action.'}
 
-    # We currently support: PUT_SHORT_MIX (laddered), CALL_SHORT_COVERED (laddered)
+    # We currently support: PUT_SHORT_MIX (laddered), CALL_SHORT_COVERED (laddered),
+    # BUY_BOXX / SELL_BOXX (laddered stock orders)
     if kind == 'PUT_SHORT_MIX':
         return _execute_put_short_mix(best, mode=mode)
     if kind == 'CALL_SHORT_COVERED':
         return _execute_cc(best, mode=mode)
+    if kind in ('BUY_BOXX', 'SELL_BOXX'):
+        return _execute_boxx(best, mode=mode)
     if kind == 'CC_BTC_TO_FREE_SHARES':
         return {'action_taken': 'manual_review', 'mode': mode,
                 'notes': f'BTC {best.get("qty")} calls — requires manual leg-picking by extrinsic; not auto-executed'}
     return {'action_taken': 'unhandled', 'mode': mode,
             'notes': f'unhandled best-play type: {kind}'}
+
+
+def _execute_boxx(order: dict, mode: str = 'paper') -> dict:
+    """BUY or SELL BOXX with limit ladder. Stock orders are simpler than
+    options — just security_id + qty + price + side."""
+    side = order.get('side')
+    sec_id = order.get('sec_id')
+    if not sec_id:
+        return {'action_taken': 'failed', 'mode': mode, 'notes': 'BOXX order has no sec_id'}
+
+    ladder = order.get('limit_ladder') or []
+    if not ladder:
+        return {'action_taken': 'no_ladder', 'mode': mode, 'notes': 'BOXX had no ladder'}
+
+    # Use only PASSIVE tier (conservative — let it sit)
+    passive = ladder[0]
+    intent = {
+        'symbol': 'BOXX',
+        'sec_id': sec_id,
+        'side': 'BUY' if side == 'BUY' else 'SELL',
+        'qty': int(passive['qty']),
+        'limit_price': float(passive['limit_price']),
+        'tier': passive['kind'],
+        'live_bid': order.get('live_bid'),
+        'live_ask': order.get('live_ask'),
+        'est_value': round(int(passive['qty']) * float(passive['limit_price']), 0),
+    }
+
+    # PAPER
+    if mode == 'paper':
+        return {'action_taken': 'planned_only', 'mode': 'paper',
+                'notes': f'PAPER: would {side} {passive["qty"]} BOXX @ ${passive["limit_price"]} (passive tier)',
+                'planned_orders': [intent]}
+
+    # REVIEW
+    if mode == 'review':
+        print(f'\n=== REVIEW: {side} BOXX ===', file=sys.stderr)
+        print(f'  {passive["qty"]} BOXX @ ${passive["limit_price"]}  '
+              f'(live bid {order.get("live_bid", "?")}/ask {order.get("live_ask", "?")})  '
+              f'est ${intent["est_value"]:,.0f}', file=sys.stderr)
+        if not _confirm_interactive(f'Submit {side} {passive["qty"]} BOXX?'):
+            return {'action_taken': 'review_declined', 'mode': 'review',
+                    'planned_orders': [intent]}
+
+    # LIVE submission
+    if os.environ.get('KERNEL_LIVE') != '1':
+        return {'action_taken': 'env_guard_blocked', 'mode': mode,
+                'notes': f'mode={mode} requires KERNEL_LIVE=1; refusing',
+                'planned_orders': [intent]}
+    try:
+        from ws_sdk import WSClient
+    except Exception as e:
+        return {'action_taken': 'failed', 'mode': mode, 'notes': f'ws_sdk import: {e}'}
+    ws = WSClient()
+    try:
+        # BOXX is a stock; use sell/buy methods. Open/close not applicable for stocks.
+        if side == 'BUY':
+            ord_obj = ws.buy_to_open(security_id=sec_id, qty=intent['qty'], price=intent['limit_price'])
+        else:
+            ord_obj = ws.sell_to_close(security_id=sec_id, qty=intent['qty'], price=intent['limit_price'])
+        ext_id = getattr(ord_obj, 'external_id', None) or getattr(ord_obj, 'id', '?')
+        intent['external_id'] = ext_id
+        print(f'[LIVE] {side} {intent["qty"]} BOXX @ ${intent["limit_price"]} → {ext_id}')
+        return {'action_taken': 'submitted', 'mode': mode,
+                'submitted_orders': [intent]}
+    except Exception as e:
+        intent['error'] = str(e)
+        return {'action_taken': 'failed', 'mode': mode,
+                'failed_orders': [intent],
+                'notes': f'BOXX submit failed: {e}'}
 
 
 def _confirm_interactive(prompt: str) -> bool:
