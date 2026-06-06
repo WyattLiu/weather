@@ -624,7 +624,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                           f'(50% margin: ${more_boxx_shares * live_boxx_price * 0.5:,.0f} cash + ${more_boxx_shares * live_boxx_price * 0.5:,.0f} margin). '
                           f'Current BOXX position {boxx_qty} shares = ${boxx_mkt_value:,.0f} ({out["boxx_state"]["pct_nav"]:.0f}% NAV). '
                           f'Assignments tonight add ~$4,600 more cash (no interest carry).'),
-            'priority': 'low',
+            'priority': 'high',  # cash sitting at 0% loses yield daily; real action
         })
     elif real_cash is not None and real_cash < 1000 and boxx_qty > 0:
         # SELL BOXX only if real cash is critically low (not derived deficit)
@@ -716,7 +716,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             # Score BOXX orders
             kind = bo.get('order_type', '')
             if kind == 'BUY_BOXX':
-                ev = float(bo.get('est_cost', 0)) * 0.0474 / 365 * 30
+                ev = float(bo.get('est_cost', 0)) * 0.0474  # 1-yr standing yield
             elif kind == 'SELL_BOXX':
                 ev = float(bo.get('est_proceeds', 0)) * 0.01
             else:
@@ -1199,7 +1199,7 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
                               f'auto-assign {pending_assign_shares} shares — '
                               f'don\'t pay BTC for what assignment does for free. '
                               f'Legs: {legs_desc}.'),
-                'priority': 'high',
+                'priority': 'medium',  # passive — assignment auto-happens, no order needed
             })
 
         if side == 'SELL' and residual_shortfall > 0:
@@ -1563,8 +1563,9 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
             # Implicit gain from assignment = (spot - K) avoided BTC cost
             ev = o.get('qty', 0) * 50  # heuristic
         elif kind == 'BUY_BOXX':
-            # 4.74% annual / 365 × est_cost = daily yield captured
-            ev = float(o.get('est_cost', 0)) * 0.0474 / 365 * 30  # 1-mo lookahead
+            # ONGOING annual yield on idle cash (this is standing income, not
+            # one-shot). Cash sitting at 0% loses this yield every year.
+            ev = float(o.get('est_cost', 0)) * 0.0474  # 1-yr yield captured
         elif kind == 'SELL_BOXX':
             # Enables put-collateral relief — score by deficit unlocked
             ev = float(o.get('est_proceeds', 0)) * 0.01  # 1% value for unlock
