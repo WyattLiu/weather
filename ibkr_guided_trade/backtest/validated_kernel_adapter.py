@@ -563,10 +563,12 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     cash_available = 0
     margin_available = real_buying_power if real_buying_power is not None else 0
     if real_cash is not None and real_buying_power is not None:
-        # Each $X BOXX uses $0.5X cash + $0.5X margin
+        # CASH-ONLY mode (avoid margin interest leakage):
+        # Use only cash to buy BOXX. No leverage. Margin only acts as ceiling.
+        # WS margin rate (~5.5%) > BOXX yield (4.74%) → margined BOXX loses money.
         cash_available = max(0, real_cash - cash_buffer)
-        max_boxx_from_cash = cash_available * 2     # if margin allows
-        max_boxx_from_margin = real_buying_power * 2  # if cash allows
+        max_boxx_from_cash = cash_available             # 1× cash, NO leverage
+        max_boxx_from_margin = real_buying_power * 2    # margin ceiling check
         max_boxx_dollars = min(max_boxx_from_cash, max_boxx_from_margin)
         if max_boxx_dollars > 1000:
             more_boxx_shares = int(max_boxx_dollars * 0.7 / boxx_spot_est)
