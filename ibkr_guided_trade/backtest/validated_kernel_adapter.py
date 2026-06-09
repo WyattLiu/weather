@@ -589,22 +589,43 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     # SELL_BOXX only when cash is genuinely critical (real_cash < buffer).
     BOXX_SEC_ID = 'sec-s-aed53cd42a354b0fa104745054d0daa6'
     if more_boxx_shares >= 10:
-        # Estimate bid/ask from master close (BOXX spreads very tight, ~$0.01-0.05)
+        # LIVE bid/ask via yfinance (BOXX tracks daily close; intraday matters)
         live_boxx_price = boxx_spot_est
         bid = round(boxx_spot_est - 0.02, 2)
         ask = round(boxx_spot_est + 0.02, 2)
         last = boxx_spot_est
-        # 3-tier ladder for stock (tight spread)
-        boxx_ladder = [
-            {'tier': 1, 'qty': max(1, int(more_boxx_shares * 0.5)),
-             'limit_price': round(bid if bid > 0 else live_boxx_price - 0.05, 2),
-             'kind': 'passive'},
-            {'tier': 2, 'qty': max(1, int(more_boxx_shares * 0.3)),
-             'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
-            {'tier': 3, 'qty': max(1, int(more_boxx_shares * 0.2)),
-             'limit_price': round(ask if ask > 0 else live_boxx_price + 0.05, 2),
-             'kind': 'cross'},
-        ]
+        try:
+            import yfinance as _yf
+            _t = _yf.Ticker('BOXX')
+            _info = _t.fast_info
+            _bid_l = float(getattr(_info, 'last_price', 0) or 0)
+            _bid_v = float(getattr(_info, 'bid', 0) or 0) or _bid_l
+            _ask_v = float(getattr(_info, 'ask', 0) or 0) or _bid_l
+            if _bid_v > 0 and _ask_v > 0:
+                bid = round(_bid_v, 2)
+                ask = round(_ask_v, 2)
+                last = round(_bid_l or (_bid_v + _ask_v) / 2, 2)
+                live_boxx_price = round((bid + ask) / 2, 2)
+        except Exception:
+            pass
+        # TIGHT-SPREAD SHORTCUT: if spread ≤ \$0.05, cross to ASK for
+        # instant fill (waiting at bid is wasteful; spread cost negligible).
+        spread = ask - bid
+        if spread <= 0.05:
+            boxx_ladder = [
+                {'tier': 1, 'qty': more_boxx_shares,
+                 'limit_price': ask,  # hit ask = instant fill
+                 'kind': 'cross_immediate'},
+            ]
+        else:
+            boxx_ladder = [
+                {'tier': 1, 'qty': max(1, int(more_boxx_shares * 0.5)),
+                 'limit_price': bid, 'kind': 'passive'},
+                {'tier': 2, 'qty': max(1, int(more_boxx_shares * 0.3)),
+                 'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
+                {'tier': 3, 'qty': max(1, int(more_boxx_shares * 0.2)),
+                 'limit_price': ask, 'kind': 'cross'},
+            ]
         # Reconcile ladder qtys to total
         total_q = sum(t['qty'] for t in boxx_ladder)
         if total_q != more_boxx_shares:
@@ -630,29 +651,36 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         # SELL BOXX only if real cash is critically low (not derived deficit)
         deficit = max(5000, 1000 - real_cash + cash_buffer)
         live_boxx_price = boxx_spot_est
+        bid = round(boxx_spot_est - 0.02, 2)
+        ask = round(boxx_spot_est + 0.02, 2)
         try:
-            from ws_sdk import get_session, graphql_query
-            session = get_session()
-            q = """query Q($id: ID!) { security(id: $id) { quoteV2 { bid ask last } } }"""
-            data = graphql_query(session, 'BoxxQuote', q, {'id': BOXX_SEC_ID})
-            quote = ((data or {}).get('security') or {}).get('quoteV2') or {}
-            bid = float(quote.get('bid') or 0)
-            ask = float(quote.get('ask') or 0)
-            if bid > 0 and ask > 0:
-                live_boxx_price = (bid + ask) / 2
+            import yfinance as _yf
+            _t = _yf.Ticker('BOXX')
+            _info = _t.fast_info
+            _bid_v = float(getattr(_info, 'bid', 0) or 0)
+            _ask_v = float(getattr(_info, 'ask', 0) or 0)
+            if _bid_v > 0 and _ask_v > 0:
+                bid, ask = round(_bid_v, 2), round(_ask_v, 2)
+                live_boxx_price = round((bid + ask) / 2, 2)
         except Exception:
-            bid = ask = 0
+            pass
         sell_shares = min(boxx_qty, int(deficit / live_boxx_price) + 10)
-        boxx_ladder = [
-            {'tier': 1, 'qty': max(1, int(sell_shares * 0.5)),
-             'limit_price': round(ask if ask > 0 else live_boxx_price + 0.05, 2),
-             'kind': 'passive'},
-            {'tier': 2, 'qty': max(1, int(sell_shares * 0.3)),
-             'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
-            {'tier': 3, 'qty': max(1, int(sell_shares * 0.2)),
-             'limit_price': round(bid if bid > 0 else live_boxx_price - 0.05, 2),
-             'kind': 'cross'},
-        ]
+        # SELL: tight spread → hit BID for instant fill
+        spread = ask - bid
+        if spread <= 0.05:
+            boxx_ladder = [
+                {'tier': 1, 'qty': sell_shares,
+                 'limit_price': bid, 'kind': 'cross_immediate'},
+            ]
+        else:
+            boxx_ladder = [
+                {'tier': 1, 'qty': max(1, int(sell_shares * 0.5)),
+                 'limit_price': ask, 'kind': 'passive'},
+                {'tier': 2, 'qty': max(1, int(sell_shares * 0.3)),
+                 'limit_price': round(live_boxx_price, 2), 'kind': 'mid'},
+                {'tier': 3, 'qty': max(1, int(sell_shares * 0.2)),
+                 'limit_price': bid, 'kind': 'cross'},
+            ]
         total_q = sum(t['qty'] for t in boxx_ladder)
         if total_q != sell_shares:
             boxx_ladder[0]['qty'] += (sell_shares - total_q)
