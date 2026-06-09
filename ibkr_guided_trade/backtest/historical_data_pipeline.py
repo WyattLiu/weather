@@ -79,6 +79,7 @@ def fetch_eia_historical(years=5):
         'lng_exports': 'N9133US2m.xls',
         'pipe_exports': 'N9132US2m.xls',
         'storage_weekly': 'NW2_EPG0_SWO_R48_BCFW.xls',
+        'hh_spot_daily': 'RNGWHHDD.xls',
     }
     out = {}
     for name, fname in files.items():
