@@ -74,6 +74,14 @@ _EXCLUDED_SUBTYPES = (
     "AUTO_INVEST",
 )
 
+# Terminal (non-open) order statuses, excluded client-side in
+# list_open_orders. Server-side unifiedStatuses filtering broke in
+# June 2026 when WS removed SUBMITTED/WORKING from the enum.
+_TERMINAL_STATUSES = frozenset({
+    "COMPLETED", "FILLED", "CANCELLED", "CANCELED",
+    "EXPIRED", "REJECTED", "FAILED",
+})
+
 
 class WSClient:
     """High-level client for the Wealthsimple Trade API.
@@ -266,6 +274,11 @@ class WSClient:
         against :func:`fetch_extended_order` to get the canonical status
         and fill fields.
         """
+        # NOTE: no server-side unifiedStatuses filter. WS changed the enum
+        # (June 2026): SUBMITTED/WORKING now return UNPROCESSABLE_ENTITY and
+        # the whole query silently failed → list_open_orders returned [] →
+        # the escalation sweep was a no-op. Filter by status client-side
+        # instead (terminal-status exclusion below) — resilient to enum drift.
         data = graphql_query(
             self.session,
             "FetchActivityFeedItems",
@@ -276,7 +289,6 @@ class WSClient:
                 "condition": {
                     "accountIds": [self.account_id],
                     "types": list(_TRADEABLE_ACTIVITY_TYPES),
-                    "unifiedStatuses": ["PENDING", "SUBMITTED", "WORKING"],
                 },
             },
         )
@@ -297,6 +309,11 @@ class WSClient:
                 continue
             sub_type = (node.get("subType") or "").upper()
             if sub_type in _EXCLUDED_SUBTYPES:
+                continue
+            # Client-side open-state filter (replaces the broken server-side
+            # unifiedStatuses condition). Terminal statuses are not open.
+            status = (node.get("unifiedStatus") or node.get("status") or "").upper()
+            if status in _TERMINAL_STATUSES:
                 continue
 
             ext_id = node.get("externalCanonicalId") or node.get("canonicalId")
