@@ -1,0 +1,47 @@
+{
+  "summary": [
+    {
+      "strategy": "UNG_only (vol-gated, sim)",
+      "cum_ret": 320.4648,
+      "ann_ret": 0.6569,
+      "sharpe": 0.022,
+      "mdd": -1.5287,
+      "years": 11.4
+    },
+    {
+      "strategy": "DBA_only (60d 2% OTM)",
+      "cum_ret": 5.5053,
+      "ann_ret": 0.178,
+      "sharpe": 1.464,
+      "mdd": -0.1673,
+      "years": 11.4
+    },
+    {
+      "strategy": "static_60_40_blend",
+      "cum_ret": -302.8412,
+      "ann_ret": -1,
+      "sharpe": 0.036,
+      "mdd": -13.3688,
+      "years": 11.4
+    },
+    {
+      "strategy": "composite_regime_gated",
+      "cum_ret": -2.0065,
+      "ann_ret": -1,
+      "sharpe": -0.035,
+      "mdd": -11.6805,
+      "years": 11.4
+    }
+  ],
+  "correlation_ung_dba": -5.3312388983455256e-05,
+  "avg_weights": {
+    "ung": 0.51004050855434,
+    "dba": 0.242278252630309,
+    "boxx": 0.24768123881535098
+  },
+  "latest_weights": {
+    "ung": 0.4014576377969757,
+    "dba": 0.36286162142544565,
+    "boxx": 0.23568074077757872
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "issue_date": "14 May 2026",
+  "status": "El Nio Watch",
+  "discussion_headlines": [
+    {
+      "pct": 82,
+      "window": "May-July 2026"
+    },
+    {
+      "pct": 96,
+      "window": "December 2026"
+    },
+    {
+      "pct": 82,
+      "window": "May-July 2026"
+    },
+    {
+      "pct": 96,
+      "window": "December 2026"
+    }
+  ],
+  "forecast": [
+    {
+      "forecast_date": "2026-05-15",
+      "season_label": "AMJ 2026",
+      "el_nino_pct": 16,
+      "neutral_pct": 84,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-06-15",
+      "season_label": "MJJ 2026",
+      "el_nino_pct": 82,
+      "neutral_pct": 18,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-07-15",
+      "season_label": "JJA 2026",
+      "el_nino_pct": 92,
+      "neutral_pct": 8,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-08-15",
+      "season_label": "JAS 2026",
+      "el_nino_pct": 96,
+      "neutral_pct": 4,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-09-15",
+      "season_label": "ASO 2026",
+      "el_nino_pct": 98,
+      "neutral_pct": 2,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-10-15",
+      "season_label": "SON 2026",
+      "el_nino_pct": 98,
+      "neutral_pct": 2,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-11-15",
+      "season_label": "OND 2026",
+      "el_nino_pct": 98,
+      "neutral_pct": 2,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2026-12-15",
+      "season_label": "NDJ 2026",
+      "el_nino_pct": 98,
+      "neutral_pct": 2,
+      "la_nina_pct": 0
+    },
+    {
+      "forecast_date": "2027-01-15",
+      "season_label": "DJF 2027",
+      "el_nino_pct": 96,
+      "neutral_pct": 4,
+      "la_nina_pct": 0
+    }
+  ],
+  "summary": {
+    "peak_el_nino_pct": 98,
+    "peak_window": "ASO 2026",
+    "djf_el_nino_pct": 96,
+    "months_above_80pct": 8,
+    "months_above_95pct": 6
+  },
+  "strength_raw": [
+    0,
+    0,
+    0,
+    0,
+    84,
+    16,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    18,
+    72,
+    10,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    8,
+    52,
+    37,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    4,
+    30,
+    48,
+    17,
+    1,
+    0,
+    0,
+    0,
+    0,
+    2,
+    17,
+    41,
+    31,
+    9,
+    0,
+    0,
+    0,
+    0,
+    2,
+    11,
+    30,
+    35,
+    22,
+    0,
+    0,
+    0,
+    0,
+    2,
+    9,
+    24,
+    32,
+    33,
+    0,
+    0,
+    0,
+    0,
+    2,
+    9,
+    22,
+    30,
+    37,
+    0,
+    0,
+    0,
+    0,
+    4,
+    11,
+    25,
+    29,
+    31
+  ]
+}

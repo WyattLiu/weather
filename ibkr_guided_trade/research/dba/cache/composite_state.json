@@ -1,0 +1,42 @@
+{
+  "as_of": "2026-06-09",
+  "ung_edge": -0.0048587926565855965,
+  "dba_edge": 0.7109712834772588,
+  "oni": 0.48,
+  "dsci_z": 1.3157702678180705,
+  "cpc_outlook": {
+    "issue_date": "14 May 2026",
+    "status": "El Nio Watch",
+    "peak_el_nino_pct": 98,
+    "djf_el_nino_pct": 96,
+    "forward_bump_applied": 0.35
+  },
+  "allocation": {
+    "ung": 0.45,
+    "dba": 0.4,
+    "boxx": 0.15
+  },
+  "backtest": [
+    {
+      "strategy": "composite",
+      "cum_ret": -0.952244891041074,
+      "ann_ret": -0.15242191418539852,
+      "sharpe": -0.3049797007123998,
+      "mdd": -0.9702750960452164
+    },
+    {
+      "strategy": "ung_only",
+      "cum_ret": -0.9976334850124965,
+      "ann_ret": -0.28016472557259,
+      "sharpe": -0.4154527570588184,
+      "mdd": -0.9987508369156964
+    },
+    {
+      "strategy": "equal_weight",
+      "cum_ret": -0.9181316675826448,
+      "ann_ret": -0.12721499811121473,
+      "sharpe": -0.3635997034170589,
+      "mdd": -0.9499810347464186
+    }
+  ]
+}

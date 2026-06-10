@@ -1,0 +1,166 @@
+{
+  "baseline_ung_production": {
+    "ann_ret": 0.16,
+    "vol_ann": 0.16,
+    "sharpe": 1.0,
+    "mdd_worst_12m": -0.24
+  },
+  "dba_configs_measured": [
+    {
+      "config": "60d_2OTM_aggressive",
+      "dte": 60,
+      "otm": 0.02,
+      "ann_ret": 0.171,
+      "vol": 0.1168,
+      "sharpe": 1.465,
+      "mdd": -0.1673
+    },
+    {
+      "config": "60d_5OTM_kernel_rec",
+      "dte": 60,
+      "otm": 0.05,
+      "ann_ret": 0.0509,
+      "vol": 0.0497,
+      "sharpe": 1.025,
+      "mdd": -0.109
+    },
+    {
+      "config": "45d_3OTM_balanced",
+      "dte": 45,
+      "otm": 0.03,
+      "ann_ret": 0.0629,
+      "vol": 0.0512,
+      "sharpe": 1.228,
+      "mdd": -0.1072
+    },
+    {
+      "config": "90d_2OTM_yield",
+      "dte": 90,
+      "otm": 0.02,
+      "ann_ret": 0.2942,
+      "vol": 0.2976,
+      "sharpe": 0.988,
+      "mdd": -0.4804
+    }
+  ],
+  "correlation_assumption": 0.0,
+  "composite_grid": [
+    {
+      "dba_config": "60d_2OTM_aggressive",
+      "w_ung": 0.8,
+      "w_dba": 0.2,
+      "ann_ret": 0.1622,
+      "vol": 0.1301,
+      "sharpe": 1.247,
+      "sharpe_lift_vs_ung": 0.247
+    },
+    {
+      "dba_config": "60d_2OTM_aggressive",
+      "w_ung": 0.7,
+      "w_dba": 0.3,
+      "ann_ret": 0.1633,
+      "vol": 0.1174,
+      "sharpe": 1.392,
+      "sharpe_lift_vs_ung": 0.392
+    },
+    {
+      "dba_config": "60d_2OTM_aggressive",
+      "w_ung": 0.6,
+      "w_dba": 0.4,
+      "ann_ret": 0.1644,
+      "vol": 0.1068,
+      "sharpe": 1.54,
+      "sharpe_lift_vs_ung": 0.54
+    },
+    {
+      "dba_config": "60d_5OTM_kernel_rec",
+      "w_ung": 0.8,
+      "w_dba": 0.2,
+      "ann_ret": 0.1382,
+      "vol": 0.1284,
+      "sharpe": 1.076,
+      "sharpe_lift_vs_ung": 0.076
+    },
+    {
+      "dba_config": "60d_5OTM_kernel_rec",
+      "w_ung": 0.7,
+      "w_dba": 0.3,
+      "ann_ret": 0.1273,
+      "vol": 0.113,
+      "sharpe": 1.126,
+      "sharpe_lift_vs_ung": 0.126
+    },
+    {
+      "dba_config": "60d_5OTM_kernel_rec",
+      "w_ung": 0.6,
+      "w_dba": 0.4,
+      "ann_ret": 0.1164,
+      "vol": 0.098,
+      "sharpe": 1.187,
+      "sharpe_lift_vs_ung": 0.187
+    },
+    {
+      "dba_config": "45d_3OTM_balanced",
+      "w_ung": 0.8,
+      "w_dba": 0.2,
+      "ann_ret": 0.1406,
+      "vol": 0.1284,
+      "sharpe": 1.095,
+      "sharpe_lift_vs_ung": 0.095
+    },
+    {
+      "dba_config": "45d_3OTM_balanced",
+      "w_ung": 0.7,
+      "w_dba": 0.3,
+      "ann_ret": 0.1309,
+      "vol": 0.113,
+      "sharpe": 1.158,
+      "sharpe_lift_vs_ung": 0.158
+    },
+    {
+      "dba_config": "45d_3OTM_balanced",
+      "w_ung": 0.6,
+      "w_dba": 0.4,
+      "ann_ret": 0.1212,
+      "vol": 0.0982,
+      "sharpe": 1.234,
+      "sharpe_lift_vs_ung": 0.234
+    },
+    {
+      "dba_config": "90d_2OTM_yield",
+      "w_ung": 0.8,
+      "w_dba": 0.2,
+      "ann_ret": 0.1868,
+      "vol": 0.1412,
+      "sharpe": 1.324,
+      "sharpe_lift_vs_ung": 0.324
+    },
+    {
+      "dba_config": "90d_2OTM_yield",
+      "w_ung": 0.7,
+      "w_dba": 0.3,
+      "ann_ret": 0.2003,
+      "vol": 0.1432,
+      "sharpe": 1.398,
+      "sharpe_lift_vs_ung": 0.398
+    },
+    {
+      "dba_config": "90d_2OTM_yield",
+      "w_ung": 0.6,
+      "w_dba": 0.4,
+      "ann_ret": 0.2137,
+      "vol": 0.1529,
+      "sharpe": 1.397,
+      "sharpe_lift_vs_ung": 0.397
+    }
+  ],
+  "best_by_sharpe": {
+    "dba_config": "60d_2OTM_aggressive",
+    "w_ung": 0.6,
+    "w_dba": 0.4,
+    "ann_ret": 0.1644,
+    "vol": 0.1068,
+    "sharpe": 1.54,
+    "sharpe_lift_vs_ung": 0.54
+  }
+}
