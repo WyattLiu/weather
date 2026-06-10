@@ -17,6 +17,7 @@ from .queries import QUERY_SECURITY_SEARCH
 
 KNOWN_SECURITIES: dict[str, str] = {
     "UNG":  "sec-s-32f0b46791214cbcbee9486e40232ea4",
+    "DBA":  "sec-s-28b77b54d97d425baf17180097a088e5",
     "KOLD": "sec-s-c8f82308d6684084b0a484981d81b03f",
     "HUBB": "sec-s-acba8c87de6a4dc9ad1d2f478aeacd17",
     "ETN":  "sec-s-f655317dc6954c3d900001b77ef7e6fe",
