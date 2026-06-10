@@ -52,9 +52,12 @@ def fetch_chain(symbol: str, expiry: str, right: str, cache_ttl: int = 60) -> di
     if not sec_id:
         raise ValueError(f'Unknown underlying: {symbol}')
     session = get_session()
+    # WS enum drift (June 2026): optionType now requires PUT/CALL — the
+    # old single-letter P/C returns UNPROCESSABLE_ENTITY.
+    opt_type = {'P': 'PUT', 'C': 'CALL'}.get(right.upper(), right.upper())
     data = graphql_query(session, 'FetchOptionChain', QUERY_OPTION_CHAIN, {
         'id': sec_id, 'expiryDate': expiry,
-        'optionType': right.upper(),
+        'optionType': opt_type,
         'realTimeQuote': True, 'includeGreeks': True,
     })
     if not data: return {}
