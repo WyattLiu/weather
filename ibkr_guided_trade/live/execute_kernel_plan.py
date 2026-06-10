@@ -122,20 +122,52 @@ def execute_best_play(verdict: dict, mode: str = 'paper',
       review — print plan to stderr, read stdin y/n per order set
       auto   — submit if under daily_max_submissions cap; else fall back to review log
     """
-    actionable = [o for o in (verdict.get('actionable_orders') or []) if o.get('best_play')]
-    if not actionable:
+    all_orders = verdict.get('actionable_orders') or []
+    best_flagged = [o for o in all_orders if o.get('best_play')]
+    if not best_flagged:
         return {'action_taken': 'no_best_play', 'mode': mode,
                 'notes': 'kernel surfaced nothing actionable today'}
 
-    best = actionable[0]
-    kind = best.get('order_type')
+    # Walk candidates by rank: best play first, then runners-up by score.
+    # Consult-only kinds (no auto-resolution path) must NOT starve an
+    # executable runner-up — log the consult and fall through.
+    runners_up = sorted((o for o in all_orders if not o.get('best_play')),
+                        key=lambda o: o.get('ranked_score', 0), reverse=True)
+    candidates = best_flagged + runners_up
 
-    # Sanity: hard-pass on non-actionable types
     pass_kinds = {'WAIT_FOR_ASSIGNMENT', 'CC_SKIPPED', 'SHARES_SELL_BLOCKED',
                   'SYNTHETIC_SHORT_BLOCKED'}
-    if kind in pass_kinds:
+    EXEC_KINDS = {'PUT_SHORT_MIX', 'CALL_SHORT_COVERED', 'BUY_BOXX', 'SELL_BOXX'}
+
+    consult_notes = []
+    chosen = None
+    for cand in candidates:
+        kind = cand.get('order_type')
+        if kind == 'SELL_PUT_DBA':
+            consult_notes.append(
+                f'CONSULT SELL_PUT_DBA: target {cand.get("incremental_contracts_vs_existing")}×'
+                f' DBA P{cand.get("target_strike"):.0f} {cand.get("target_dte_range")} DTE'
+                f' @~${cand.get("est_credit_per_contract"):.2f} — needs chain lookup + manual submission')
+            continue
+        if kind == 'CC_BTC_TO_FREE_SHARES':
+            consult_notes.append(
+                f'CONSULT CC_BTC: {cand.get("qty")} calls — manual leg-picking by extrinsic')
+            continue
+        if kind in pass_kinds or kind not in EXEC_KINDS:
+            continue
+        if cand.get('ranked_score', 0) <= 0:
+            continue
+        chosen = cand
+        break
+
+    if chosen is None:
+        # Nothing executable. Preserve prior behavior: consult beats pass.
+        best_kind = best_flagged[0].get('order_type')
+        if consult_notes:
+            return {'action_taken': 'consult_required', 'mode': mode,
+                    'notes': ' | '.join(consult_notes)}
         return {'action_taken': 'pass_no_order_needed', 'mode': mode,
-                'notes': f'{kind}: {best.get("rationale", "")[:120]}'}
+                'notes': f'{best_kind}: {best_flagged[0].get("rationale", "")[:120]}'}
 
     # Daily-cap gate: applies ONLY in auto mode. Paper/review unconstrained.
     if mode == 'auto':
@@ -146,19 +178,20 @@ def execute_best_play(verdict: dict, mode: str = 'paper',
                     'daily_max': daily_max_submissions,
                     'notes': f'{recent}/{daily_max_submissions} daily-cap reached; falling back to paper-log only. Override: KERNEL_LIVE=1 + --mode review for next action.'}
 
-    # We currently support: PUT_SHORT_MIX (laddered), CALL_SHORT_COVERED (laddered),
-    # BUY_BOXX / SELL_BOXX (laddered stock orders)
+    kind = chosen.get('order_type')
     if kind == 'PUT_SHORT_MIX':
-        return _execute_put_short_mix(best, mode=mode)
-    if kind == 'CALL_SHORT_COVERED':
-        return _execute_cc(best, mode=mode)
-    if kind in ('BUY_BOXX', 'SELL_BOXX'):
-        return _execute_boxx(best, mode=mode)
-    if kind == 'CC_BTC_TO_FREE_SHARES':
-        return {'action_taken': 'manual_review', 'mode': mode,
-                'notes': f'BTC {best.get("qty")} calls — requires manual leg-picking by extrinsic; not auto-executed'}
-    return {'action_taken': 'unhandled', 'mode': mode,
-            'notes': f'unhandled best-play type: {kind}'}
+        result = _execute_put_short_mix(chosen, mode=mode)
+    elif kind == 'CALL_SHORT_COVERED':
+        result = _execute_cc(chosen, mode=mode)
+    else:  # BUY_BOXX / SELL_BOXX
+        result = _execute_boxx(chosen, mode=mode)
+    if consult_notes:
+        result['consult_pending'] = consult_notes
+        result['notes'] = (result.get('notes', '') +
+                           f' [+{len(consult_notes)} consult-only rec(s) skipped — see consult_pending]')
+    if not chosen.get('best_play'):
+        result['executed_runner_up'] = kind
+    return result
 
 
 def _execute_boxx(order: dict, mode: str = 'paper') -> dict:
@@ -420,7 +453,7 @@ def main():
         if not verdict_full:
             log_action({'action_taken': 'fetch_failed',
                         'notes': 'dashboard /api/state unreachable',
-                        'mode': 'paper' if dry_run_only else 'live'})
+                        'mode': mode})
             print('FETCH FAILED', file=sys.stderr)
             return 1
         verdict = verdict_full.get('verdict') or {}

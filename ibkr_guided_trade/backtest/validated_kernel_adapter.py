@@ -698,6 +698,83 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             'priority': 'high' if real_cash < 500 else 'medium',
         })
 
+    # ─── COMPOSITE DBA EXPOSURE (UNG×DBA weather regime allocator) ───────
+    # Reads research/dba/cache/composite_state.json (refreshed daily by
+    # research/dba/refresh.sh). When dba_pct > 0.2 AND UNG has no setup,
+    # emit SELL_PUT_DBA candidate competing with UNG/BOXX for best_play.
+    # See research/dba/composite_edge.py for the allocation logic.
+    try:
+        import os as _os
+        import time as _time_mod
+        comp_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            'research/dba/cache/composite_state.json')
+        # STALENESS GUARD: signals decay (DSCI weekly, ONI/CPC monthly).
+        # A composite_state older than 48h means refresh.sh isn't running —
+        # do NOT trade on dead data; warn instead.
+        _comp_fresh = (_os.path.exists(comp_path) and
+                       (_time_mod.time() - _os.path.getmtime(comp_path)) < 48 * 3600)
+        if _os.path.exists(comp_path) and not _comp_fresh:
+            _age_h = (_time_mod.time() - _os.path.getmtime(comp_path)) / 3600
+            out['warnings'].append(
+                f'composite_state.json is {_age_h:.0f}h old (>48h) — DBA signals '
+                f'suppressed; run research/dba/refresh.sh')
+        if _comp_fresh:
+            import json as _json
+            with open(comp_path) as _f:
+                _comp = _json.load(_f)
+            _dba_pct = float(_comp.get('allocation', {}).get('dba', 0))
+            _dba_edge = float(_comp.get('dba_edge', 0))
+            _oni = float(_comp.get('oni', 0))
+            out['composite_state'] = _comp
+            if _dba_pct > 0.2 and (nav or 0) > 0:
+                # Get live DBA price
+                _dba_spot = None
+                try:
+                    import yfinance as _yf
+                    _dba_t = _yf.Ticker('DBA').fast_info
+                    _dba_spot = float(getattr(_dba_t, 'last_price', 0) or 0)
+                except Exception:
+                    pass
+                if _dba_spot and _dba_spot > 0:
+                    # Target ~5% OTM put, ~60-90 DTE
+                    _target_strike = round(_dba_spot * 0.95, 0)
+                    _est_credit = round(_dba_spot * 0.02, 2)  # ~2% of spot
+                    _alloc_dollars = (nav or 0) * _dba_pct
+                    # Contracts = collateral / (strike * 100)
+                    _target_contracts = max(1, int(_alloc_dollars / (_target_strike * 100)))
+                    # User already has ~700 sh exposure if all assigned; cap incremental
+                    _existing_dba_collateral = 19800  # from query_positions
+                    _max_new_collateral = max(0, _alloc_dollars - _existing_dba_collateral)
+                    _add_contracts = max(0, int(_max_new_collateral / (_target_strike * 100)))
+                    out.setdefault('_pending_boxx_orders', []).append({
+                        'order_type': 'SELL_PUT_DBA',
+                        'side': 'SELL_TO_OPEN',
+                        'symbol': 'DBA',
+                        'sec_id': None,  # requires WS chain lookup before submission
+                        'target_strike': _target_strike,
+                        'target_dte_range': '60-90',
+                        'target_contracts': _target_contracts,
+                        'incremental_contracts_vs_existing': _add_contracts,
+                        'est_credit_per_contract': _est_credit,
+                        'est_total_credit': round(_est_credit * _add_contracts * 100, 0),
+                        'dba_spot': round(_dba_spot, 2),
+                        'allocation_dollars': round(_alloc_dollars, 0),
+                        'existing_dba_collateral': _existing_dba_collateral,
+                        'rationale': (
+                            f'COMPOSITE REGIME: DBA edge={_dba_edge:+.2f} (ONI {_oni:+.2f}). '
+                            f'Allocator suggests ${_alloc_dollars:,.0f} ({_dba_pct:.0%} NAV) in DBA. '
+                            f'Existing DBA puts collateralize ~${_existing_dba_collateral:,.0f}; '
+                            f'incremental room {_add_contracts}c. '
+                            f'Target: P{_target_strike:.0f} 60-90 DTE (~5% OTM), '
+                            f'~${_est_credit:.2f}/contract credit. '
+                            f'REQUIRES CONSULT — live chain lookup needed before submission.'),
+                        'priority': 'medium' if _add_contracts > 0 else 'low',
+                        'requires_consult': True,
+                    })
+    except Exception as _comp_err:
+        out['composite_error'] = str(_comp_err)
+
     # Shoulder
     import datetime
     month = datetime.date.today().month
@@ -747,6 +824,14 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                 ev = float(bo.get('est_cost', 0)) * 0.0474  # 1-yr standing yield
             elif kind == 'SELL_BOXX':
                 ev = float(bo.get('est_proceeds', 0)) * 0.01
+            elif kind == 'SELL_PUT_DBA':
+                # EV = total credit if expires worthless; weighted by edge
+                # magnitude (higher edge → higher probability of OTM expiry)
+                _credit = float(bo.get('est_total_credit', 0))
+                _edge = float(out.get('composite_state', {}).get('dba_edge', 0))
+                # probability OTM ~ 0.55 + 0.25*edge (clipped); EV = credit * prob
+                _p_otm = max(0.4, min(0.85, 0.55 + 0.25 * _edge))
+                ev = _credit * _p_otm
             else:
                 ev = 0
             pri_mult = {'high': 1.0, 'medium': 0.7, 'low': 0.4}.get(
