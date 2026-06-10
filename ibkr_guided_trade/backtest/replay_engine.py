@@ -170,6 +170,16 @@ def precompute_factor_z(df):
         _ma20 = df['UNG'].rolling(20).mean()
         _sd20 = df['UNG'].rolling(20).std()
         df['ung_surge_z'] = ((df['UNG'] - _ma20) / _sd20.replace(0, float('nan'))).fillna(0.0)
+        # HH basis storm: spot-futures backwardation > +$0.40 → defensive mode
+        # Empirically validated: 41 events in 5yr, UNG -4.5% in 5d on storm days
+        # (see commit 8da5689 backwardation analysis). Counter-intuitive: spot
+        # crashes back to futures, not the other way around.
+        if 'eia_hh_spot_daily' in df.columns:
+            df['hh_basis'] = (df['eia_hh_spot_daily'] - df['NG']).fillna(0.0)
+            df['hh_basis_storm'] = (df['hh_basis'] > 0.40).astype(int)
+        else:
+            df['hh_basis'] = 0.0
+            df['hh_basis_storm'] = 0
         df['ung_5d_mom'] = df['UNG'].pct_change(5)
         df['ung_30d_return'] = df['UNG'].pct_change(30)  # for grind-down detection
         # 60d high (for called-away cycle peak detection)
@@ -1819,6 +1829,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     # DD-aware risk dial — generic risk control
                     kelly_q = int(kelly_q * dd_scale)
                     put_qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20))))
+                # HH BASIS STORM SKIP: backwardation > +\$0.40 historically
+                # precedes UNG -4.5% in 5d. Don't sell new puts → don't get
+                # assigned into a falling market. Param: hh_storm_skip_puts.
+                if p.get('hh_storm_skip_puts', False) and int(row.get('hh_basis_storm', 0)):
+                    trades.append({'date': idx, 'type': 'PUT_SKIP_HH_STORM',
+                                   'pnl': 0.0, 'hh_basis': float(row.get('hh_basis', 0)),
+                                   'note': 'backwardation storm → defensive'})
+                    prem = 0  # neutralize subsequent put-write conditional
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
                     # Available collateral = current cash + premium received -
@@ -3731,6 +3749,42 @@ STRATEGIES = {
         'call_qty_nav_pct': 0.04,
         'put_qty_max': 100, 'call_qty_max': 50,
     },
+    # SAME AS scale_invariant + HH backwardation storm filter.
+    # When hh_basis > +$0.40, skip new puts (don't get assigned into the
+    # mean-reversion crash). Tested edge: 41 events × -4.5% UNG 5d.
+    'champion_premium_harvest_scale_invariant_hh_storm': {
+        'use_real_strikes': True,
+        'otm_put': 0.05, 'otm_call': 0.05, 'put_qty': 5, 'call_qty': 5,
+        'entry_cadence': 1,
+        'tp_50': True, 'tp_dynamic': True,
+        'roll_down': True, 'roll_up_calls': True,
+        'bearish_stack': True, 'boxx': True,
+        'trend_aware_roll': True,
+        'aggressive_itm_cc_z': -0.25, 'itm_cc_pct': -0.20,
+        'aggressive_itm_put_z': 0.3, 'itm_put_pct': -0.05,
+        'elevator_close': True, 'elevator_itm_pct': 0.05,
+        'elevator_extrinsic_max': 0.15, 'elevator_mode': 'strict',
+        'vol_aware_sizing': True,
+        'tail_hedge_floor': 2,
+        'z_share_target_enabled': True, 'z_target_cadence_days': 21,
+        'z_target_mults': {
+            'extreme_cheap': 1.7, 'cheap': 1.4, 'neutral': 1.0,
+            'rich': 0.4, 'extreme_rich': 0.1,
+        },
+        'z_share_target_pct_nav': 0.35,
+        'kold_shoulder_hedge': 0.10,
+        'cut_and_rebuild_puts': True, 'rebuild_put_otm_pct': 0.08, 'rebuild_put_dte': 30,
+        'elevator_skip_on_momentum': True, 'itm_cc_skip_on_momentum': True,
+        'dd_trim_trigger_pct': -5, 'dd_trim_qty_pct': 30,
+        'dd_trim_floor': 0, 'dd_trim_cadence_days': 5,
+        'cc_aware_cut': True, 'skip_puts_on_grind_down': True,
+        'regime_aware_put_qty': True,
+        'put_qty_nav_pct': 0.06,
+        'call_qty_nav_pct': 0.04,
+        'put_qty_max': 100, 'call_qty_max': 50,
+        # NEW: backwardation storm defensive
+        'hh_storm_skip_puts': True,
+    },
     # ULTRA-CONSERVATIVE — tightest WF range ever (51pp). Trades return
     # for ultimate predictability across rolling windows.
     'champion_premium_harvest_ultra': {
@@ -4000,6 +4054,7 @@ _KEEP_STRATEGIES = {
     'champion_target_25_max_protected',
     'champion_premium_harvest_ultra',
     'champion_premium_harvest_scale_invariant',  # production kernel
+    'champion_premium_harvest_scale_invariant_hh_storm',  # HH backwardation defensive
     'champion_target_25_smooth',
     'champion_trifecta',
     'champion_20pct_protected_wing_all',
