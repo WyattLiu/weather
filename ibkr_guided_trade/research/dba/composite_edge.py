@@ -214,6 +214,22 @@ def main():
     _MULT = {0: 1.0, 1: 1.15, 2: 1.3, 3: 1.6, 4: 1.6}
     _size_mult = 1.0 if _warn >= 2 else _MULT.get(_score, 1.0)
     _target_otm = 0.03 if _oni_now > 0.5 else 0.02
+
+    # ── ENSO regime-pair satellite: CORN (La Niña) vs CANE (El Niño) ─────
+    # CORN has 2x DBA's ONI factor strength (-11.8% spread, t=-5.1) but is
+    # only active in La Niña; CANE is the softs/El Niño side (the 12-mo
+    # tail thesis). Satellite leg ≤8% NAV, small contracts (thin chains).
+    _cpc_peak = fwd_pct or 0
+    if _oni_now <= -0.25:
+        ag_single = {'ticker': 'CORN', 'reason':
+                     f'La Niña regime (ONI {_oni_now:+.2f}) — purest grain factor'}
+    elif _oni_now >= 0.75 or (_cpc_peak >= 90 and _oni_now > 0.4):
+        ag_single = {'ticker': 'CANE', 'reason':
+                     f'El Niño regime (ONI {_oni_now:+.2f}, CPC peak {_cpc_peak}%) — softs/sugar side'}
+    else:
+        ag_single = {'ticker': None, 'reason': 'neutral ENSO — DBA core only'}
+    ag_single['nav_pct_cap'] = 0.08
+    ag_single['max_contracts'] = 5
     dba_wheel_tilt = {
         'size_mult': round(_size_mult, 2),
         'target_otm_pct': _target_otm,
@@ -241,6 +257,7 @@ def main():
             'forward_bump_applied': round(fwd_bump, 2),
         },
         'dba_wheel_tilt': dba_wheel_tilt,
+        'ag_single_leg': ag_single,
         'allocation': {
             'ung': float(latest['w_ung']),
             'dba': float(latest['w_dba']),

@@ -143,10 +143,14 @@ def execute_best_play(verdict: dict, mode: str = 'paper',
     chosen = None
     for cand in candidates:
         kind = cand.get('order_type')
-        if kind == 'SELL_PUT_DBA':
+        if kind and kind.startswith('SELL_PUT_') and kind != 'PUT_SHORT_MIX':
+            # DBA core + CORN/CANE regime-pair satellites — all consult-only
+            n = (cand.get('incremental_contracts_vs_existing')
+                 if cand.get('incremental_contracts_vs_existing') is not None
+                 else cand.get('target_contracts'))
             consult_notes.append(
-                f'CONSULT SELL_PUT_DBA: target {cand.get("incremental_contracts_vs_existing")}×'
-                f' DBA P{cand.get("target_strike"):.0f} {cand.get("target_dte_range")} DTE'
+                f'CONSULT {kind}: target {n}× {cand.get("symbol")}'
+                f' P{cand.get("target_strike"):.1f} {cand.get("target_dte_range")} DTE'
                 f' @~${cand.get("est_credit_per_contract"):.2f} — needs chain lookup + manual submission')
             continue
         if kind == 'CC_BTC_TO_FREE_SHARES':
