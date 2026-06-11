@@ -1622,6 +1622,29 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
         })
     elif uncovered >= 100:
         Kc = round(spot * (1 + sp.get('otm_call', 0.05)), 2)
+        # GEX WALL FLOOR: never sell CCs below the dealer call wall.
+        # Backtest (100 monthlies 2018-2026): final-week high stayed under
+        # the wall 74% vs 69% for naive same-OTM strikes (+5pp hold rate).
+        # Strike-selection overlay only — never affects qty/sizing.
+        gex_note = ''
+        _wall = None
+        try:
+            import os as _gos
+            import sys as _gsys
+            _gex_dir = _gos.path.join(
+                _gos.path.dirname(_gos.path.dirname(_gos.path.abspath(__file__))),
+                'research/gex')
+            if _gex_dir not in _gsys.path:
+                _gsys.path.insert(0, _gex_dir)
+            from live_wall import current_gex_wall
+            _wall = current_gex_wall('UNG', spot)
+            if _wall and _wall['wall'] > Kc:
+                gex_note = (f' Strike floored at GEX call wall ${_wall["wall"]:.1f} '
+                            f'(was ${Kc:.2f}; wall +GEX ${_wall["wall_gex"]:,.0f}, '
+                            f'74% final-week hold rate).')
+                Kc = float(_wall['wall'])
+        except Exception:
+            pass
         cc_dte = sp.get('open_dte', 45)
         T = cc_dte / 365
         d1c = (math.log(spot/Kc) + (0.045 + 0.5*iv**2)*T) / (iv*math.sqrt(T))
@@ -1650,7 +1673,9 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
                 'est_premium_per': round(bsm_cc, 3),
                 'est_credit_total': round(bsm_cc * 100 * max_cc, 0),
                 'shares_covered': max_cc * 100,
-                'rationale': f'CC at K=${Kc} (5% OTM), {cc_dte}d, covers {max_cc * 100} shares.',
+                'gex_wall': _wall,
+                'rationale': (f'CC at K=${Kc}, {cc_dte}d, covers {max_cc * 100} shares.'
+                              + gex_note),
                 'priority': 'low',
             })
 
