@@ -40,12 +40,20 @@ def _curl(url, dest=None, timeout=120):
     return subprocess.check_output(args)
 
 
-def fetch_cot(start_year=2010, end_year=2026):
-    """Managed-money net positioning per ag market, weekly."""
+def fetch_cot(start_year=2010, end_year=None):
+    """Managed-money net positioning per ag market, weekly.
+    Current-year zip refreshes if older than 6 days (CFTC posts Fridays)."""
+    import time as _t
+    from datetime import date as _date
+    if end_year is None:
+        end_year = _date.today().year
     out_path = os.path.join(FUND, 'cot_ag.csv')
     frames = []
     for yr in range(start_year, end_year + 1):
         zp = os.path.join(FUND, f'cot_{yr}.zip')
+        if (yr == end_year and os.path.exists(zp)
+                and _t.time() - os.path.getmtime(zp) > 6 * 86400):
+            os.remove(zp)  # stale current-year file → re-download
         if not os.path.exists(zp):
             print(f'[cot] {yr} downloading...')
             try:
@@ -84,17 +92,33 @@ def fetch_cot(start_year=2010, end_year=2026):
     return cot
 
 
-def fetch_fao(month_hint='2026-06'):
-    """FAO Food Price Index monthly (nominal + real + sub-indices)."""
+def fetch_fao(month_hint=None):
+    """FAO Food Price Index monthly. URL embeds the publication month —
+    auto-discover by trying current month then walking back 3."""
+    from datetime import date as _date
     out_path = os.path.join(FUND, 'fao_fpi.csv')
-    url = (f'https://www.fao.org/media/docs/worldfoodsituationlibraries/'
-           f'default-document-library/ffpi-data-{month_hint}.xlsx')
     xp = os.path.join(FUND, 'ffpi.xlsx')
-    try:
-        _curl(url, xp)
-        df = pd.read_excel(xp, sheet_name=0, skiprows=2)
-    except Exception as e:
-        print(f'[fao] fetch/parse failed: {e}')
+    hints = [month_hint] if month_hint else []
+    if not hints:
+        d = _date.today().replace(day=1)
+        for _ in range(4):
+            hints.append(d.strftime('%Y-%m'))
+            d = (d - pd.Timedelta(days=1)).replace(day=1)
+    df = None
+    for h in hints:
+        url = (f'https://www.fao.org/media/docs/worldfoodsituationlibraries/'
+               f'default-document-library/ffpi-data-{h}.xlsx')
+        try:
+            _curl(url, xp)
+            if os.path.getsize(xp) < 10000:
+                continue  # 404 page, not an xlsx
+            df = pd.read_excel(xp, sheet_name=0, skiprows=2)
+            print(f'[fao] got ffpi-data-{h}.xlsx')
+            break
+        except Exception:
+            continue
+    if df is None:
+        print('[fao] all month hints failed')
         return None
     df = df.rename(columns={df.columns[0]: 'date'})
     df['date'] = pd.to_datetime(df['date'], errors='coerce')

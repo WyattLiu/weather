@@ -173,26 +173,57 @@ def main():
     print(f'  allocation = UNG {latest["w_ung"]:.0%}  DBA {latest["w_dba"]:.0%}  '
           f'BOXX {latest["w_boxx"]:.0%}')
 
-    # ── DBA WHEEL FACTOR TILT (per [[project_dba_factor_alpha]]) ─────────
-    # Upsize-only: 1.5x when ONI<0 (La Niña grain-bullish), +30% in strong
-    # months, never below 1.0x. ONI>+0.5 → widen strikes to 3% OTM (the
-    # weak-Niño chop zone), same size. Defensive downsizing is banned per
-    # [[feedback_filters_cost_more_than_they_save]].
+    # ── DBA WHEEL FACTOR TILT — score-graduated confluence model ─────────
+    # Walk-forward validated (sizing_model.py): score 0/1/2/3+ →
+    # fwd-63d -0.35%/+0.13%/+0.44%/+4.15% (monotone, rolling past-only
+    # thresholds). Upsize-only per [[feedback_filters_cost_more_than_they_save]];
+    # macro-squeeze warning (≥2 of dxy/crude/cot-hot, forensics lift
+    # 3.3x/2.7x/2.3x at drawdown peaks) caps the tilt at 1.0x.
     _oni_now = float(latest['oni'])
-    _month_now = int(df.index[-1].month)
-    _size_mult = 1.0
-    if _oni_now < 0:
-        _size_mult *= 1.5
-    if _month_now in (12, 1, 5, 10):      # Dec/Jan/May/Oct strong
-        _size_mult *= 1.3
-    _size_mult = max(1.0, min(2.0, _size_mult))
+    _score, _warn, _score_parts = 0, 0, {}
+    try:
+        _fp = pd.read_csv(os.path.join(CACHE, 'dba_fundamentals_panel.csv'),
+                          index_col=0, parse_dates=True)
+        _last = _fp.iloc[-1]
+        _cot_thr = _fp['cot_chg_13w'].rolling(756, min_periods=252).quantile(0.2).iloc[-1]
+        _fpi_thr = _fp['fpi_mom_3m'].rolling(756, min_periods=252).quantile(0.8).iloc[-1]
+        _stu_thr = _fp['stu_z'].rolling(756, min_periods=252).quantile(0.3).iloc[-1]
+        _score_parts = {
+            'oni_low': bool(_oni_now < 0),
+            'cot_washed': bool(_last['cot_chg_13w'] < _cot_thr) if pd.notna(_last['cot_chg_13w']) else False,
+            'stocks_tight': bool(_last['stu_z'] < _stu_thr) if pd.notna(_last['stu_z']) else False,
+            'fpi_momentum': bool(_last['fpi_mom_3m'] > _fpi_thr) if pd.notna(_last['fpi_mom_3m']) else False,
+        }
+        _score = sum(_score_parts.values())
+        _warn = (int(pd.notna(_last.get('crude_3m')) and _last['crude_3m'] > 0.10)
+                 + int(pd.notna(_last.get('cot_chg_13w')) and _last['cot_chg_13w'] > 0.05))
+        # DXY warning from the kernel master dataset (live trend)
+        try:
+            _md = pd.read_csv(os.path.join(os.path.dirname(os.path.dirname(ROOT)),
+                                           'backtest/cache/master_dataset.csv'),
+                              index_col=0, parse_dates=True)
+        except Exception:
+            _md = None
+        if _md is not None and 'DX_DXY' in _md.columns:
+            _dxy = _md['DX_DXY'].dropna()
+            if len(_dxy) > 70 and (_dxy.iloc[-1] / _dxy.iloc[-64] - 1) > 0.02:
+                _warn += 1
+    except Exception as _tilt_err:
+        _score_parts = {'error': str(_tilt_err)}
+
+    _MULT = {0: 1.0, 1: 1.15, 2: 1.3, 3: 1.6, 4: 1.6}
+    _size_mult = 1.0 if _warn >= 2 else _MULT.get(_score, 1.0)
     _target_otm = 0.03 if _oni_now > 0.5 else 0.02
     dba_wheel_tilt = {
         'size_mult': round(_size_mult, 2),
         'target_otm_pct': _target_otm,
         'target_dte': 60,
-        'inputs': {'oni': _oni_now, 'month': _month_now},
-        'basis': 'factor_scan 2026-06: oni p=.004 n=230; upsize-only design',
+        'score': _score,
+        'score_parts': _score_parts,
+        'macro_warn_count': _warn,
+        'inputs': {'oni': _oni_now, 'month': int(df.index[-1].month)},
+        'basis': ('score-graduated confluence (walk-forward: score 3+ = '
+                  '+4.15%/63d); macro-squeeze cap from drawdown forensics'),
     }
 
     # Dump for kernel consumption
