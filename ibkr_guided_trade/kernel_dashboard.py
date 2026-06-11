@@ -1066,20 +1066,29 @@ async function refresh() {
                  + `Strike mix → target <strong>${o.target_otm_pct}%</strong> OTM, achieved <strong>${o.achieved_otm_pct}%</strong></div>`
                  + `<table style="font-size:0.78rem"><thead><tr><th>Qty</th><th>OSI</th><th>Prem/ct</th><th>Eff OTM</th><th>Credit</th></tr></thead><tbody>${legsTable}</tbody></table>`
                  + `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Total credit: $${fmt(o.est_credit_total,0)} · Collateral: $${fmt(o.collateral_required,0)}</div></div>`;
+        } else if (o.order_type.startsWith('SELL_PUT_') && o.requires_consult) {
+          // Consult-only ag-wheel candidates (DBA core + CORN/CANE satellites)
+          const tilt = o.factor_tilt || {};
+          const tiltStr = tilt.score != null ? `score ${tilt.score} → ${tilt.size_mult}x` : (o.size_mult ? `tilt ${o.size_mult}x` : '');
+          detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px;border-left:2px solid var(--yellow)">`
+                 + `<div class="mono" style="font-size:0.85rem">Target: <strong>${o.target_contracts ?? '?'}×</strong> ${o.symbol} P${o.target_strike ?? '?'} · ${o.target_dte_range ?? ''} DTE</div>`
+                 + `<div class="mono" style="font-size:0.82rem;margin-top:4px"><span style="color:var(--text-dim)">Est credit:</span> $${o.est_credit_per_contract ?? '?'}/ct · total $${fmt(o.est_total_credit,0)}</div>`
+                 + `<div class="mono" style="font-size:0.82rem"><span style="color:var(--text-dim)">Collateral target:</span> $${fmt(o.allocation_dollars,0)}` + (tiltStr ? ` · <span style="color:var(--cyan)">${tiltStr}</span>` : '') + `</div>`
+                 + `<div style="font-size:0.72rem;margin-top:4px;color:var(--yellow)">⚠ CONSULT — chain lookup + manual submission required</div></div>`;
         } else if (o.order_type.includes('PUT') || o.order_type.includes('CALL')) {
           detail = `<div style="margin-top:6px;padding:8px;background:var(--bg);border-radius:4px">`
                  + `<div class="mono" style="font-size:0.85rem"><span style="color:var(--text-dim)">OSI:</span> ${o.symbol}</div>`
-                 + `<div class="mono" style="font-size:0.82rem;margin-top:4px"><span style="color:var(--text-dim)">Limit range:</span> $${o.limit_low} – $${o.limit_high}/contract</div>`
-                 + `<div class="mono" style="font-size:0.82rem"><span style="color:var(--text-dim)">Est credit:</span> $${fmt(o.est_credit_total,0)}` +
+                 + `<div class="mono" style="font-size:0.82rem;margin-top:4px"><span style="color:var(--text-dim)">Limit range:</span> $${o.limit_low ?? '?'} – $${o.limit_high ?? '?'}/contract</div>`
+                 + `<div class="mono" style="font-size:0.82rem"><span style="color:var(--text-dim)">Est credit:</span> $${fmt(o.est_credit_total ?? o.est_total_credit,0)}` +
                    (o.collateral_required ? ` &nbsp; <span style="color:var(--text-dim)">Collateral:</span> $${fmt(o.collateral_required,0)}` : '') + `</div></div>`;
         }
         return `<div class="rec-card">
           <div class="rec-header">
             <span class="rec-type-badge">${o.order_type}</span>
             <span class="rec-urgency-badge ${o.priority}">${o.priority}</span>
-            <span style="margin-left:auto;font-weight:600">${o.side}</span>
-            <span class="mono">${o.symbol}</span>
-            <span class="mono">×${o.qty || o.qty_total}</span>
+            <span style="margin-left:auto;font-weight:600">${o.side ?? ''}</span>
+            <span class="mono">${o.symbol ?? ''}</span>
+            <span class="mono">×${o.qty ?? o.qty_total ?? o.target_contracts ?? '–'}</span>
           </div>
           <div class="rec-why">${o.rationale || ''}</div>
           ${detail}
