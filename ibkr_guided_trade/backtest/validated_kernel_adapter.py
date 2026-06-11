@@ -781,10 +781,12 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                         'priority': 'medium' if _add_contracts > 0 else 'low',
                         'requires_consult': True,
                     })
-            # ── ENSO regime-pair satellite (CORN/CANE) ───────────────────
+            # ── ENSO satellite pair (CORN + CANE always-on, ONI size tilt) ─
             _ag = _comp.get('ag_single_leg') or {}
-            _ag_tk = _ag.get('ticker')
-            if _ag_tk and (nav or 0) > 0:
+            for _leg in (_ag.get('legs') or []):
+                _ag_tk = _leg.get('ticker')
+                if not _ag_tk or (nav or 0) <= 0:
+                    continue
                 _ag_spot = None
                 try:
                     import yfinance as _yf2
@@ -792,35 +794,38 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                                              'last_price', 0) or 0)
                 except Exception:
                     pass
-                if _ag_spot and _ag_spot > 0:
-                    _ag_otm = 0.03  # thin chains → wider strike
-                    _ag_K = round(_ag_spot * (1 - _ag_otm) * 2) / 2
-                    _ag_alloc = (nav or 0) * float(_ag.get('nav_pct_cap', 0.08))
-                    _ag_n = min(int(_ag.get('max_contracts', 5)),
-                                max(1, int(_ag_alloc / (_ag_K * 100))))
-                    _ag_credit = round(_ag_spot * 0.025, 2)
-                    out.setdefault('_pending_boxx_orders', []).append({
-                        'order_type': f'SELL_PUT_{_ag_tk}',
-                        'side': 'SELL_TO_OPEN',
-                        'symbol': _ag_tk,
-                        'sec_id': None,
-                        'target_strike': _ag_K,
-                        'target_dte_range': '60±15',
-                        'target_contracts': _ag_n,
-                        'est_credit_per_contract': _ag_credit,
-                        'est_total_credit': round(_ag_credit * _ag_n * 100, 0),
-                        'spot': round(_ag_spot, 2),
-                        'allocation_dollars': round(_ag_alloc, 0),
-                        'rationale': (
-                            f'ENSO REGIME-PAIR satellite: {_ag.get("reason", "")}. '
-                            f'{_ag_n}x {_ag_tk} P{_ag_K:.1f} ~60d (~3% OTM, '
-                            f'~${_ag_credit:.2f}cr). Cap {_ag.get("nav_pct_cap", 0.08):.0%} '
-                            f'NAV / {_ag.get("max_contracts", 5)}c (thin chain). '
-                            f'1446(f) qualified-notice exempt (Teucrium, same as UNG/DBA). '
-                            f'REQUIRES CONSULT.'),
-                        'priority': 'low',
-                        'requires_consult': True,
-                    })
+                if not _ag_spot or _ag_spot <= 0:
+                    continue
+                _ag_mult = float(_leg.get('size_mult', 1.0))
+                _ag_otm = 0.03  # thin chains → wider strike
+                _ag_K = round(_ag_spot * (1 - _ag_otm) * 2) / 2
+                _ag_alloc = (nav or 0) * float(_ag.get('nav_pct_cap_each', 0.05)) * _ag_mult
+                _ag_n = min(int(_ag.get('max_contracts', 5)),
+                            max(1, int(_ag_alloc / (_ag_K * 100))))
+                _ag_credit = round(_ag_spot * 0.025, 2)
+                out.setdefault('_pending_boxx_orders', []).append({
+                    'order_type': f'SELL_PUT_{_ag_tk}',
+                    'side': 'SELL_TO_OPEN',
+                    'symbol': _ag_tk,
+                    'sec_id': None,
+                    'target_strike': _ag_K,
+                    'target_dte_range': '60±15',
+                    'target_contracts': _ag_n,
+                    'est_credit_per_contract': _ag_credit,
+                    'est_total_credit': round(_ag_credit * _ag_n * 100, 0),
+                    'spot': round(_ag_spot, 2),
+                    'allocation_dollars': round(_ag_alloc, 0),
+                    'size_mult': _ag_mult,
+                    'rationale': (
+                        f'ENSO SATELLITE ({_ag_tk}, always-on pair): '
+                        f'{_ag.get("reason", "")}. {_ag_n}x P{_ag_K:.1f} ~60d '
+                        f'(~3% OTM, ~${_ag_credit:.2f}cr, tilt {_ag_mult:.1f}x). '
+                        f'Cap {_ag.get("nav_pct_cap_each", 0.05):.0%} NAV/leg, '
+                        f'{_ag.get("max_contracts", 5)}c (thin chain). '
+                        f'1446(f) qualified-notice exempt (Teucrium). REQUIRES CONSULT.'),
+                    'priority': 'low',
+                    'requires_consult': True,
+                })
     except Exception as _comp_err:
         out['composite_error'] = str(_comp_err)
 

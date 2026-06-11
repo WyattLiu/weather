@@ -215,21 +215,28 @@ def main():
     _size_mult = 1.0 if _warn >= 2 else _MULT.get(_score, 1.0)
     _target_otm = 0.03 if _oni_now > 0.5 else 0.02
 
-    # ── ENSO regime-pair satellite: CORN (La Niña) vs CANE (El Niño) ─────
-    # CORN has 2x DBA's ONI factor strength (-11.8% spread, t=-5.1) but is
-    # only active in La Niña; CANE is the softs/El Niño side (the 12-mo
-    # tail thesis). Satellite leg ≤8% NAV, small contracts (thin chains).
+    # ── ENSO satellite pair: BOTH CORN + CANE always-on, ONI tilts size ──
+    # regime_pair_backtest (leak-free, 1-2mo ONI lag): SWITCHING loses to
+    # static 50/50 (+24%/1.01 vs +35.4%/1.60) — carry is regime-agnostic,
+    # 5th confirmation of [[feedback_filters_cost_more_than_they_save]].
+    # So: hold both, upsize-only tilt the ENSO-favored leg by 1.3x.
     _cpc_peak = fwd_pct or 0
+    _corn_mult, _cane_mult = 1.0, 1.0
     if _oni_now <= -0.25:
-        ag_single = {'ticker': 'CORN', 'reason':
-                     f'La Niña regime (ONI {_oni_now:+.2f}) — purest grain factor'}
+        _corn_mult = 1.3       # La Niña favors grains
     elif _oni_now >= 0.75 or (_cpc_peak >= 90 and _oni_now > 0.4):
-        ag_single = {'ticker': 'CANE', 'reason':
-                     f'El Niño regime (ONI {_oni_now:+.2f}, CPC peak {_cpc_peak}%) — softs/sugar side'}
-    else:
-        ag_single = {'ticker': None, 'reason': 'neutral ENSO — DBA core only'}
-    ag_single['nav_pct_cap'] = 0.08
-    ag_single['max_contracts'] = 5
+        _cane_mult = 1.3       # El Niño favors softs/sugar
+    ag_single = {
+        'legs': [
+            {'ticker': 'CORN', 'size_mult': _corn_mult},
+            {'ticker': 'CANE', 'size_mult': _cane_mult},
+        ],
+        'reason': (f'always-on pair (static beats switching, Sharpe 1.60 vs '
+                   f'1.01); ONI {_oni_now:+.2f} tilts '
+                   f'{"CORN" if _corn_mult > 1 else "CANE" if _cane_mult > 1 else "neither"}'),
+        'nav_pct_cap_each': 0.05,   # ~10% NAV across both
+        'max_contracts': 5,
+    }
     dba_wheel_tilt = {
         'size_mult': round(_size_mult, 2),
         'target_otm_pct': _target_otm,
