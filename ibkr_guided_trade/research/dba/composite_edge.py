@@ -173,6 +173,28 @@ def main():
     print(f'  allocation = UNG {latest["w_ung"]:.0%}  DBA {latest["w_dba"]:.0%}  '
           f'BOXX {latest["w_boxx"]:.0%}')
 
+    # ── DBA WHEEL FACTOR TILT (per [[project_dba_factor_alpha]]) ─────────
+    # Upsize-only: 1.5x when ONI<0 (La Niña grain-bullish), +30% in strong
+    # months, never below 1.0x. ONI>+0.5 → widen strikes to 3% OTM (the
+    # weak-Niño chop zone), same size. Defensive downsizing is banned per
+    # [[feedback_filters_cost_more_than_they_save]].
+    _oni_now = float(latest['oni'])
+    _month_now = int(df.index[-1].month)
+    _size_mult = 1.0
+    if _oni_now < 0:
+        _size_mult *= 1.5
+    if _month_now in (12, 1, 5, 10):      # Dec/Jan/May/Oct strong
+        _size_mult *= 1.3
+    _size_mult = max(1.0, min(2.0, _size_mult))
+    _target_otm = 0.03 if _oni_now > 0.5 else 0.02
+    dba_wheel_tilt = {
+        'size_mult': round(_size_mult, 2),
+        'target_otm_pct': _target_otm,
+        'target_dte': 60,
+        'inputs': {'oni': _oni_now, 'month': _month_now},
+        'basis': 'factor_scan 2026-06: oni p=.004 n=230; upsize-only design',
+    }
+
     # Dump for kernel consumption
     out = {
         'as_of': str(df.index[-1].date()),
@@ -187,6 +209,7 @@ def main():
             'djf_el_nino_pct': djf_pct,
             'forward_bump_applied': round(fwd_bump, 2),
         },
+        'dba_wheel_tilt': dba_wheel_tilt,
         'allocation': {
             'ung': float(latest['w_ung']),
             'dba': float(latest['w_dba']),

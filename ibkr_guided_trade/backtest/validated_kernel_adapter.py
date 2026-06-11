@@ -737,11 +737,16 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                 except Exception:
                     pass
                 if _dba_spot and _dba_spot > 0:
-                    # Target ~5% OTM put, ~60-90 DTE
-                    _target_strike = round(_dba_spot * 0.95, 0)
-                    _est_credit = round(_dba_spot * 0.02, 2)  # ~2% of spot
-                    _alloc_dollars = (nav or 0) * _dba_pct
-                    # Contracts = collateral / (strike * 100)
+                    # FACTOR TILT (per [[project_dba_factor_alpha]]): upsize-only
+                    # sizing + ONI-aware strikes, computed by composite_edge.py.
+                    _tilt = _comp.get('dba_wheel_tilt') or {}
+                    _size_mult = float(_tilt.get('size_mult', 1.0))
+                    _otm = float(_tilt.get('target_otm_pct', 0.02))
+                    _dte = int(_tilt.get('target_dte', 60))
+                    _target_strike = round(_dba_spot * (1 - _otm) * 2) / 2  # 0.50 grid
+                    _est_credit = round(_dba_spot * (0.018 + _otm * 0.3), 2)
+                    # Standing 40% NAV base (static beats gating) × upsize tilt
+                    _alloc_dollars = (nav or 0) * 0.40 * _size_mult
                     _target_contracts = max(1, int(_alloc_dollars / (_target_strike * 100)))
                     # User already has ~700 sh exposure if all assigned; cap incremental
                     _existing_dba_collateral = 19800  # from query_positions
@@ -753,7 +758,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                         'symbol': 'DBA',
                         'sec_id': None,  # requires WS chain lookup before submission
                         'target_strike': _target_strike,
-                        'target_dte_range': '60-90',
+                        'target_dte_range': f'{_dte}±15',
                         'target_contracts': _target_contracts,
                         'incremental_contracts_vs_existing': _add_contracts,
                         'est_credit_per_contract': _est_credit,
@@ -761,14 +766,16 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                         'dba_spot': round(_dba_spot, 2),
                         'allocation_dollars': round(_alloc_dollars, 0),
                         'existing_dba_collateral': _existing_dba_collateral,
+                        'factor_tilt': _tilt,
                         'rationale': (
-                            f'COMPOSITE REGIME: DBA edge={_dba_edge:+.2f} (ONI {_oni:+.2f}). '
-                            f'Allocator suggests ${_alloc_dollars:,.0f} ({_dba_pct:.0%} NAV) in DBA. '
-                            f'Existing DBA puts collateralize ~${_existing_dba_collateral:,.0f}; '
-                            f'incremental room {_add_contracts}c. '
-                            f'Target: P{_target_strike:.0f} 60-90 DTE (~5% OTM), '
-                            f'~${_est_credit:.2f}/contract credit. '
-                            f'REQUIRES CONSULT — live chain lookup needed before submission.'),
+                            f'DBA WHEEL (factor-tilted): size {_size_mult:.1f}x, '
+                            f'{_otm:.0%} OTM, {_dte}d (ONI {_oni:+.2f} '
+                            f'{"La Niña upsize" if _size_mult > 1 else "weak-Niño wide strikes" if _otm > 0.02 else "base"}). '
+                            f'Standing 40% NAV x tilt = ${_alloc_dollars:,.0f}. '
+                            f'Existing puts collateralize ~${_existing_dba_collateral:,.0f}; '
+                            f'incremental {_add_contracts}c at P{_target_strike:.1f} '
+                            f'~${_est_credit:.2f}cr. Evidence: blend 70/30 Sharpe 2.18, '
+                            f'worst-12mo +6.3%. REQUIRES CONSULT — chain lookup before submission.'),
                         'priority': 'medium' if _add_contracts > 0 else 'low',
                         'requires_consult': True,
                     })
