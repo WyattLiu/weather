@@ -48,6 +48,37 @@ def bsm_call(S, K, T, r, sigma):
     return S * norm.cdf(d1) - K * math.exp(-r * T) * norm.cdf(d2)
 
 
+# Real strike increments (verified against live WS chains / user positions):
+# DBA $1 (P25/26/27...), CORN $1, SOYB $1, CANE $0.50 (sub-$10), UNG $0.50
+STRIKE_STEP = {'DBA': 1.0, 'CORN': 1.0, 'SOYB': 1.0, 'WEAT': 1.0,
+               'CANE': 0.5, 'UNG': 0.5}
+
+
+def third_friday(year, month):
+    from datetime import date as _date, timedelta as _td
+    d = _date(year, month, 15)
+    while d.weekday() != 4:
+        d += _td(days=1)
+    return d
+
+
+def nearest_monthly_dte(today, target_dte, lo=25, hi=80):
+    """Days to the monthly (3rd-Friday) expiry nearest target_dte within
+    [lo, hi]; None if no monthly fits (skip entry)."""
+    from datetime import timedelta as _td
+    best = None
+    for k in range(0, 4):
+        m = today.month + k
+        y = today.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        exp = third_friday(y, m)
+        dte = (exp - today.date() if hasattr(today, 'date') else exp - today).days
+        if lo <= dte <= hi:
+            if best is None or abs(dte - target_dte) < abs(best - target_dte):
+                best = dte
+    return best
+
+
 def load_prices(ticker):
     """Load price series from master_panel.csv."""
     panel = pd.read_csv(os.path.join(CACHE, 'master_panel.csv'),
@@ -70,7 +101,8 @@ def run_wheel(ticker, start='2015-01-01',
               contract_per_nav=15000,  # 1 contract per $15k NAV
               init_nav=100000, r_free=0.045,
               vol_gate=1.0,        # skip entries if realized vol > vol_gate (annualized)
-              signal_fn=None):     # optional date -> {'size_mult': x, 'otm_pct': y}
+              signal_fn=None,      # optional date -> {'size_mult': x, 'otm_pct': y}
+              realistic=False):    # monthly expiries + real strike grid
     """Run the wheel and return DataFrame indexed by date."""
     prices = load_prices(ticker)
     prices = prices[prices.index >= pd.Timestamp(start)]
@@ -166,10 +198,19 @@ def run_wheel(ticker, start='2015-01-01',
         if size_mult <= 0:
             vol_ok = False  # signal says stand down entirely
         if vol_ok and (last_entry is None or (date - last_entry).days >= entry_cadence_days):
-            # Sell put
-            target_K = round(spot * (1 - eff_otm) * 2) / 2  # 0.50 grid
-            T_yr = dte_target / 365.25
-            premium = bsm_put(spot, target_K, T_yr, r_free, sigma)
+            # Strike on the REAL grid; expiry on the REAL calendar
+            step = STRIKE_STEP.get(ticker, 0.5) if realistic else 0.5
+            target_K = round(spot * (1 - eff_otm) / step) * step
+            if realistic:
+                dte_real = nearest_monthly_dte(date, dte_target)
+                if dte_real is None:
+                    last_entry = date  # no monthly fits the window — skip
+                    T_yr = None
+                else:
+                    T_yr = dte_real / 365.25
+            else:
+                T_yr = dte_target / 365.25
+            premium = bsm_put(spot, target_K, T_yr, r_free, sigma) if T_yr else 0
             if premium > 0.05:
                 # Size: 1 contract per $contract_per_nav
                 n_contracts = max(1, int(nav / contract_per_nav * size_mult))
@@ -184,8 +225,9 @@ def run_wheel(ticker, start='2015-01-01',
                                     'n': n_contracts})
 
             # If holding shares, sell CC
-            if shares >= 100:
-                cc_K = round(spot * (1 + otm_pct) * 2) / 2
+            if shares >= 100 and T_yr:
+                step = STRIKE_STEP.get(ticker, 0.5) if realistic else 0.5
+                cc_K = round(spot * (1 + otm_pct) / step) * step
                 cc_premium = bsm_call(spot, cc_K, T_yr, r_free, sigma)
                 if cc_premium > 0.05:
                     n_cc = shares // 100
