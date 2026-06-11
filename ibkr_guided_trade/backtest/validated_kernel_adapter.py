@@ -769,8 +769,10 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                         'factor_tilt': _tilt,
                         'rationale': (
                             f'DBA WHEEL (factor-tilted): size {_size_mult:.1f}x, '
-                            f'{_otm:.0%} OTM, {_dte}d (ONI {_oni:+.2f} '
-                            f'{"La Niña upsize" if _size_mult > 1 else "weak-Niño wide strikes" if _otm > 0.02 else "base"}). '
+                            f'{_otm:.0%} OTM, {_dte}d '
+                            f'(score {_tilt.get("score", "?")}: '
+                            f'{"+".join(k for k, v in (_tilt.get("score_parts") or {}).items() if v is True) or "none"}; '
+                            f'warn {_tilt.get("macro_warn_count", 0)}). '
                             f'Standing 40% NAV x tilt = ${_alloc_dollars:,.0f}. '
                             f'Existing puts collateralize ~${_existing_dba_collateral:,.0f}; '
                             f'incremental {_add_contracts}c at P{_target_strike:.1f} '
