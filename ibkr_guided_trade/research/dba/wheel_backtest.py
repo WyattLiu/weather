@@ -69,7 +69,8 @@ def run_wheel(ticker, start='2015-01-01',
               entry_cadence_days=7,  # weekly entries
               contract_per_nav=15000,  # 1 contract per $15k NAV
               init_nav=100000, r_free=0.045,
-              vol_gate=1.0):       # skip entries if realized vol > vol_gate (annualized)
+              vol_gate=1.0,        # skip entries if realized vol > vol_gate (annualized)
+              signal_fn=None):     # optional date -> {'size_mult': x, 'otm_pct': y}
     """Run the wheel and return DataFrame indexed by date."""
     prices = load_prices(ticker)
     prices = prices[prices.index >= pd.Timestamp(start)]
@@ -156,14 +157,22 @@ def run_wheel(ticker, start='2015-01-01',
 
         # --- 2. Entry decisions ---
         vol_ok = sigma <= vol_gate
+        # factor signal: scale size and shift strike per-day
+        size_mult, eff_otm = 1.0, otm_pct
+        if signal_fn is not None:
+            sig_d = signal_fn(date) or {}
+            size_mult = float(sig_d.get('size_mult', 1.0))
+            eff_otm = float(sig_d.get('otm_pct', otm_pct))
+        if size_mult <= 0:
+            vol_ok = False  # signal says stand down entirely
         if vol_ok and (last_entry is None or (date - last_entry).days >= entry_cadence_days):
             # Sell put
-            target_K = round(spot * (1 - otm_pct) * 2) / 2  # 0.50 grid
+            target_K = round(spot * (1 - eff_otm) * 2) / 2  # 0.50 grid
             T_yr = dte_target / 365.25
             premium = bsm_put(spot, target_K, T_yr, r_free, sigma)
             if premium > 0.05:
                 # Size: 1 contract per $contract_per_nav
-                n_contracts = max(1, int(nav / contract_per_nav))
+                n_contracts = max(1, int(nav / contract_per_nav * size_mult))
                 # Cap by available cash collateral
                 max_by_cash = int((cash - 5000) / (target_K * 100))
                 n_contracts = max(0, min(n_contracts, max_by_cash))
