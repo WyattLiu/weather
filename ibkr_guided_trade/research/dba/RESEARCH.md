@@ -78,6 +78,23 @@ kernel-only return with +0.4 Sharpe and 1/3 less drawdown.**
 - GEX: wall = CC strike floor only (74% vs 69% hold rate). No pin, no
   vol signal on UNG. DBA GEX unexplored (data on disk).
 
+## Single-commodity extension (2026-06-11)
+
+Per-ticker wheel (60d/2%, 2015-2026, BSM-sim) + ONI factor purity:
+
+| Ticker | Wheel ann | Sharpe | MDD | ONI spread (63d) | WS put OI (Aug) | Verdict |
+|--------|-----------|--------|-----|------------------|------------------|---------|
+| DBA | +17.8% | 1.47 | -17% | -5.7% (p=.004) | 8,562 best strike | production |
+| **CORN** | +34.4% | 1.13 | -34% | **-11.8% (p<.001)** | 2,425 total / 756 best | **candidate — purest La Niña instrument, 2x DBA factor strength** |
+| SOYB | +27.8% | 1.14 | -33% | -7.6% (p<.001) | 1,026 / 734 | small-size only |
+| CANE | +31.0% | 1.13 | -45% | n.s. | — | sugar is the El Niño (softs) side — possible regime-pair vs CORN |
+| WEAT | +77%* | 1.09 | **-76%** | -6.3% (p=.028) | 0 (no Aug chain) | REJECTED — *2022 Ukraine spike artifact |
+
+Design idea: ONI-regime barbell — CORN leg sized up in La Niña,
+CANE/softs leg for strong El Niño (the original 12-mo tail thesis).
+Sec_ids persisted in ws_sdk KNOWN_SECURITIES. Liquidity caps size at
+~5-15 contracts per expiry on CORN.
+
 ## Open questions / next research
 
 1. COT flow + FPI momentum tilts not yet in live `dba_wheel_tilt`

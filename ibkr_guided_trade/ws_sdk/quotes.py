@@ -18,6 +18,10 @@ from .queries import QUERY_SECURITY_SEARCH
 KNOWN_SECURITIES: dict[str, str] = {
     "UNG":  "sec-s-32f0b46791214cbcbee9486e40232ea4",
     "DBA":  "sec-s-28b77b54d97d425baf17180097a088e5",
+    "CORN": "sec-s-ecca4d4b877a4b35a81790f17e78d27f",
+    "WEAT": "sec-s-9140916198574c2cb11d0224f7e76626",
+    "SOYB": "sec-s-8c0cbc4cdc724492b7fd51e399ef69a0",
+    "CANE": "sec-s-2cdecbb2bd544e65845b76cbcdb88692",
     "KOLD": "sec-s-c8f82308d6684084b0a484981d81b03f",
     "HUBB": "sec-s-acba8c87de6a4dc9ad1d2f478aeacd17",
     "ETN":  "sec-s-f655317dc6954c3d900001b77ef7e6fe",
