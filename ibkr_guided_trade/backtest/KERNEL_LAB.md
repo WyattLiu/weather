@@ -2,18 +2,56 @@
 
 *Living document. Updated 2026-06-12. Owner: kernel research loop.*
 
-## Current standings (gen-2, model fills, 5y replay 2021-2026)
+## Current standings (COMBINED gen-2/3/4 tournament, 2026-06-12 overnight)
 
+**Model fills (gen-2 basis):**
 | Kernel | Annual | MaxDD | Sharpe | Worst-12mo |
 |--------|--------|-------|--------|-----------|
-| **champion_smooth_ddtrim_ivrank** | +32.1% | -11.8% | **2.10** | **+4.8%** |
-| champion_kold15_ivrank | +31.1% | -10.1% | 1.92 | +2.5% |
-| champion_psi_kold15 | +32.6% | -15.6% | 1.92 | -0.1% |
-| production (scale_invariant) | +32.1% | -15.7% | 1.87 | -0.3% |
+| champion_smooth_ddtrim_ivrank | +32.1% | -11.8% | **2.10** | **+4.8%** |
+| champion_kold15_ivrank | +31.4% | -10.1% | 1.94 | +2.5% |
+| production (scale_invariant) | +32.3% | -15.7% | 1.88 | -0.3% |
 
-IV-rank z-scaling is the single most valuable knob found: cuts MaxDD by
-a third at zero return cost. Gen-3 (real-fill model, running) decides
-promotion; if smooth_ddtrim survives honest fills it takes CHAMPION_KEY.
+**REAL fills (gen-3 basis — the honest numbers):**
+| Kernel | Annual | MaxDD | Sharpe | Worst-12mo |
+|--------|--------|-------|--------|-----------|
+| **g3_kold15_ivrank_rf** | **+27.9%** | **-10.4%** | **1.81** | **+1.6%** |
+| g3_psi_rf (champion+RF) | +27.4% | -16.1% | 1.69 | — |
+| g3_smooth_ddtrim_rf | +19.0% | -10.1% | 1.67 | -3.5% |
+| g3_timing_rf | +15.7% | -7.7% | 1.53 | +1.3% |
+
+### Overnight findings (gen-3/4)
+1. **Real fills cost ~5pp/yr** (32.3→27.4 on the champion) — matches the
+   fill grid. +27.9%/Sharpe 1.81/MDD -10.4% is the honest production
+   expectation for the best kernel (kold15+ivrank under real fills).
+2. **Entry-day gating REJECTED (6th filters-law confirmation):**
+   Thursday-only put entries cut frequency 5x and returns by 11.7pp
+   (27.4→15.7). The microstructure timing edges (~bps) are dwarfed by
+   lost premium cycles. Timing stays EXECUTION guidance (place the same
+   trades at better hours), never trade-frequency restriction.
+   NOTE: test was frequency-confounded (daily base vs weekly-Thursday);
+   a fair weekly-vs-weekly-Thursday test remains open for gen-5.
+3. **smooth engine is fill-fragile**: smooth_ddtrim_rf 19.0% vs
+   kold15_ivrank_rf 27.9% — smooth's edge leans on premium volume that
+   real fills tax hardest. kold15_ivrank is the robust champion family.
+4. **g4 knobs ran on the timing-crippled base — unreadable except
+   relatively**: dd_ivgate +0.8pp (helped), tp_ivrank flat,
+   elevator25 flat, rollguards -0.6pp, everything -1.5pp (knob
+   interactions negative). RERUN on g3_kold15_ivrank_rf base in gen-5.
+
+### PROMOTION RECOMMENDATION (for the user's morning decision)
+Promote **kold15 + iv_rank_z_scale** (strategy
+`champion_kold15_ivrank`) as production CHAMPION_KEY:
+- Best real-fill profile: +27.9%/1.81/-10.4%/+1.6% floor (as g3_..._rf)
+- Dominates current production on MDD (-10.4 vs -16.1 real-fill) and
+  floor at comparable return
+- One-knob-stack from the live engine → minimal promotion risk
+- smooth_ddtrim_ivrank's 2.10 Sharpe is model-fill flattery (drops to
+  1.67 under real fills) — do not promote it
+Pending: honest_walkforward OOS gate (running, /tmp/walkforward_g34.log).
+
+### Gen-5 queue
+- g4 knobs (dd_ivgate first) rerun on g3_kold15_ivrank_rf base
+- fair timing test: entry_cadence=5 any-day vs entry_cadence=5 Thursday
 
 ## Forensic findings (6,380 trades, smooth_ddtrim_ivrank)
 
@@ -89,7 +127,7 @@ research/gex daily collector); IV-rank daily CSV extends the same way.
 ## Status / queue
 
 - [x] Gen-2 complete — smooth_ddtrim_ivrank leads (2.10 Sharpe, +4.8% floor)
-- [ ] Gen-3 (real fills + timing) — RUNNING, decides promotion
-- [ ] Gen-4 (forensic knobs above) — build after gen-3 lands
-- [ ] honest_walkforward on gen-3 winner before CHAMPION_KEY flip
+- [x] Gen-3 complete — real fills cost 5pp; kold15_ivrank_rf leads
+- [x] Gen-4 complete (on crippled base — rerun queued for gen-5)
+- [~] honest_walkforward RUNNING (/tmp/walkforward_g34.log)
 - [ ] Dashboard phase-2 (kernel label/OOS/why + any new live inputs)
