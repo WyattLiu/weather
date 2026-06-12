@@ -265,6 +265,15 @@ def main():
         },
         'dba_wheel_tilt': dba_wheel_tilt,
         'ag_single_leg': ag_single,
+        # SOFT TARGET ALLOCATOR (real-chain validated mix). Targets are
+        # SATURATION levels — the adapter recommends only a step toward the
+        # gap each cycle (soft transition, never forced rebalancing), and
+        # BOXX gets only the cash that no leg can absorb (cash earns leg
+        # returns > 4.74% whenever a gap exists).
+        'portfolio_targets': {
+            'DBA': 0.10, 'CORN': 0.05, 'CANE': 0.04,
+            'step_per_cycle': 0.33,   # close ≤1/3 of any gap per cycle
+        },
         'allocation': {
             'ung': float(latest['w_ung']),
             'dba': float(latest['w_dba']),

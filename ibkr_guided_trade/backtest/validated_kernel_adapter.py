@@ -137,6 +137,25 @@ def _iv_shape_today(spot: float):
     return iv_shape_features(surf, latest, spot)
 
 
+def _ag_put_collateral(positions, underlying):
+    """Sum K*100*|qty| of SHORT puts on `underlying` from WS positions."""
+    total = 0.0
+    for p in (positions or []):
+        try:
+            sym = (p.get('underlying_symbol') or p.get('symbol') or '').upper()
+            if not sym.startswith(underlying.upper()):
+                continue
+            if (p.get('option_type') or '').upper() != 'PUT':
+                continue
+            qty = float(p.get('quantity') or 0)
+            if qty >= 0:
+                continue
+            total += float(p.get('strike') or 0) * 100 * abs(qty)
+        except Exception:
+            continue
+    return total
+
+
 def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = None,
                       base_shares: int = 6200,
                       nav: Optional[float] = None,
@@ -566,7 +585,27 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         # CASH-ONLY mode (avoid margin interest leakage):
         # Use only cash to buy BOXX. No leverage. Margin only acts as ceiling.
         # WS margin rate (~5.5%) > BOXX yield (4.74%) → margined BOXX loses money.
-        cash_available = max(0, real_cash - cash_buffer)
+        # BOXX IS THE RESIDUAL, not the default: reserve cash for unfilled
+        # ag-leg gaps first (those legs out-earn BOXX 4.74% whenever a gap
+        # exists per real-chain backtests) — only the cash NO leg can
+        # absorb gets parked.
+        _ag_gap_reserve = 0.0
+        try:
+            import json as _json2
+            _cpath = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'research/dba/cache/composite_state.json')
+            with open(_cpath) as _cf:
+                _ctgts = (_json2.load(_cf).get('portfolio_targets') or {})
+            for _lg in ('DBA', 'CORN', 'CANE'):
+                _t = float(_ctgts.get(_lg, 0))
+                if _t > 0:
+                    _ag_gap_reserve += max(0, (nav or 0) * _t
+                                           - _ag_put_collateral(positions, _lg))
+        except Exception:
+            pass
+        cash_available = max(0, real_cash - cash_buffer - _ag_gap_reserve)
+        out['ag_gap_reserve'] = round(_ag_gap_reserve, 0)
         max_boxx_from_cash = cash_available             # 1× cash, NO leverage
         max_boxx_from_margin = real_buying_power * 2    # margin ceiling check
         max_boxx_dollars = min(max_boxx_from_cash, max_boxx_from_margin)
@@ -737,21 +776,24 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                 except Exception:
                     pass
                 if _dba_spot and _dba_spot > 0:
-                    # FACTOR TILT (per [[project_dba_factor_alpha]]): upsize-only
-                    # sizing + ONI-aware strikes, computed by composite_edge.py.
+                    # SOFT TARGET ALLOCATOR: saturation target × factor tilt;
+                    # recommend only step_per_cycle of the remaining gap.
                     _tilt = _comp.get('dba_wheel_tilt') or {}
+                    _tgts = _comp.get('portfolio_targets') or {}
                     _size_mult = float(_tilt.get('size_mult', 1.0))
                     _otm = float(_tilt.get('target_otm_pct', 0.02))
                     _dte = int(_tilt.get('target_dte', 60))
-                    _target_strike = round(_dba_spot * (1 - _otm) * 2) / 2  # 0.50 grid
+                    _target_strike = round(_dba_spot * (1 - _otm))  # $1 grid
                     _est_credit = round(_dba_spot * (0.018 + _otm * 0.3), 2)
-                    # Standing 40% NAV base (static beats gating) × upsize tilt
-                    _alloc_dollars = (nav or 0) * 0.40 * _size_mult
+                    _alloc_dollars = ((nav or 0) * float(_tgts.get('DBA', 0.10))
+                                      * _size_mult)  # saturation level
                     _target_contracts = max(1, int(_alloc_dollars / (_target_strike * 100)))
-                    # User already has ~700 sh exposure if all assigned; cap incremental
-                    _existing_dba_collateral = 19800  # from query_positions
-                    _max_new_collateral = max(0, _alloc_dollars - _existing_dba_collateral)
-                    _add_contracts = max(0, int(_max_new_collateral / (_target_strike * 100)))
+                    _existing_dba_collateral = _ag_put_collateral(positions, 'DBA') or 19800
+                    _gap = max(0, _alloc_dollars - _existing_dba_collateral)
+                    _step = float(_tgts.get('step_per_cycle', 0.33))
+                    _add_contracts = int(_gap * _step / (_target_strike * 100))
+                    if _add_contracts == 0 and _gap >= _target_strike * 100:
+                        _add_contracts = 1  # gap exists — soft-step at least 1c
                     out.setdefault('_pending_boxx_orders', []).append({
                         'order_type': 'SELL_PUT_DBA',
                         'side': 'SELL_TO_OPEN',
@@ -768,16 +810,14 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                         'existing_dba_collateral': _existing_dba_collateral,
                         'factor_tilt': _tilt,
                         'rationale': (
-                            f'DBA WHEEL (factor-tilted): size {_size_mult:.1f}x, '
-                            f'{_otm:.0%} OTM, {_dte}d '
-                            f'(score {_tilt.get("score", "?")}: '
-                            f'{"+".join(k for k, v in (_tilt.get("score_parts") or {}).items() if v is True) or "none"}; '
-                            f'warn {_tilt.get("macro_warn_count", 0)}). '
-                            f'Standing 40% NAV x tilt = ${_alloc_dollars:,.0f}. '
-                            f'Existing puts collateralize ~${_existing_dba_collateral:,.0f}; '
-                            f'incremental {_add_contracts}c at P{_target_strike:.1f} '
-                            f'~${_est_credit:.2f}cr. Evidence: blend 70/30 Sharpe 2.18, '
-                            f'worst-12mo +6.3%. REQUIRES CONSULT — chain lookup before submission.'),
+                            f'DBA WHEEL (soft allocator): saturation '
+                            f'${_alloc_dollars:,.0f} ({_tgts.get("DBA", 0.1):.0%} NAV '
+                            f'x {_size_mult:.1f}x tilt, score {_tilt.get("score", "?")}); '
+                            f'held ${_existing_dba_collateral:,.0f} → gap ${_gap:,.0f}, '
+                            f'this cycle +{_add_contracts}c (step {_step:.0%}) at '
+                            f'P{_target_strike:.0f} {_dte}d ~${_est_credit:.2f}cr. '
+                            f'{_otm:.0%} OTM. Real-chain 8.5y: +36.6%/Sharpe 1.82. '
+                            f'REQUIRES CONSULT.'),
                         'priority': 'medium' if _add_contracts > 0 else 'low',
                         'requires_consult': True,
                     })
@@ -798,10 +838,21 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                     continue
                 _ag_mult = float(_leg.get('size_mult', 1.0))
                 _ag_otm = 0.03  # thin chains → wider strike
-                _ag_K = round(_ag_spot * (1 - _ag_otm) * 2) / 2
-                _ag_alloc = (nav or 0) * float(_ag.get('nav_pct_cap_each', 0.05)) * _ag_mult
+                _ag_step_K = 0.5 if _ag_spot < 12 else 1.0
+                _ag_K = round(_ag_spot * (1 - _ag_otm) / _ag_step_K) * _ag_step_K
+                _tgts2 = _comp.get('portfolio_targets') or {}
+                _ag_target_pct = float(_tgts2.get(_ag_tk,
+                                                  _ag.get('nav_pct_cap_each', 0.05)))
+                _ag_alloc = (nav or 0) * _ag_target_pct * _ag_mult  # saturation
+                _ag_held = _ag_put_collateral(positions, _ag_tk)
+                _ag_gap = max(0, _ag_alloc - _ag_held)
+                _ag_step = float(_tgts2.get('step_per_cycle', 0.33))
                 _ag_n = min(int(_ag.get('max_contracts', 5)),
-                            max(1, int(_ag_alloc / (_ag_K * 100))))
+                            int(_ag_gap * _ag_step / (_ag_K * 100)))
+                if _ag_n == 0 and _ag_gap >= _ag_K * 100:
+                    _ag_n = 1  # gap exists — soft-step at least 1c
+                if _ag_n <= 0:
+                    continue  # saturated — no rec this cycle
                 _ag_credit = round(_ag_spot * 0.025, 2)
                 out.setdefault('_pending_boxx_orders', []).append({
                     'order_type': f'SELL_PUT_{_ag_tk}',
