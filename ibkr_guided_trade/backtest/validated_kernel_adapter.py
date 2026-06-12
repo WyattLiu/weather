@@ -189,6 +189,11 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         'kernel_key': active_key,
         'kernel_label': kernel_info['label'],
         'kernel_why': kernel_info['why'],
+        'kernel_params': {
+            k: STRATEGIES.get(kernel_info['strategy'], {}).get(k)
+            for k in ('kold_shoulder_hedge', 'iv_rank_z_scale', 'cc_gex_floor',
+                      'tp_dynamic', 'dd_trim_trigger_pct', 'otm_put')
+        },
         'kernel_oos': {
             'ann_pct': kernel_info['oos_ann'],
             'sharpe': kernel_info['oos_sharpe'],
@@ -882,6 +887,26 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                 })
     except Exception as _comp_err:
         out['composite_error'] = str(_comp_err)
+
+    # ── LIVE IV-RANK (real ATM IV vs 252d history; new kernels act on it) ─
+    try:
+        import sys as _ivsys
+        _gexd = os.path.join(os.path.dirname(THIS_DIR), 'research/gex')
+        if _gexd not in _ivsys.path:
+            _ivsys.path.insert(0, _gexd)
+        from live_wall import current_iv_rank
+        _ivr_live = current_iv_rank('UNG', spot)
+        if _ivr_live:
+            _r = _ivr_live.get('iv_rank')
+            _ivr_live['regime'] = ('RICH-VOL top zone — kernel halves share adds'
+                                   if _r is not None and _r > 0.8 else
+                                   'elevated — kernel trims adds x0.8'
+                                   if _r is not None and _r > 0.6 else
+                                   'CHEAP-VOL — kernel boosts accumulation x1.3'
+                                   if _r is not None and _r < 0.2 else 'neutral')
+            out['iv_rank_live'] = _ivr_live
+    except Exception:
+        pass
 
     # ── EXECUTOR BRIEF: directional ag engine state (for the human) ─────
     try:

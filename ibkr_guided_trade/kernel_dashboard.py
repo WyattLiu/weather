@@ -1050,6 +1050,12 @@ async function refresh() {
       brief += `<tr><td style="color:var(--text-dim)">DBA tilt</td><td>score ${tilt.score ?? '?'} (${Object.entries(tilt.score_parts||{}).filter(([k,x])=>x===true).map(([k])=>k).join('+')||'none'}) · warn ${tilt.macro_warn_count ?? '?'} · ag carry targets ZEROED (carry &lt; BOXX)</td></tr>`;
       brief += `<tr><td style="color:var(--text-dim)">GEX wall</td><td>${gw ? `call wall <strong>$${gw.wall}</strong> (+$${Number(gw.wall_gex).toLocaleString()}/1%) · put wall $${gw.put_wall} — sell CCs AT/ABOVE the wall (74% final-week hold)` : 'computed on CC candidates only (none this cycle)'}</td></tr>`;
       brief += `<tr><td style="color:var(--text-dim)">Ag directional</td><td>${activeSleeves.length ? activeSleeves.map(([k,x])=>`<strong>${k}</strong> w=${x.weight_now}`).join(' · ') + ' — BUY shares per weight' : 'all sleeves FLAT (no confluence ≥2) — cash stays in BOXX'}${da.age_days != null ? ` <span style="color:var(--text-dim)">(state ${da.age_days}d old)</span>` : ''}</td></tr>`;
+      const ivr = v.iv_rank_live || {};
+      if (ivr.atm_iv != null) {
+        const rcol = ivr.iv_rank > 0.8 ? 'var(--red)' : ivr.iv_rank < 0.2 ? 'var(--green)' : 'var(--text)';
+        brief += `<tr><td style="color:var(--text-dim)">IV-rank</td><td><strong style="color:${rcol}">${(ivr.iv_rank*100).toFixed(0)}%</strong> (ATM IV ${(ivr.atm_iv*100).toFixed(1)}%) — ${ivr.regime ?? ''} <span style="color:var(--text-dim)">[real-chain factor: top-quintile → -23% fwd-63d]</span></td></tr>`;
+      }
+      brief += `<tr><td style="color:var(--text-dim)">Kernel knobs</td><td>${v.kernel_label ?? v.kernel ?? '?'} — KOLD hedge ${(v.kernel_params||{}).kold_shoulder_hedge ?? '?'} · IV-rank scaling ${(v.kernel_params||{}).iv_rank_z_scale ? 'ON' : 'off'} · GEX floor ${(v.kernel_params||{}).cc_gex_floor ? 'ON' : 'off'}</td></tr>`;
       brief += `<tr><td style="color:var(--text-dim)">Cash rule</td><td>reserve $${fmt(v.ag_gap_reserve ?? 0,0)} for leg gaps → rest to BOXX ladder below</td></tr>`;
       brief += '</table>';
       $('executor-brief').innerHTML = brief;

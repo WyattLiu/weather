@@ -127,6 +127,54 @@ def current_gex_wall(symbol, spot, fallback_iv=0.45):
     return out
 
 
+def current_iv_rank(symbol, spot, hist_csv=None):
+    """Live ATM IV (front monthly, from WS chain) ranked against the
+    historical real-chain ATM IV distribution (252d window).
+    Returns {'atm_iv': x, 'iv_rank': pct} or None."""
+    key = f'{symbol}_ivr'
+    now = time.time()
+    if key in _CACHE and now - _CACHE[key][0] < _CACHE_TTL:
+        return _CACHE[key][1]
+    try:
+        from ws_option_resolver import fetch_chain
+    except ImportError:
+        return None
+    exp_d = _front_monthlies(1)[0]
+    T = max(5, (exp_d - date.today()).days) / 365.0
+    ivs = []
+    for try_d in (exp_d, exp_d - timedelta(days=1)):
+        for right in ('P', 'C'):
+            try:
+                chain = fetch_chain(symbol, try_d.isoformat(), right)
+            except Exception:
+                chain = {}
+            if not chain:
+                continue
+            K = min(chain, key=lambda k: abs(k - spot))
+            leg = chain[K]
+            if leg['bid'] > 0 and leg['ask'] > 0:
+                iv = _iv(spot, K, T, (leg['bid'] + leg['ask']) / 2, right)
+                if iv:
+                    ivs.append(iv)
+        if ivs:
+            break
+    if not ivs:
+        return None
+    atm_iv = sum(ivs) / len(ivs)
+    out = {'atm_iv': round(atm_iv, 4), 'iv_rank': None}
+    try:
+        import pandas as pd
+        path = hist_csv or os.path.join(
+            ROOT, 'backtest', 'cache', 'ung_iv_rank_daily.csv')
+        hist = pd.read_csv(path, index_col=0, parse_dates=True)['atm_iv'].dropna()
+        window = hist.tail(252)
+        out['iv_rank'] = round(float((window < atm_iv).mean()), 2)
+    except Exception:
+        pass
+    _CACHE[key] = (now, out)
+    return out
+
+
 if __name__ == '__main__':
     import json
     import yfinance as yf
