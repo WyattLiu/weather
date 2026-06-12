@@ -29,7 +29,7 @@ BARS_DIR = os.path.join(THIS_DIR, 'bars')
 os.makedirs(BARS_DIR, exist_ok=True)
 
 IBKR_HOST = '192.168.1.127'
-IBKR_PORT = 20009
+IBKR_PORT = 40009       # per spx_strategies config (ng_lne_chains' 20009 is stale)
 CLIENT_ID = 98          # ng_lne_chains uses 97
 
 
@@ -47,24 +47,50 @@ def release_days(years=4):
     return out
 
 
-def fetch(years=4):
+def all_trading_days(years=4):
+    out = []
+    d = date.today() - timedelta(days=1)
+    start = d - timedelta(days=365 * years)
+    cur = start
+    while cur <= d:
+        if cur.weekday() < 5:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
+def fetch(years=4, what='TRADES', all_days=False, window=False):
+    """all_days: every trading day (1-min). window: 5-sec bars
+    10:00-11:30 ET on release Thursdays only."""
     from ib_insync import IB, Stock
     ib = IB()
     ib.connect(IBKR_HOST, IBKR_PORT, clientId=CLIENT_ID, timeout=30)
     contract = Stock('UNG', 'SMART', 'USD')
     ib.qualifyContracts(contract)
-    days = release_days(years)
+    days = all_trading_days(years) if all_days else release_days(years)
+    tag = ('alldays' if all_days else 'win5s' if window else 'thu')
+    sub = os.path.join(THIS_DIR,
+                       f'bars_{tag}_{what.lower()}' if (all_days or window)
+                       else ('bars' if what == 'TRADES' else 'bars_ba'))
+    os.makedirs(sub, exist_ok=True)
     done = skip = fail = 0
     for d in days:
-        dest = os.path.join(BARS_DIR, f'ung_{d.isoformat()}.csv')
+        dest = os.path.join(sub, f'ung_{d.isoformat()}.csv')
         if os.path.exists(dest):
             skip += 1
             continue
-        end_dt = f'{d.strftime("%Y%m%d")} 16:30:00 US/Eastern'
+        if window:
+            end_dt = f'{d.strftime("%Y%m%d")} 11:30:00 US/Eastern'
+            dur, bsize = '5400 S', '5 secs'
+        else:
+            end_dt = f'{d.strftime("%Y%m%d")} 16:30:00 US/Eastern'
+            dur, bsize = '1 D', '1 min'
         try:
+            # BID_ASK bars: open=time-avg bid, close=time-avg ask,
+            # high=max ask, low=min bid → spread = close - open
             bars = ib.reqHistoricalData(
-                contract, endDateTime=end_dt, durationStr='1 D',
-                barSizeSetting='1 min', whatToShow='TRADES',
+                contract, endDateTime=end_dt, durationStr=dur,
+                barSizeSetting=bsize, whatToShow=what,
                 useRTH=True, formatDate=1)
         except Exception as e:
             print(f'  {d}: FAILED ({e})')
@@ -137,8 +163,12 @@ if __name__ == '__main__':
     ap.add_argument('--fetch', action='store_true')
     ap.add_argument('--study', action='store_true')
     ap.add_argument('--years', type=int, default=4)
+    ap.add_argument('--what', default='TRADES')
+    ap.add_argument('--all-days', action='store_true')
+    ap.add_argument('--window', action='store_true',
+                    help='5-sec bars 10:00-11:30 on release Thursdays')
     a = ap.parse_args()
     if a.fetch:
-        fetch(a.years)
+        fetch(a.years, what=a.what, all_days=a.all_days, window=a.window)
     if a.study or not a.fetch:
         study()
