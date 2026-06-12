@@ -752,6 +752,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         #   - Skip trim if confirmed uptrend (would miss spike capture)
         #   - Only act after persistent DD (avoid noise)
         dd_trim_trigger = p.get('dd_trim_trigger_pct', 0)  # e.g. -15 means trim if DD < -15%
+        # GEN-4 dd_trim_iv_gate (KERNEL_LAB #5: long DDs start at rich-vol
+        # tops, the -23% fwd-63d zone): trim sooner when iv_rank is high
+        if p.get('dd_trim_iv_gate') and dd_trim_trigger < 0:
+            _ivr_dd = row.get('iv_rank') if 'row' in dir() else None
+            try:
+                _ivr_dd = df['iv_rank'].iloc[i] if 'iv_rank' in df.columns else None
+            except Exception:
+                _ivr_dd = None
+            if _ivr_dd is not None and _ivr_dd == _ivr_dd and _ivr_dd > 0.8:
+                dd_trim_trigger = dd_trim_trigger / 2  # e.g. -4 → -2: act sooner
         dd_trim_qty_pct = p.get('dd_trim_qty_pct', 20)     # 20% of shares per cadence
         dd_trim_floor = p.get('dd_trim_floor', 1000)       # minimum share level (never go below)
         dd_trim_cadence = p.get('dd_trim_cadence_days', 21)  # how often to trim (in trading days)
@@ -1178,6 +1188,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 # earlier (lower tp_thresh = exit at higher premium-capture %).
                 if p.get('grind_tp_accelerate') and detect_grind_down(row):
                     tp_thresh = min(tp_thresh, 0.3)
+                # GEN-4 tp_by_iv_rank (KERNEL_LAB #6: put TPs avg only $167):
+                # rich vol → capture fast before reversion; cheap calm vol →
+                # let decay run to 70% capture
+                if p.get('tp_by_iv_rank'):
+                    _ivr = row.get('iv_rank')
+                    if _ivr == _ivr and _ivr is not None:
+                        if _ivr > 0.6:
+                            tp_thresh = 0.5
+                        elif _ivr < 0.4:
+                            tp_thresh = 0.7
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 if cv < sp['entry_prem'] * tp_thresh:
@@ -1236,6 +1256,31 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'qty': sp['qty'], 'K': sp['K'],
                                    'spot': spot_u, 'p_assign': a['p_assign'],
                                    'note': 'deep-ITM low-extrinsic → assignment cheaper than roll'})
+            # GEN-4 ROLL GUARDS (KERNEL_LAB findings #2/#4: -$218k roll cost,
+            # 28% futile, cascade days rolled the whole book at once):
+            # (a) roll_accept_cheap_z — in accumulation regime (z<-0.5, no
+            #     falling knife) take assignment; we WANT shares there
+            if (roll_eligible and p.get('roll_accept_cheap_z')
+                    and z < -0.5 and not falling_knife(row)):
+                roll_eligible = False
+                trades.append({'date': idx, 'type': 'PUT_ROLL_SKIP_CHEAPZ',
+                               'pnl': 0.0, 'K': sp['K'], 'z': round(z, 2)})
+            # (b) max_rolls_per_chain — paying to delay >N times is futile
+            if (roll_eligible and p.get('max_rolls_per_chain') is not None
+                    and sp.get('rolls', 0) >= p['max_rolls_per_chain']):
+                roll_eligible = False
+                trades.append({'date': idx, 'type': 'PUT_ROLL_SKIP_CHAIN',
+                               'pnl': 0.0, 'K': sp['K'],
+                               'rolls': sp.get('rolls', 0)})
+            # (c) roll_stagger_max_per_day — never the whole book into one
+            #     vol-spike's spreads
+            if roll_eligible and p.get('roll_stagger_max_per_day') is not None:
+                _rd = s.get('_rolls_day')
+                _n_today = _rd[1] if (_rd and _rd[0] == idx) else 0
+                if _n_today >= p['roll_stagger_max_per_day']:
+                    roll_eligible = False
+                    trades.append({'date': idx, 'type': 'PUT_ROLL_SKIP_STAGGER',
+                                   'pnl': 0.0, 'K': sp['K']})
             if roll_eligible:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
@@ -1243,7 +1288,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 nk = round(spot_u * (1 - p.get('otm_put', 0.10)))
                 npr = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
                 s['cash'] += npr * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
-                keep.append({'entry': idx, 'K': nk, 'dte': 30, 'qty': sp['qty'], 'entry_prem': npr})
+                keep.append({'entry': idx, 'K': nk, 'dte': 30, 'qty': sp['qty'],
+                             'entry_prem': npr, 'rolls': sp.get('rolls', 0) + 1})
+                _rd = s.get('_rolls_day')
+                s['_rolls_day'] = (idx, (_rd[1] + 1) if (_rd and _rd[0] == idx) else 1)
                 # Roll P&L = closed leg's gain (premium collected may be future credit)
                 trades.append({'date': idx, 'type': 'PUT_ROLL_DOWN', 'pnl': close_pnl,
                                'from_K': sp['K'], 'to_K': nk, 'qty': sp['qty']})
@@ -1386,8 +1434,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             is_itm = spot_u > sc['K']
             near_expiry = T_left * 365 <= 7
             in_cheap_neutral = z > -0.25  # CHEAP/NEUTRAL/upward
+            # GEN-4 spike-day patience (KERNEL_LAB #3: worst day was call-
+            # side on +3.9% spot; knee-jerks reverse — 5s study r=-.19):
+            # defer roll-ups for N days after a >3% up-move
+            _spike_defer = False
+            if p.get('roll_up_spike_defer_days') and i >= 2:
+                try:
+                    _r1 = df['UNG'].iloc[i] / df['UNG'].iloc[i-1] - 1
+                    _r2 = df['UNG'].iloc[i-1] / df['UNG'].iloc[i-2] - 1
+                    if max(_r1, _r2) > 0.03:
+                        _spike_defer = True
+                except Exception:
+                    pass
             if (p.get('roll_up_calls') and is_itm and near_expiry
-                    and in_cheap_neutral and T_left > 1/365):
+                    and in_cheap_neutral and T_left > 1/365
+                    and not _spike_defer):
                 cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 close_pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
                 s['cash'] -= cv * 100 * sc['qty']
@@ -4169,6 +4230,24 @@ STRATEGIES['g3_smooth_ddtrim_rf'] = {**_smooth, 'dd_trim_trigger_pct': -4,
                                      'dd_trim_cadence_days': 5,
                                      'iv_rank_z_scale': True, **_RF, **_TIMING}
 
+# ── GEN-4: forensic knobs from KERNEL_LAB.md, one per clone, on the
+# g3_full_stack base (attribution ladder against it)
+_G4B = STRATEGIES['g3_full_stack']
+STRATEGIES['g4_rollguards'] = {**_G4B, 'roll_accept_cheap_z': True,
+                               'max_rolls_per_chain': 1,
+                               'roll_stagger_max_per_day': 3}
+STRATEGIES['g4_elevator25'] = {**_G4B, 'elevator_extrinsic_max': 0.25}
+STRATEGIES['g4_tp_ivrank'] = {**_G4B, 'tp_by_iv_rank': True}
+STRATEGIES['g4_dd_ivgate'] = {**_G4B, 'dd_trim_iv_gate': True}
+STRATEGIES['g4_spike_defer'] = {**_G4B, 'roll_up_spike_defer_days': 2}
+STRATEGIES['g4_everything'] = {**_G4B, 'roll_accept_cheap_z': True,
+                               'max_rolls_per_chain': 1,
+                               'roll_stagger_max_per_day': 3,
+                               'elevator_extrinsic_max': 0.25,
+                               'tp_by_iv_rank': True,
+                               'dd_trim_iv_gate': True,
+                               'roll_up_spike_defer_days': 2}
+
 _KEEP_STRATEGIES = {
     'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
     'champion_smooth_ddtrim', 'champion_smooth_gex',
@@ -4176,6 +4255,8 @@ _KEEP_STRATEGIES = {
     'champion_smooth_ddtrim_ivrank',
     'g3_psi_rf', 'g3_kold15_ivrank_rf', 'g3_timing_rf',
     'g3_full_stack', 'g3_smooth_ddtrim_rf',
+    'g4_rollguards', 'g4_elevator25', 'g4_tp_ivrank',
+    'g4_dd_ivgate', 'g4_spike_defer', 'g4_everything',
     # Pareto-frontier protected family (real strikes ✓)
     'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
     'champion_cut_rebuild',
