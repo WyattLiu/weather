@@ -642,6 +642,36 @@ def iv_shape_features(surface, date_str, spot_adj):
     }
 
 
+_FILL_GRID = None
+
+
+def fill_factor(right, dte_days, otm_pct):
+    """Empirical fill ratio (real BID / BSM-est) from 8y of actual UNG
+    quotes (backtest/cache/ung_fill_grid.csv). Applied at entry credits
+    when p['real_fill_model']. Fallback 0.92 (median OTM haircut)."""
+    global _FILL_GRID
+    if _FILL_GRID is None:
+        try:
+            _g = pd.read_csv(os.path.join(CACHE_DIR, 'ung_fill_grid.csv'))
+            _FILL_GRID = {(r['right'], int(r['dte_b']), round(float(r['otm_b']), 1)):
+                          float(r['median']) for _, r in _g.iterrows()}
+        except Exception:
+            _FILL_GRID = {}
+    if not _FILL_GRID:
+        return 1.0
+    dte_b = int(dte_days // 30) * 30
+    otm_b = round(otm_pct * 10) / 10
+    for k in ((right, dte_b, otm_b), (right, dte_b, 0.0), (right, 30, otm_b)):
+        if k in _FILL_GRID:
+            return _FILL_GRID[k]
+    return 0.92
+
+
+def _is_tom(idx):
+    """NG futures expiry window: month-end ±2 calendar days."""
+    return idx.day >= 27 or idx.day <= 2
+
+
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
     """Simpler procedural runner with state dict."""
     s = {
@@ -947,6 +977,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 except Exception:
                     pass
             delta = target - current
+            # MICROSTRUCTURE TIMING for ADDS only (trims fire anytime —
+            # risk control never waits): Tuesday adds (open bleeds -40bps
+            # overnight → cheaper entries) and skip the NG-expiry
+            # turn-of-month window (-43bps/day churn).
+            if delta > 0:
+                if p.get('avoid_tom_adds') and _is_tom(idx):
+                    delta = 0
+                elif (p.get('share_add_dow') is not None
+                        and idx.dayofweek != p['share_add_dow']):
+                    delta = 0
             # Cut speed tunable: 0.3 = slow (30% toward target per cadence),
             # 0.5 = balanced (default), 1.0 = full snap. Higher = faster cut.
             cut_speed = p.get('cut_speed', 0.5)
@@ -1825,6 +1865,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                              expiration=_exp_d.isoformat(),
                                              spot=spot_u)
                 prem = bs_put(spot_u, K, open_dte/365, iv_at(K, open_dte, 'P'))
+                # REAL-FILL MODEL: scale entry credit by the empirical
+                # bid/BSM grid from 8y of actual UNG quotes (30-45d OTM
+                # puts really fill at 0.67-0.95x the model estimate)
+                if p.get('real_fill_model'):
+                    prem *= fill_factor('P', open_dte, 1 - K / spot_u)
+                # MICROSTRUCTURE TIMING: Thursday put entries (post-print
+                # day bleeds -40bps intraday → cheaper strikes + the
+                # executor's validated 14:30-15:30 window)
+                if (p.get('put_entry_dow') is not None
+                        and idx.dayofweek != p['put_entry_dow']):
+                    prem = 0  # not the entry day — skip this cycle
                 # KELLY SIZING with conviction-aware "firmness" multiplier.
                 # Optionally backed by ScenarioDistribution (port item #2).
                 if p.get('kelly_sizing') and prem > 0.05:
@@ -1988,6 +2039,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                              expiration=_exp_d.isoformat(),
                                              spot=spot_u)
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
+                if p.get('real_fill_model'):
+                    prem *= fill_factor('C', cc_dte, K / spot_u - 1)
                 # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, cc_dte, 'C')
@@ -4098,11 +4151,31 @@ STRATEGIES['champion_smooth_ddtrim_ivrank'] = {**_smooth,
                                                'dd_trim_cadence_days': 5,
                                                'iv_rank_z_scale': True}
 
+# ── GEN-3 (2026-06-12): ALL session learnings, REAL-FILL model on every
+# entrant (same fill basis = fair comparison). Knobs: empirical fill grid
+# (real bid/BSM by dte/otm), Thursday put entries (-40bps print-day bleed),
+# Tuesday share adds (-40bps overnight), TOM add-skip (NG expiry churn),
+# kold15, iv_rank scaling, tight dd_trim.
+_RF = {'real_fill_model': True}
+_TIMING = {'put_entry_dow': 3, 'share_add_dow': 1, 'avoid_tom_adds': True}
+STRATEGIES['g3_psi_rf'] = {**_psi, **_RF}                       # baseline w/ real fills
+STRATEGIES['g3_kold15_ivrank_rf'] = {**_psi, 'kold_shoulder_hedge': 0.15,
+                                     'iv_rank_z_scale': True, **_RF}
+STRATEGIES['g3_timing_rf'] = {**_psi, **_RF, **_TIMING}         # timing attribution
+STRATEGIES['g3_full_stack'] = {**_psi, 'kold_shoulder_hedge': 0.15,
+                               'iv_rank_z_scale': True, **_RF, **_TIMING}
+STRATEGIES['g3_smooth_ddtrim_rf'] = {**_smooth, 'dd_trim_trigger_pct': -4,
+                                     'dd_trim_qty_pct': 40,
+                                     'dd_trim_cadence_days': 5,
+                                     'iv_rank_z_scale': True, **_RF, **_TIMING}
+
 _KEEP_STRATEGIES = {
     'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
     'champion_smooth_ddtrim', 'champion_smooth_gex',
     'champion_psi_ivrank', 'champion_kold15_ivrank',
     'champion_smooth_ddtrim_ivrank',
+    'g3_psi_rf', 'g3_kold15_ivrank_rf', 'g3_timing_rf',
+    'g3_full_stack', 'g3_smooth_ddtrim_rf',
     # Pareto-frontier protected family (real strikes ✓)
     'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
     'champion_cut_rebuild',
