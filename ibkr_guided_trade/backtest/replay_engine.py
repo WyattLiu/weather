@@ -178,6 +178,14 @@ def precompute_factor_z(df):
             df.index, method='ffill', limit=5)
     except Exception:
         df['gex_call_wall'] = float('nan')
+    # IV-rank (252d pct of real ATM IV) — top quintile → -23% fwd-63d
+    # (p=.002, [[project_ung_iv_rank_alpha]]) — for iv_rank_z_scale
+    try:
+        _ivr = pd.read_csv(os.path.join(CACHE_DIR, 'ung_iv_rank_daily.csv'),
+                           index_col=0, parse_dates=True)
+        df['iv_rank'] = _ivr['iv_rank'].reindex(df.index, method='ffill', limit=10)
+    except Exception:
+        df['iv_rank'] = float('nan')
         # HH basis storm: spot-futures backwardation > +$0.40 → defensive mode
         # Empirically validated: 41 events in 5yr, UNG -4.5% in 5d on storm days
         # (see commit 8da5689 backwardation analysis). Counter-intuitive: spot
@@ -887,6 +895,19 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             elif z < 0.5:   mult = mults['neutral']
             elif z < 1.0:   mult = mults['rich']
             else:           mult = mults['extreme_rich']
+            # IV-RANK SCALE ([[project_ung_iv_rank_alpha]]: top-quintile real
+            # ATM IV → -23% fwd-63d, p=.002). Rich-vol regime trims the
+            # share target; cheap-vol regime boosts accumulation. Same
+            # philosophy as the z mult curve, driven by the option market.
+            if p.get('iv_rank_z_scale'):
+                _ivr = row.get('iv_rank')
+                if _ivr == _ivr and _ivr is not None:
+                    if _ivr > 0.8:
+                        mult *= 0.5
+                    elif _ivr > 0.6:
+                        mult *= 0.8
+                    elif _ivr < 0.2:
+                        mult *= 1.3
             # DD-aware override: if in deep DD, cap the multiplier
             dd_cap_15 = p.get('z_target_dd_cap_15', 0.6)
             dd_cap_10 = p.get('z_target_dd_cap_10', 0.8)
@@ -4068,10 +4089,20 @@ STRATEGIES['champion_smooth_ddtrim'] = {**_smooth,
                                         'dd_trim_qty_pct': 40,
                                         'dd_trim_cadence_days': 5}
 STRATEGIES['champion_smooth_gex'] = {**_smooth, 'cc_gex_floor': True}
+STRATEGIES['champion_psi_ivrank'] = {**_psi, 'iv_rank_z_scale': True}
+STRATEGIES['champion_kold15_ivrank'] = {**_psi, 'kold_shoulder_hedge': 0.15,
+                                        'iv_rank_z_scale': True}
+STRATEGIES['champion_smooth_ddtrim_ivrank'] = {**_smooth,
+                                               'dd_trim_trigger_pct': -4,
+                                               'dd_trim_qty_pct': 40,
+                                               'dd_trim_cadence_days': 5,
+                                               'iv_rank_z_scale': True}
 
 _KEEP_STRATEGIES = {
     'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
     'champion_smooth_ddtrim', 'champion_smooth_gex',
+    'champion_psi_ivrank', 'champion_kold15_ivrank',
+    'champion_smooth_ddtrim_ivrank',
     # Pareto-frontier protected family (real strikes ✓)
     'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
     'champion_cut_rebuild',
