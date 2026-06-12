@@ -47,7 +47,24 @@ Promote **kold15 + iv_rank_z_scale** (strategy
 - One-knob-stack from the live engine → minimal promotion risk
 - smooth_ddtrim_ivrank's 2.10 Sharpe is model-fill flattery (drops to
   1.67 under real fills) — do not promote it
-Pending: honest_walkforward OOS gate (running, /tmp/walkforward_g34.log).
+OOS gate PASSED: best sealed-test Sharpe 2.16 (vs production 2.07).
+
+### OOS GATE RESULTS (sealed test 2024-01→2026-06, cost model: \$0.65/ct + 5% slippage + assign haircut)
+| Strategy | TEST ann | TEST Sharpe | TEST MDD |
+|----------|---------|------------|----------|
+| **champion_kold15_ivrank** | +31.1% | **2.16** | -9.2% |
+| production (scale_invariant) | +33.2% | 2.07 | -8.9% |
+| champion_smooth_ddtrim_ivrank | +40.8% | 1.92 | -11.8% |
+| g3_kold15_ivrank_rf* | +22.7% | 1.77 | -8.5% |
+
+*g3_rf rows double-count costs (fill grid + walkforward slippage) — read
+champion_* rows for the apples-to-apples OOS comparison.
+
+**OOS verdict: champion_kold15_ivrank wins the sealed test on Sharpe
+(2.16 vs production 2.07) at comparable MDD. The promotion
+recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
+return is real but with worse Sharpe, deeper MDD, and the gen-3
+fill-fragility flag — aggressive-profile alternative only.
 
 ### Gen-5 queue
 - g4 knobs (dd_ivgate first) rerun on g3_kold15_ivrank_rf base
@@ -129,5 +146,5 @@ research/gex daily collector); IV-rank daily CSV extends the same way.
 - [x] Gen-2 complete — smooth_ddtrim_ivrank leads (2.10 Sharpe, +4.8% floor)
 - [x] Gen-3 complete — real fills cost 5pp; kold15_ivrank_rf leads
 - [x] Gen-4 complete (on crippled base — rerun queued for gen-5)
-- [~] honest_walkforward RUNNING (/tmp/walkforward_g34.log)
+- [x] honest_walkforward complete — kold15_ivrank wins OOS (Sharpe 2.16)
 - [ ] Dashboard phase-2 (kernel label/OOS/why + any new live inputs)
