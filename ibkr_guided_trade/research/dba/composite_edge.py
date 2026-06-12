@@ -270,9 +270,16 @@ def main():
         # gap each cycle (soft transition, never forced rebalancing), and
         # BOXX gets only the cash that no leg can absorb (cash earns leg
         # returns > 4.74% whenever a gap exists).
+        # CORRECTED 2026-06-11: covered-calls-only fix collapsed ag-wheel
+        # carry to +0-4%/yr (sim AND real chains) — BELOW BOXX 4.74%. The
+        # earlier +17-36% numbers were inflated by a CC-stacking bug (naked
+        # calls). Per cash-beats-BOXX rule: targets zeroed; ag exposure is
+        # the user's DIRECTIONAL El Niño thesis (existing puts/LEAP), not a
+        # carry engine. Factor edges on DBA PRICE remain valid for
+        # direction/timing, not for wheel carry.
         'portfolio_targets': {
-            'DBA': 0.10, 'CORN': 0.05, 'CANE': 0.04,
-            'step_per_cycle': 0.33,   # close ≤1/3 of any gap per cycle
+            'DBA': 0.0, 'CORN': 0.0, 'CANE': 0.0,
+            'step_per_cycle': 0.33,
         },
         'allocation': {
             'ung': float(latest['w_ung']),

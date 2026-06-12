@@ -224,13 +224,16 @@ def run_wheel(ticker, start='2015-01-01',
                                     'K': target_K, 'premium': premium,
                                     'n': n_contracts})
 
-            # If holding shares, sell CC
-            if shares >= 100 and T_yr:
+            # If holding shares, sell CC — COVERED ONLY: subtract shares
+            # already covering open calls (stacking = naked calls; this bug
+            # inflated every ag-wheel result until 2026-06-11)
+            cc_covered = 100 * sum(oc[4] for oc in open_calls)
+            if shares - cc_covered >= 100 and T_yr:
                 step = STRIKE_STEP.get(ticker, 0.5) if realistic else 0.5
                 cc_K = round(spot * (1 + otm_pct) / step) * step
                 cc_premium = bsm_call(spot, cc_K, T_yr, r_free, sigma)
                 if cc_premium > 0.05:
-                    n_cc = shares // 100
+                    n_cc = (shares - cc_covered) // 100
                     cash += cc_premium * 100 * n_cc
                     open_calls.append((date, cc_K, T_yr, cc_premium, n_cc))
                     trades.append({'date': date, 'type': 'cc_open',

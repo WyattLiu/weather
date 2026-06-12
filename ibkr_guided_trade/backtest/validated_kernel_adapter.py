@@ -775,11 +775,14 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
                     _dba_spot = float(getattr(_dba_t, 'last_price', 0) or 0)
                 except Exception:
                     pass
-                if _dba_spot and _dba_spot > 0:
+                _tgts = _comp.get('portfolio_targets') or {}
+                if (_dba_spot and _dba_spot > 0
+                        and float(_tgts.get('DBA', 0)) > 0):
                     # SOFT TARGET ALLOCATOR: saturation target × factor tilt;
                     # recommend only step_per_cycle of the remaining gap.
+                    # Target 0 = ag carry disabled (post covered-calls-only
+                    # correction: wheel carry < BOXX) — no rec at all.
                     _tilt = _comp.get('dba_wheel_tilt') or {}
-                    _tgts = _comp.get('portfolio_targets') or {}
                     _size_mult = float(_tilt.get('size_mult', 1.0))
                     _otm = float(_tilt.get('target_otm_pct', 0.02))
                     _dte = int(_tilt.get('target_dte', 60))

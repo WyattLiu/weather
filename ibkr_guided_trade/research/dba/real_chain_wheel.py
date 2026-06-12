@@ -39,12 +39,18 @@ def load_chain_panel(symbol):
     return eod
 
 
+# Reverse splits: yfinance closes are adjusted; ThetaData strikes are raw.
+SPLITS = {'WEAT': [('2025-11-25', 5.0)]}   # 1-for-5; verified vs 2026 strikes
+
+
 def run_real_wheel(symbol, otm_pct=0.02, dte_target=60, dte_lo=30, dte_hi=80,
                    tp_pct=0.50, entry_cadence_days=7,
                    contract_per_nav=15000, init_nav=100000):
     eod = load_chain_panel(symbol)
     spot = pd.read_csv(os.path.join(CACHE, 'master_panel.csv'),
                        index_col=0, parse_dates=True)[symbol].dropna()
+    for sd, factor in SPLITS.get(symbol.upper(), []):
+        spot.loc[spot.index < pd.Timestamp(sd)] /= factor
     # quotes index for fast lookup
     eod = eod.set_index(['quote_date', 'expiry', 'right']).sort_index()
 
@@ -164,12 +170,19 @@ def run_real_wheel(symbol, otm_pct=0.02, dte_target=60, dte_lo=30, dte_hi=80,
                         Kc = min(cstrikes, key=lambda k: abs(k - S * (1 + otm_pct)))
                         bid, ask, mid = quote(d, exp, 'C', Kc)
                         if bid and bid > 0.05:
-                            ncc = shares // 100
-                            cash += bid * 100 * ncc
-                            open_calls.append({'expiry': exp, 'K': Kc,
-                                               'entry_credit': bid, 'n': ncc,
-                                               'last_mark': mid or bid})
-                            trades.append({'date': d, 'type': 'cc_open', 'K': Kc})
+                            # COVERED-CALLS-ONLY: subtract shares already
+                            # covering open calls (stacking = naked calls,
+                            # blew up in the 2022 WEAT melt-up)
+                            covered = 100 * sum(c['n'] for c in open_calls)
+                            ncc = max(0, (shares - covered)) // 100
+                            if ncc <= 0:
+                                pass
+                            else:
+                                cash += bid * 100 * ncc
+                                open_calls.append({'expiry': exp, 'K': Kc,
+                                                   'entry_credit': bid, 'n': ncc,
+                                                   'last_mark': mid or bid})
+                                trades.append({'date': d, 'type': 'cc_open', 'K': Kc})
                 last_entry = d
 
         # INTRINSIC-ONLY liability marking. Thin-chain quotes (2017-2019
