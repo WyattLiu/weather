@@ -213,6 +213,29 @@ print(f"   7-day:  {latest['hdd_7day']:6.1f} HDD")
 print(f"  10-day:  {latest['hdd_10day']:6.1f} HDD")
 print(f"  14-day:  {latest['hdd_14day']:6.1f} HDD")
 print(f"  16-day:  {latest['hdd_16day']:6.1f} HDD")
+
+# ── PERSIST forecast history (added 2026-06-11) ──────────────────────
+# The HDD-forecast-surprise factor needs a HISTORY of forecasts; until
+# now these numbers existed only in this process and the PNG. Appends
+# one row per run → /home/wyatt/weather/hdd_forecast_history.csv
+try:
+    import csv as _csv
+    import datetime as _dt
+    _hist = '/home/wyatt/weather/hdd_forecast_history.csv'
+    _new = not __import__('os').path.exists(_hist)
+    with open(_hist, 'a', newline='') as _f:
+        _w = _csv.writer(_f)
+        if _new:
+            _w.writerow(['run_ts', 'forecast_init', 'hdd_4day', 'hdd_7day',
+                         'hdd_10day', 'hdd_14day', 'hdd_16day'])
+        _w.writerow([_dt.datetime.now().isoformat(timespec='seconds'),
+                     str(latest['datetime']),
+                     round(latest['hdd_4day'], 1), round(latest['hdd_7day'], 1),
+                     round(latest['hdd_10day'], 1), round(latest['hdd_14day'], 1),
+                     round(latest['hdd_16day'], 1)])
+    print(f"\n[history] appended to {_hist}")
+except Exception as _e:
+    print(f"\n[history] persist failed: {_e}")
 print("=" * 70)
 
 # Create comparison chart if we have multiple forecasts
