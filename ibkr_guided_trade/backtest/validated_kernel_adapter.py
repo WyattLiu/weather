@@ -883,6 +883,22 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     except Exception as _comp_err:
         out['composite_error'] = str(_comp_err)
 
+    # ── EXECUTOR BRIEF: directional ag engine state (for the human) ─────
+    try:
+        import json as _json3
+        import time as _t3
+        _dpath = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'research/dba/cache/directional_state.json')
+        if os.path.exists(_dpath):
+            with open(_dpath) as _df:
+                _dstate = _json3.load(_df)
+            _dstate['age_days'] = round(
+                (_t3.time() - os.path.getmtime(_dpath)) / 86400, 1)
+            out['directional_ag'] = _dstate
+    except Exception:
+        pass
+
     # Shoulder
     import datetime
     month = datetime.date.today().month

@@ -601,6 +601,12 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
+  <!-- EXECUTOR BRIEF — everything the human needs to act -->
+  <div class="section">
+    <h2>🎯 Executor Brief</h2>
+    <div id="executor-brief">Loading...</div>
+  </div>
+
   <!-- DIRECTLY USABLE ORDERS — concrete trades with OSI + ladders -->
   <div class="section">
     <h2>📋 Directly Usable Orders (from active kernel)</h2>
@@ -1030,6 +1036,25 @@ async function refresh() {
     }
 
     // Actionable orders — concrete trades with OSI + limit ladder
+    // ── EXECUTOR BRIEF ──
+    try {
+      const cs = v.composite_state || {};
+      const tilt = cs.dba_wheel_tilt || {};
+      const gw = v.gex_wall || (v.actionable_orders||[]).map(o=>o.gex_wall).find(x=>x) || null;
+      const da = v.directional_ag || {};
+      const daW = da.weights || {};
+      const activeSleeves = Object.entries(daW).filter(([k,x]) => (x.weight_now||0) > 0);
+      const cpc = cs.cpc_outlook || {};
+      let brief = '<table style="font-size:0.85rem;line-height:1.7">';
+      brief += `<tr><td style="color:var(--text-dim);padding-right:14px">ENSO</td><td>ONI ${cs.oni != null ? (cs.oni>0?'+':'')+cs.oni : '?'} · CPC peak El Niño ${cpc.peak_el_nino_pct ?? '?'}% (${cpc.issue_date ?? '?'})</td></tr>`;
+      brief += `<tr><td style="color:var(--text-dim)">DBA tilt</td><td>score ${tilt.score ?? '?'} (${Object.entries(tilt.score_parts||{}).filter(([k,x])=>x===true).map(([k])=>k).join('+')||'none'}) · warn ${tilt.macro_warn_count ?? '?'} · ag carry targets ZEROED (carry &lt; BOXX)</td></tr>`;
+      brief += `<tr><td style="color:var(--text-dim)">GEX wall</td><td>${gw ? `call wall <strong>$${gw.wall}</strong> (+$${Number(gw.wall_gex).toLocaleString()}/1%) · put wall $${gw.put_wall} — sell CCs AT/ABOVE the wall (74% final-week hold)` : 'computed on CC candidates only (none this cycle)'}</td></tr>`;
+      brief += `<tr><td style="color:var(--text-dim)">Ag directional</td><td>${activeSleeves.length ? activeSleeves.map(([k,x])=>`<strong>${k}</strong> w=${x.weight_now}`).join(' · ') + ' — BUY shares per weight' : 'all sleeves FLAT (no confluence ≥2) — cash stays in BOXX'}${da.age_days != null ? ` <span style="color:var(--text-dim)">(state ${da.age_days}d old)</span>` : ''}</td></tr>`;
+      brief += `<tr><td style="color:var(--text-dim)">Cash rule</td><td>reserve $${fmt(v.ag_gap_reserve ?? 0,0)} for leg gaps → rest to BOXX ladder below</td></tr>`;
+      brief += '</table>';
+      $('executor-brief').innerHTML = brief;
+    } catch (e) { $('executor-brief').innerHTML = '<span style="color:var(--red)">brief error: '+e+'</span>'; }
+
     const orders = v.actionable_orders;
     if (orders && orders.length) {
       $('actionable-orders').innerHTML = orders.map(o => {

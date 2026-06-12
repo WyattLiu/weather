@@ -170,6 +170,14 @@ def precompute_factor_z(df):
         _ma20 = df['UNG'].rolling(20).mean()
         _sd20 = df['UNG'].rolling(20).std()
         df['ung_surge_z'] = ((df['UNG'] - _ma20) / _sd20.replace(0, float('nan'))).fillna(0.0)
+    # GEX call wall (real OI history, split-adjusted) — for cc_gex_floor
+    try:
+        _gw = pd.read_csv(os.path.join(CACHE_DIR, 'ung_gex_wall_daily.csv'),
+                          parse_dates=['date']).set_index('date')
+        df['gex_call_wall'] = _gw['gex_call_wall_adj'].reindex(
+            df.index, method='ffill', limit=5)
+    except Exception:
+        df['gex_call_wall'] = float('nan')
         # HH basis storm: spot-futures backwardation > +$0.40 → defensive mode
         # Empirically validated: 41 events in 5yr, UNG -4.5% in 5d on storm days
         # (see commit 8da5689 backwardation analysis). Counter-intuitive: spot
@@ -1937,6 +1945,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 else:
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
                 K = round(spot_u * (1 + effective_otm))
+                # GEX WALL FLOOR (live-validated: 74% vs 69% final-week hold):
+                # never sell OTM CCs below the dealer call wall. ITM CCs
+                # (intentional divestment) are exempt — they WANT assignment.
+                if p.get('cc_gex_floor') and effective_otm >= 0:
+                    _gwall = row.get('gex_call_wall')
+                    if _gwall == _gwall and _gwall and _gwall > K:
+                        K = round(float(_gwall))
                 qty = min(call_qty, uncovered_shares // 100)
                 cc_dte = p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
@@ -4040,7 +4055,23 @@ STRATEGIES = {
 #   champion_premium_harvest (superseded by _scale_invariant which has real strikes)
 #   champion_target_25 (superseded by _smooth / _dd_trim / _window_safe)
 #   champion_target_25_walkforward_safe (no real strikes; superseded by _window_safe)
+# ── NEW CANDIDATES 2026-06-11 ("sweet kernels") — clones of validated
+# champions with one new knob each, so attribution is clean.
+_psi = STRATEGIES['champion_premium_harvest_scale_invariant']
+_smooth = STRATEGIES.get('champion_target_25_smooth', _psi)
+STRATEGIES['champion_psi_gex'] = {**_psi, 'cc_gex_floor': True}
+STRATEGIES['champion_psi_fasttp'] = {**_psi, 'tp_dynamic': False,
+                                     'tp_threshold': 0.30}
+STRATEGIES['champion_psi_kold15'] = {**_psi, 'kold_shoulder_hedge': 0.15}
+STRATEGIES['champion_smooth_ddtrim'] = {**_smooth,
+                                        'dd_trim_trigger_pct': -4,
+                                        'dd_trim_qty_pct': 40,
+                                        'dd_trim_cadence_days': 5}
+STRATEGIES['champion_smooth_gex'] = {**_smooth, 'cc_gex_floor': True}
+
 _KEEP_STRATEGIES = {
+    'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
+    'champion_smooth_ddtrim', 'champion_smooth_gex',
     # Pareto-frontier protected family (real strikes ✓)
     'champion_20pct_protected', 'champion_20pct_protected_mom_gated',
     'champion_cut_rebuild',
