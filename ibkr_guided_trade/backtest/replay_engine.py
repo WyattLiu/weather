@@ -982,9 +982,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         pass
                 _votes = [_vz, _viv, _vmom]
                 _disagree = float(pd.Series(_votes).std())   # 0=aligned, ~1=conflict
-                # σ in SHARES: base band ±15% of target, widened by disagreement
                 _k = p.get('delta_band_k', 1.0)
-                _sigma_sh = base_shares * (0.10 + 0.35 * _disagree)
+                if p.get('conviction_band'):
+                    # CONVICTION-SCALED width (gen-6): narrow when the
+                    # consensus is EXTREME (high edge → act, load up), wide
+                    # when NEUTRAL (no edge → hold base, don't churn) OR
+                    # CONFLICTED. |consensus| = strength of aligned vote.
+                    # Recovers return at extremes (where it's made) while
+                    # damping the wasteful neutral churn.
+                    _consensus = abs(float(pd.Series(_votes).mean()))  # 0=neutral,1=extreme
+                    _a = p.get('conviction_a', 0.30)   # neutral-widening weight
+                    _b = p.get('conviction_b', 0.20)   # disagreement weight
+                    _floor = p.get('conviction_floor', 0.05)
+                    _width = _floor + _a * (1 - _consensus) + _b * _disagree
+                    _sigma_sh = base_shares * _width
+                else:
+                    # gen-5 disagreement-only width
+                    _sigma_sh = base_shares * (0.10 + 0.35 * _disagree)
                 if abs(current - target) <= _k * _sigma_sh:
                     band_skip = True                          # inside band → hold
                     if not s.get('_in_band'):
@@ -4320,10 +4334,27 @@ STRATEGIES['g5_timing_weekly'] = {**_PROMO, 'real_fill_model': True,
 STRATEGIES['g5_timing_thu'] = {**_PROMO, 'real_fill_model': True,
                                'entry_cadence': 5, 'put_entry_dow': 3}  # Thursday weekly
 
+# ── GEN-6 (2026-06-13): CONVICTION-SCALED delta band — narrow at
+# extremes (recover return), wide at neutral (keep MDD benefit). Coarse
+# 3x3 (a=neutral-widen, b=disagreement) sweep + carry the g5 baselines
+# for direct comparison. real fills. OOS gate mandatory (2 free params).
+_CB = {**STRATEGIES['champion_kold15_ivrank'], 'real_fill_model': True,
+       'delta_band_sizing': True, 'delta_band_k': 1.0, 'conviction_band': True}
+for _a in (0.20, 0.35, 0.50):
+    for _b in (0.10, 0.20, 0.30):
+        STRATEGIES[f'g6_cb_a{int(_a*100)}_b{int(_b*100)}'] = {
+            **_CB, 'conviction_a': _a, 'conviction_b': _b}
+# tighter floor variant (act even harder at extremes)
+STRATEGIES['g6_cb_tightfloor'] = {**_CB, 'conviction_a': 0.35,
+                                  'conviction_b': 0.20, 'conviction_floor': 0.02}
+
 _KEEP_STRATEGIES = {
-    'g5_band_k05', 'g5_band_k10', 'g5_band_k15', 'g5_promo_rf',
-    'g5_rollguards', 'g5_dd_ivgate', 'g5_tp_ivrank', 'g5_best_combo',
-    'g5_timing_weekly', 'g5_timing_thu',
+    'g6_cb_a20_b10', 'g6_cb_a20_b20', 'g6_cb_a20_b30',
+    'g6_cb_a35_b10', 'g6_cb_a35_b20', 'g6_cb_a35_b30',
+    'g6_cb_a50_b10', 'g6_cb_a50_b20', 'g6_cb_a50_b30',
+    'g6_cb_tightfloor',
+    'g5_band_k10', 'g5_band_k15', 'g5_promo_rf',  # baselines for comparison
+    'champion_kold15_ivrank',
     'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
     'champion_smooth_ddtrim', 'champion_smooth_gex',
     'champion_psi_ivrank', 'champion_kold15_ivrank',

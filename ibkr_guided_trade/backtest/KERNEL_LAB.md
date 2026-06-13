@@ -66,6 +66,17 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-6 RUNNING (2026-06-13): conviction-scaled band
+Headline: band width = base x [floor + a*(1-|consensus|) + b*disagreement]
+— NARROW at extremes (recover the 14pp return lost to over-damping the
+cheap-z accumulation that drives 41% of rallies), WIDE at neutral (keep
+the halved-MDD benefit, no churn for no edge). Supersedes the uniform
+shallow-band idea. 10 candidates: 3x3 (a,b) sweep + tight-floor variant,
+vs g5_band_k10/k15/promo baselines. TWO free params → OOS gate mandatory
+(coarse sweep, demand the edge holds out-of-sample not just in-sample).
+Mechanism target: cut the '39% fewer shares on average' down to fewer-
+only-at-neutral, restoring extreme-z conviction sizing.
+
 ### GEN-5 OOS GATE (sealed test 2024-01→2026-06, real fills + cost model)
 
 | Kernel | TEST ann | TEST Sharpe | TEST MDD |
