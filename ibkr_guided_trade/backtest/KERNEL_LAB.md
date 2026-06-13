@@ -66,6 +66,55 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-5 RESULTS (2026-06-13 overnight, real fills)
+
+| Kernel | Annual | MaxDD | Sharpe | Worst-12mo |
+|--------|--------|-------|--------|-----------|
+| g5_band_k15 | +26.6% | **-7.5%** | **2.23** | **+4.9%** |
+| **g5_band_k10** | +27.5% | -8.0% | 2.22 | +3.9% |
+| g5_band_k05 | +27.6% | -8.6% | 2.17 | +2.8% |
+| g5_promo_rf (PROMOTED, baseline) | +27.9% | -10.4% | 1.81 | +1.6% |
+| g5_dd_ivgate | +27.5% | -10.2% | 1.84 | +1.9% |
+| g5_tp_ivrank | +27.6% | -10.7% | 1.80 | — |
+| g5_rollguards | +16.2% | -21.8% | 1.37 | -15.7% |
+| g5_timing_weekly | +20.5% | -9.9% | 1.37 | +2.8% |
+| g5_timing_thu | +14.0% | -11.8% | 1.10 | -2.9% |
+
+**Three key questions, answered:**
+(a) **DELTA BAND WINS decisively.** All three k beat the promoted
+   baseline on BOTH Sharpe (1.81→2.17-2.23) AND MaxDD (-10.4→-7.5/-8.0)
+   at ~equal return (-0.3 to -1.3pp). k=1.0 is the balanced pick (2.22
+   Sharpe, -8.0 MDD, +27.5%, +3.9% floor); k=1.5 is the risk-min
+   (2.23/-7.5/+4.9% floor, -1.3pp return). The band cuts drawdown by a
+   QUARTER. Mechanism caveat: only 5 logged BAND_HOLDs — most of the
+   gain is the "trade TOWARD mu not onto it" half-step damping, not the
+   hold; gen-6 should separate these two effects.
+(b) **g4 knobs: still net-neutral-to-negative even on uncrippled base.**
+   dd_ivgate +0.03 Sharpe (marginal), tp_ivrank flat, rollguards STILL
+   -11.7pp return / -0.44 Sharpe. The forensic hypothesis that rolls
+   were "wasteful" is REFUTED: removing/capping rolls (taking assignment
+   instead) costs MORE than rolling — assignment is worse than the roll
+   in this engine. Roll-downs are a cost but the necessary kind. DROP
+   the rollguard knobs permanently.
+(c) **Fair timing test (equal weekly cadence): Thursday STILL LOSES**
+   (14.0% vs 20.5% weekly-any-day). The gen-3 rejection HOLDS even
+   frequency-controlled — Thursday-entry restriction is genuinely
+   negative, not a confound. AND weekly cadence itself (<daily) costs
+   ~7pp. Timing stays EXECUTION-ONLY guidance, never a kernel gate. 7th
+   filters-law confirmation.
+
+### GEN-6 RECOMMENDATION
+**Promote g5_band_k10 (or k15 for risk-min) as the next champion** —
+pending OOS gate (running /tmp/walkforward_g5.log). The delta band is
+the first knob since IV-rank to improve Sharpe AND drawdown
+simultaneously, and it directly implements the user's distributional
+critique. Drop rollguards/timing knobs permanently. dd_ivgate optional
+(marginal). Gen-6 work: (1) separate band-hold vs half-step effects;
+(2) widen the band's sigma model (more signals → richer disagreement);
+(3) wire hedge-structure B (KOLD+CC, +3.6%/yr rent) for September
+shoulder; (4) risk-reversal overlay at low IV-rank (better tail, 1/5
+capital — live-relevant now).
+
 ### Gen-5 IN PROGRESS (2026-06-13 overnight)
 Tournament running: 10 g5_* candidates on the PROMOTED kernel base, real
 fills. Headline: DISTRIBUTIONAL DELTA BAND implemented (delta_band_sizing
