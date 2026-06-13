@@ -1056,6 +1056,10 @@ async function refresh() {
         brief += `<tr><td style="color:var(--text-dim)">IV-rank</td><td><strong style="color:${rcol}">${(ivr.iv_rank*100).toFixed(0)}%</strong> (ATM IV ${(ivr.atm_iv*100).toFixed(1)}%) — ${ivr.regime ?? ''} <span style="color:var(--text-dim)">[real-chain factor: top-quintile → -23% fwd-63d]</span></td></tr>`;
       }
       brief += `<tr><td style="color:var(--text-dim)">Kernel knobs</td><td>${v.kernel_label ?? v.kernel ?? '?'} — KOLD hedge ${(v.kernel_params||{}).kold_shoulder_hedge ?? '?'} · IV-rank scaling ${(v.kernel_params||{}).iv_rank_z_scale ? 'ON' : 'off'} · GEX floor ${(v.kernel_params||{}).cc_gex_floor ? 'ON' : 'off'}</td></tr>`;
+      const tips = v.exec_timing || [];
+      if (tips.length) {
+        brief += `<tr><td style="color:var(--text-dim)">Sell timing</td><td>${tips.map(t=>`• ${t}`).join('<br>')}</td></tr>`;
+      }
       brief += `<tr><td style="color:var(--text-dim)">Cash rule</td><td>reserve $${fmt(v.ag_gap_reserve ?? 0,0)} for leg gaps → rest to BOXX ladder below</td></tr>`;
       brief += '</table>';
       $('executor-brief').innerHTML = brief;
@@ -1096,7 +1100,9 @@ async function refresh() {
                  + `<div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:4px">`
                  + `Strike mix → target <strong>${o.target_otm_pct}%</strong> OTM, achieved <strong>${o.achieved_otm_pct}%</strong></div>`
                  + `<table style="font-size:0.78rem"><thead><tr><th>Qty</th><th>OSI</th><th>Prem/ct</th><th>Eff OTM</th><th>Credit</th></tr></thead><tbody>${legsTable}</tbody></table>`
-                 + `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Total credit: $${fmt(o.est_credit_total,0)} · Collateral: $${fmt(o.collateral_required,0)}</div></div>`;
+                 + `<div style="font-size:0.78rem;margin-top:4px;color:var(--text-dim)">Total credit: $${fmt(o.est_credit_total,0)} · Collateral: $${fmt(o.collateral_required,0)}</div>`
+                 + (o.whatif_stats ? `<div style="font-size:0.76rem;margin-top:6px;padding:6px;background:rgba(88,166,255,0.07);border-radius:4px"><strong>What-if (${o.whatif_stats.n_scenarios} historical scenarios):</strong> E[PnL] $${fmt(o.whatif_stats.e_pnl,0)} · P(assign) ${(o.whatif_stats.p_assign*100).toFixed(0)}% · P(loss) ${(o.whatif_stats.p_loss*100).toFixed(0)}% · p5/p95 $${fmt(o.whatif_stats.p5_pnl,0)}/$${fmt(o.whatif_stats.p95_pnl,0)} · CVaR5 $${fmt(o.whatif_stats.cvar5,0)}</div>` : '')
+                 + `</div>`;
         } else if (o.order_type.startsWith('SELL_PUT_') && o.requires_consult) {
           // Consult-only ag-wheel candidates (DBA core + CORN/CANE satellites)
           const tilt = o.factor_tilt || {};

@@ -66,9 +66,31 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
-### Gen-5 queue
-- g4 knobs (dd_ivgate first) rerun on g3_kold15_ivrank_rf base
-- fair timing test: entry_cadence=5 any-day vs entry_cadence=5 Thursday
+### Gen-5 queue (updated 2026-06-13 post-promotion)
+1. **DISTRIBUTIONAL DELTA TARGETING (user directive — the rigidity fix):**
+   replace point share-targets with a band: target ~ (mu_delta, sigma_delta)
+   where mu comes from z x iv_rank (as today) and sigma from SIGNAL
+   DISAGREEMENT (z vs iv_rank vs momentum pointing apart = wide band, all
+   aligned = tight). Act only when |current - mu| > k*sigma (hysteresis);
+   trade toward mu - not onto it. Backtest k in {0.5, 1.0, 1.5}.
+2. **CONDITIONAL what-if distributions:** the live what-if (shipped
+   2026-06-13) uses the UNCONDITIONAL 35d empirical distribution — it
+   flagged today's put mix as EV-negative (-\$16) because it includes
+   UNG's structural decay across all regimes. Upgrade: condition the
+   scenario windows on the current (z-bucket, iv_rank-bucket) — the
+   kernel's whole edge is that conditioning. Compare unconditional vs
+   conditional E[PnL] on every rec; large gaps = regime conviction.
+3. **Per-day/per-trade forensics on the promoted kernel (user directive):**
+   extend trade_forensics with a daily ledger mode — every trading day:
+   what was opened/closed/rolled, what the alternative (no-trade,
+   assignment-accept) would have done, tag each trade win/loss vs its
+   counterfactual. 'What worked / what didn't, each day, each trade.'
+4. g4 knobs (dd_ivgate first) rerun on g3_kold15_ivrank_rf base
+5. fair timing test: entry_cadence=5 any-day vs entry_cadence=5 Thursday
+6. COST MODEL CORRECTION (user): WS charges NO commission — spread/slippage
+   is the only real cost. honest_walkforward's \$0.65/ct is conservative
+   padding; keep it as safety margin but report both.
+
 
 ## Forensic findings (6,380 trades, smooth_ddtrim_ivrank)
 
@@ -147,4 +169,4 @@ research/gex daily collector); IV-rank daily CSV extends the same way.
 - [x] Gen-3 complete — real fills cost 5pp; kold15_ivrank_rf leads
 - [x] Gen-4 complete (on crippled base — rerun queued for gen-5)
 - [x] honest_walkforward complete — kold15_ivrank wins OOS (Sharpe 2.16)
-- [ ] Dashboard phase-2 (kernel label/OOS/why + any new live inputs)
+- [x] PROMOTED champion_kold15_ivrank (2026-06-13); dashboard phase-2 live (label/OOS/knobs/timing/what-if)

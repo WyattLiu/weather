@@ -53,6 +53,20 @@ from replay_engine import (
 # OOS metrics from backtest/honest_walkforward.py with sealed test data
 # (2024-01 → 2026-06) + IBKR cost model + leak-free z.
 KERNELS = {
+    'kold15_ivrank': {
+        'strategy': 'champion_kold15_ivrank',
+        'label': 'KOLD-15 + IV-Rank (gen-2 champion)',
+        # OOS from honest_walkforward sealed test 2024-01→2026-06 with
+        # slippage + assignment haircuts (commission $0 on WS; the $0.65/ct
+        # in the harness is conservative padding)
+        'oos_ann': 31.1,   'oos_sharpe': 2.16, 'oos_mdd': -9.2,
+        'is_ann': 65.5,    'is_sharpe': 2.99,  'is_mdd': -13.6,
+        'why': 'Promoted 2026-06-13. scale_invariant + KOLD hedge 0.15 + '
+               'IV-rank z-scaling (real-ATM-IV percentile trims adds at '
+               'rich-vol tops, boosts at cheap-vol bottoms). Best sealed-OOS '
+               'Sharpe (2.16 vs 2.07) at comparable MDD; floor +2.5% '
+               'worst-12mo. See backtest/KERNEL_LAB.md.',
+    },
     'premium_harvest_scale_invariant': {
         'strategy': 'champion_premium_harvest_scale_invariant',
         'label': 'Premium Harvest (Scale-Invariant)',
@@ -87,7 +101,7 @@ KERNELS = {
     },
 }
 
-CHAMPION_KEY = 'premium_harvest_scale_invariant'
+CHAMPION_KEY = 'kold15_ivrank'   # promoted 2026-06-13 (was premium_harvest_scale_invariant)
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 
@@ -908,6 +922,46 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     except Exception:
         pass
 
+    # ── EXEC TIMING RECOMMENDER (validated: 1,044-day minute study) ─────
+    # Thursday bleeds -40bps intraday (print day) → best put-sell strikes
+    # arrive in the afternoon; Tue opens -40bps (cheap adds); vol collapses
+    # 14:30-15:30 (tightest option quotes); TOM = NG-expiry churn; never
+    # trade the first 60s after the 10:30 print (knee-jerk reverses, r=-.19).
+    try:
+        from datetime import datetime as _dtt
+        import pytz as _pytz
+        _now = _dtt.now(_pytz.timezone('US/Eastern'))
+        _dow, _hm = _now.weekday(), _now.strftime('%H:%M')
+        _tips = []
+        if _dow == 3:
+            _tips.append('THURSDAY: print day bleeds -40bps — SELL PUTS in the '
+                         '14:30-15:30 window (post-print dip = better strikes); '
+                         'no orders 10:30-11:00; wait 60s+ after the print')
+        elif _dow == 1:
+            _tips.append('TUESDAY: overnight bled -40bps into the open — '
+                         'best day for SHARE ADDS (morning entries land cheap)')
+        elif _dow == 4:
+            _tips.append('FRIDAY: tape favors longs (+13bps) — good day to let '
+                         'runners run; price CALLS Mon close or today')
+        elif _dow == 0:
+            _tips.append('MONDAY: neutral; sell CALLS near the close (ahead of '
+                         'the Tuesday-overnight bleed)')
+        if _now.day >= 27 or _now.day <= 2:
+            _tips.append('TURN-OF-MONTH: NG expiry churn (-43bps/d) — defer '
+                         'share adds until day 3+')
+        if _hm < '11:00':
+            _tips.append(f'now {_hm} ET: morning vol is 1.5-2x afternoon — '
+                         'WAIT for 14:30-15:30 to roll/sell unless urgent')
+        elif '14:30' <= _hm <= '15:30':
+            _tips.append(f'now {_hm} ET: IN the optimal window (lowest vol, '
+                         'tightest quotes) — execute pending rolls/sells now')
+        elif _hm > '15:30':
+            _tips.append(f'now {_hm} ET: late session — take the bid on '
+                         'resting orders rather than carrying overnight')
+        out['exec_timing'] = _tips
+    except Exception:
+        pass
+
     # ── EXECUTOR BRIEF: directional ag engine state (for the human) ─────
     try:
         import json as _json3
@@ -959,6 +1013,58 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         )
     except Exception as e:
         out['actionable_orders_error'] = str(e)
+
+    # ── STATISTICAL WHAT-IF on recommendations ──────────────────────────
+    # Every actionable PUT/CC rec gets an EMPIRICAL outcome distribution
+    # (overlapping UNG return windows since 2018 — fat tails included, no
+    # normality assumption): E[PnL], P(assign), P(loss), p5/p95, CVaR5.
+    # Decisions read off the DISTRIBUTION, not the point EV.
+    try:
+        import pandas as _wpd
+        import numpy as _np
+        _mp = _wpd.read_csv(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'research/dba/cache/master_panel.csv'),
+            index_col=0, parse_dates=True)['UNG'].dropna().loc['2018':]
+        _hor = _mp.pct_change(24).dropna()      # ~35 cal DTE in trading days
+        _ST = spot * (1 + _hor.values)
+        for _o in (out.get('actionable_orders') or []):
+            if _o.get('order_type') not in ('PUT_SHORT_MIX', 'CALL_SHORT_COVERED'):
+                continue
+            try:
+                _pnl = _np.zeros(len(_ST))
+                _hit = _np.zeros(len(_ST), dtype=bool)
+                _legs = _o.get('legs') or [{'strike': _o.get('strike'),
+                                            'passive_tier_price': _o.get('est_premium_per'),
+                                            'qty': _o.get('qty', 1)}]
+                for _l in _legs:
+                    _K = float(_l.get('strike') or 0)
+                    _cr = float(_l.get('passive_tier_price')
+                                or _l.get('est_premium_per') or 0)
+                    _q = int(_l.get('qty') or 0)
+                    if _K <= 0 or _q <= 0:
+                        continue
+                    if _o['order_type'] == 'PUT_SHORT_MIX':
+                        _pnl += (_cr - _np.maximum(_K - _ST, 0)) * 100 * _q
+                        _hit |= (_ST < _K)
+                    else:
+                        _pnl += (_cr - _np.maximum(_ST - _K, 0)) * 100 * _q
+                        _hit |= (_ST > _K)
+                _p5, _p95 = _np.percentile(_pnl, [5, 95])
+                _o['whatif_stats'] = {
+                    'e_pnl': round(float(_pnl.mean()), 0),
+                    'p_assign': round(float(_hit.mean()), 2),
+                    'p_loss': round(float((_pnl < 0).mean()), 2),
+                    'p5_pnl': round(float(_p5), 0),
+                    'p95_pnl': round(float(_p95), 0),
+                    'cvar5': round(float(_pnl[_pnl <= _p5].mean()), 0),
+                    'n_scenarios': int(len(_pnl)),
+                    'basis': 'empirical 35d UNG windows 2018+ (fat tails, no normality)',
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     # ─── MERGE BOXX ORDERS + RE-SCORE ────────────────────────────────────
     # BOXX orders were computed before _build_actionable_orders; now merge
