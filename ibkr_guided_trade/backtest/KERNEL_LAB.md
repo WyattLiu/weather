@@ -66,6 +66,38 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-5 OOS GATE (sealed test 2024-01→2026-06, real fills + cost model)
+
+| Kernel | TEST ann | TEST Sharpe | TEST MDD |
+|--------|---------|------------|----------|
+| **g5_band_k15** | +16.6% | **2.51** | **-4.4%** |
+| g5_band_k10 | +17.8% | 2.50 | -4.5% |
+| g5_band_k05 | +18.1% | 2.35 | -5.0% |
+| g5_promo_rf | +22.7% | 1.77 | -8.5% |
+| champion_kold15_ivrank (PRODUCTION) | +31.1% | 2.16 | -9.2% |
+
+**OOS-VALIDATED, with an honest trade-off the user must weigh:**
+The delta band is unambiguously better RISK-ADJUSTED out-of-sample —
+Sharpe 2.51 vs production 2.16, and MaxDD -4.4% vs -9.2% (HALF the
+drawdown), cost drag only 4.9% of NAV. BUT it gives up ~14pp of OOS
+raw return (16.6% vs 31.1%). The band trades return for a dramatically
+smoother, shallower-drawdown ride.
+
+DECISION FRAMING (user has stated a return preference):
+- Want max RETURN → keep current champion_kold15_ivrank (+31% OOS).
+- Want best RISK-ADJUSTED / capital preservation → promote g5_band_k15
+  or k10 (half the drawdown, +0.35 Sharpe, ~17% return).
+- COMPROMISE for gen-6: a SHALLOWER band (k=0.3, or sigma floor lower)
+  to keep more return while still damping the worst churn — the current
+  bands may be over-damping (return cost > needed). The 5-hold mechanism
+  finding suggests the half-step is doing the work; a gentler half-step
+  could recover return. THIS IS THE GEN-6 HEADLINE EXPERIMENT.
+
+Gen-6 queue: (1) shallow-band sweep k in {0.2,0.3,0.4} + half-step
+fraction knob to recover return; (2) separate band-hold vs half-step
+effects; (3) hedge structure B (KOLD+CC) for Sept shoulder; (4) risk-
+reversal low-IV-rank overlay (live-relevant now, IV-rank 0.00).
+
 ### GEN-5 RESULTS (2026-06-13 overnight, real fills)
 
 | Kernel | Annual | MaxDD | Sharpe | Worst-12mo |
@@ -256,6 +288,7 @@ research/gex daily collector); IV-rank daily CSV extends the same way.
 
 - [x] Gen-2 complete — smooth_ddtrim_ivrank leads (2.10 Sharpe, +4.8% floor)
 - [x] Gen-3 complete — real fills cost 5pp; kold15_ivrank_rf leads
-- [x] Gen-4 complete (on crippled base — rerun queued for gen-5)
+- [x] Gen-4 complete
+- [x] Gen-5 complete — delta band OOS-validated (Sharpe 2.51, half MDD, -14pp return trade-off); gen-6 = shallow-band return recovery
 - [x] honest_walkforward complete — kold15_ivrank wins OOS (Sharpe 2.16)
 - [x] PROMOTED champion_kold15_ivrank (2026-06-13); dashboard phase-2 live (label/OOS/knobs/timing/what-if)
