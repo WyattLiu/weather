@@ -66,6 +66,28 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### Gen-5 IN PROGRESS (2026-06-13 overnight)
+Tournament running: 10 g5_* candidates on the PROMOTED kernel base, real
+fills. Headline: DISTRIBUTIONAL DELTA BAND implemented (delta_band_sizing
++ delta_band_k): mu = z x iv_rank target; sigma = signal-disagreement
+(z/iv_rank/momentum votes std); hold inside mu +/- k*sigma, trade TOWARD
+mu not onto it. Candidates k in {0.5,1.0,1.5}, g4 knobs re-tested on
+uncrippled base, fair weekly-vs-Thursday timing test.
+
+Research done tonight:
+- HEDGE BAKE-OFF: A KOLD shares +3.5% shoulder contribution (bleeds);
+  B KOLD+CC ~+7%/yr standing rent on the hedge sleeve (honest: 50%
+  capture x 5 cycles, NOT the naive 100% sum); C UNG bear puts 4.3%/cycle
+  theta, event-convex, cheapest at low IV-rank. VERDICT: promote B as the
+  standing shoulder hedge; C as opportunistic low-IV-rank overlay.
+- SYNTHETIC/RR: per-$ return, synthetic/RR ~= shares (no free lunch on
+  return), BUT risk reversal has a BETTER tail at low IV-rank (p5 -17.4%
+  vs shares -23%) at ~1/5 capital. Edge = capital multiplier + defined
+  floor, not per-$ return. Relevant NOW (IV-rank 0.00).
+- KOLD LIQUIDITY (real close quotes, 1959d): put median spread 14.8%
+  (NOT the 36-49% after-hours snapshot), tightest in 2022-23 NG crisis
+  (4-6%). Regime-dependent — opportunistic only, never standing.
+
 ### Gen-5 queue (updated 2026-06-13 post-promotion)
 1. **DISTRIBUTIONAL DELTA TARGETING (user directive — the rigidity fix):**
    replace point share-targets with a band: target ~ (mu_delta, sigma_delta)

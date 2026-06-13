@@ -958,6 +958,46 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             target = int(base_shares * mult)
             target = (target // 100) * 100
             current = s['shares']
+            # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
+            # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
+            # z, iv_rank, and momentum point the same way → tight band (act
+            # decisively); when they conflict → wide band (the future is
+            # genuinely uncertain, so DON'T churn the book chasing a noisy
+            # point estimate). Only act when |current-μ| > k·σ, then trade
+            # toward μ, not onto it. Hysteresis kills whipsaw.
+            band_skip = False
+            if p.get('delta_band_sizing'):
+                # three directional votes in [-1,+1] (bullish=+, want more shares)
+                _vz = max(-1.0, min(1.0, -z / 1.5))          # cheap z → bullish
+                _ivr_b = row.get('iv_rank')
+                _viv = 0.0
+                if _ivr_b == _ivr_b and _ivr_b is not None:
+                    _viv = max(-1.0, min(1.0, (0.5 - _ivr_b) * 2))  # low IV → bullish
+                _vmom = 0.0
+                if i > 20:
+                    try:
+                        _m20 = df['UNG'].iloc[max(0, i-19):i+1].mean()
+                        _vmom = max(-1.0, min(1.0, (spot_u / _m20 - 1) * 10))
+                    except Exception:
+                        pass
+                _votes = [_vz, _viv, _vmom]
+                _disagree = float(pd.Series(_votes).std())   # 0=aligned, ~1=conflict
+                # σ in SHARES: base band ±15% of target, widened by disagreement
+                _k = p.get('delta_band_k', 1.0)
+                _sigma_sh = base_shares * (0.10 + 0.35 * _disagree)
+                if abs(current - target) <= _k * _sigma_sh:
+                    band_skip = True                          # inside band → hold
+                    if not s.get('_in_band'):
+                        trades.append({'date': idx, 'type': 'DELTA_BAND_HOLD',
+                                       'pnl': 0.0, 'target': target, 'current': current,
+                                       'sigma_sh': int(_sigma_sh),
+                                       'disagree': round(_disagree, 2)})
+                    s['_in_band'] = True
+                else:
+                    s['_in_band'] = False
+                    # trade toward μ, not onto it: move halfway across the band edge
+                    _edge = target + (_k * _sigma_sh if current > target else -_k * _sigma_sh)
+                    target = int(((current + _edge) / 2) // 100) * 100
             # MOMENTUM OVERRIDE — when shares are about to be TRIMMED (rich
             # regime) BUT trend is clearly bullish (50/20d MAs ripping),
             # hold shares anyway. Captures spike runups (2022-style) that
@@ -986,7 +1026,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         s['_momentum_overriding'] = False
                 except Exception:
                     pass
-            delta = target - current
+            delta = 0 if band_skip else (target - current)
             # MICROSTRUCTURE TIMING for ADDS only (trims fire anytime —
             # risk control never waits): Tuesday adds (open bleeds -40bps
             # overnight → cheaper entries) and skip the NG-expiry
@@ -4248,7 +4288,42 @@ STRATEGIES['g4_everything'] = {**_G4B, 'roll_accept_cheap_z': True,
                                'dd_trim_iv_gate': True,
                                'roll_up_spike_defer_days': 2}
 
+# ── GEN-5 (2026-06-13): on the PROMOTED kernel (champion_kold15_ivrank).
+# (1) distributional delta band — the rigidity fix, k in {0.5,1.0,1.5};
+# (2) g4 forensic knobs re-tested on the UNCRIPPLED promoted base (gen-4
+#     ran them on the timing-crippled stack); (3) fair timing test
+#     (weekly cadence any-day vs Thursday — the gen-3 test was
+#     frequency-confounded). Real fills on every entrant.
+_PROMO = STRATEGIES['champion_kold15_ivrank']
+STRATEGIES['g5_band_k05'] = {**_PROMO, 'real_fill_model': True,
+                             'delta_band_sizing': True, 'delta_band_k': 0.5}
+STRATEGIES['g5_band_k10'] = {**_PROMO, 'real_fill_model': True,
+                             'delta_band_sizing': True, 'delta_band_k': 1.0}
+STRATEGIES['g5_band_k15'] = {**_PROMO, 'real_fill_model': True,
+                             'delta_band_sizing': True, 'delta_band_k': 1.5}
+STRATEGIES['g5_promo_rf'] = {**_PROMO, 'real_fill_model': True}   # baseline
+STRATEGIES['g5_rollguards'] = {**_PROMO, 'real_fill_model': True,
+                               'roll_accept_cheap_z': True,
+                               'max_rolls_per_chain': 1,
+                               'roll_stagger_max_per_day': 3}
+STRATEGIES['g5_dd_ivgate'] = {**_PROMO, 'real_fill_model': True,
+                              'dd_trim_iv_gate': True}
+STRATEGIES['g5_tp_ivrank'] = {**_PROMO, 'real_fill_model': True,
+                              'tp_by_iv_rank': True}
+STRATEGIES['g5_best_combo'] = {**_PROMO, 'real_fill_model': True,
+                               'delta_band_sizing': True, 'delta_band_k': 1.0,
+                               'roll_accept_cheap_z': True,
+                               'max_rolls_per_chain': 1,
+                               'dd_trim_iv_gate': True}
+STRATEGIES['g5_timing_weekly'] = {**_PROMO, 'real_fill_model': True,
+                                  'entry_cadence': 5}          # any-day weekly
+STRATEGIES['g5_timing_thu'] = {**_PROMO, 'real_fill_model': True,
+                               'entry_cadence': 5, 'put_entry_dow': 3}  # Thursday weekly
+
 _KEEP_STRATEGIES = {
+    'g5_band_k05', 'g5_band_k10', 'g5_band_k15', 'g5_promo_rf',
+    'g5_rollguards', 'g5_dd_ivgate', 'g5_tp_ivrank', 'g5_best_combo',
+    'g5_timing_weekly', 'g5_timing_thu',
     'champion_psi_gex', 'champion_psi_fasttp', 'champion_psi_kold15',
     'champion_smooth_ddtrim', 'champion_smooth_gex',
     'champion_psi_ivrank', 'champion_kold15_ivrank',
