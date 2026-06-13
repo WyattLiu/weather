@@ -66,6 +66,33 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-6 RESULTS (conviction-scaled band) — 2026-06-13
+
+| Kernel | Annual | MaxDD | Sharpe | Floor | avg shares |
+|--------|--------|-------|--------|-------|-----------|
+| g5_promo_rf (band off) | +27.9% | -10.4% | 1.81 | +1.6% | 9,037 |
+| g5_band_k10 (plain band) | +27.5% | -8.0% | 2.22 | +3.9% | 5,505 |
+| **g6_cb_a20_b10** | +27.7% | -8.0% | 2.18 | +3.5% | 5,978 |
+| g6_cb_a20_b30 | +27.0% | -7.8% | 2.23 | +4.5% | 5,144 |
+| g6_cb_tightfloor | +27.0% | -7.5% | 2.19 | +5.1% | 5,225 |
+| g6_cb_a50_b30 | +25.4% | -7.2% | 2.12 | — | — |
+
+**Findings:**
+1. **Conviction scaling works as designed but is a REFINEMENT, not a free
+   lunch.** g6_cb_a20_b10 holds 5,978 shares vs the plain band's 5,505
+   (recovers exposure at extremes) → +0.2pp return at equal MDD/Sharpe.
+   The (a,b) cells trace the SAME return/MDD frontier as the plain band's
+   k — narrower (a20_b10) = more return+exposure, wider (a50_b30) = lower
+   MDD. No cell beats the frontier; conviction is a smoother dial on it.
+2. **IMPORTANT CORRECTION to the gen-5 brief:** the "-14pp return" cost
+   of the band was MISLEADING — it compared band (real fills) to
+   champion_kold15_ivrank (MODEL fills), conflating the ~5pp real-fill
+   haircut with the band effect. The HONEST band cost vs g5_promo_rf
+   (both real fills) is only **-0.4pp full-sample / ~-6pp OOS** for
+   HALVING the drawdown. The band is a much better deal than first framed.
+3. Floors improve monotonically with band width (+1.6% no-band →
+   +5.1% tightfloor). All integrity screens 0 flags.
+
 ### GEN-6 RUNNING (2026-06-13): conviction-scaled band
 Headline: band width = base x [floor + a*(1-|consensus|) + b*disagreement]
 — NARROW at extremes (recover the 14pp return lost to over-damping the
