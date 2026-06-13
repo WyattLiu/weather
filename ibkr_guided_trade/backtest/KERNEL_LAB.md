@@ -87,7 +87,25 @@ fill-fragility flag — aggressive-profile alternative only.
    counterfactual. 'What worked / what didn't, each day, each trade.'
 4. g4 knobs (dd_ivgate first) rerun on g3_kold15_ivrank_rf base
 5. fair timing test: entry_cadence=5 any-day vs entry_cadence=5 Thursday
-6. COST MODEL CORRECTION (user): WS charges NO commission — spread/slippage
+7. **SHOULDER HEDGE BAKE-OFF (user directives 2026-06-13):** three-way
+   comparison over Mar-May/Sep-Nov windows, real fills where possible:
+   (a) KOLD shares 15% NAV (current), (b) KOLD shares + covered calls
+   on the liquid call side (~12%/70d premium density measured live;
+   await historical-liquidity confirmation from KOLD ThetaData backfill
+   — after-hours snapshot exaggerated put spreads), (c) UNG long/bear
+   puts sized to equivalent hedge delta (cheap when IV-rank low).
+   KOLD put-WRITING: judge after historical liquidity study (close
+   quotes, not after-hours).
+8. **SYNTHETIC LONG / RISK REVERSAL deep analysis (user directive):**
+   when IV-rank is low (calls cheap), compare share-accumulation vs
+   synthetic long (long call + short put same K — full delta, ~1/5th
+   capital) vs risk reversal (short OTM put funds long OTM call).
+   Capital efficiency × assignment tails × the covered-calls-only rule
+   (synthetic's short put leg is cash-secured anyway). The adapter
+   already emits SYNTHETIC_LONG_PARITY candidates — backtest the knob.
+9. **Beam analysis now snaps to the \$0.50 real grid** (fixed
+   2026-06-13); extend to per-expiry true strike lists later.
+10. COST MODEL CORRECTION (user): WS charges NO commission — spread/slippage
    is the only real cost. honest_walkforward's \$0.65/ct is conservative
    padding; keep it as safety margin but report both.
 

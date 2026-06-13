@@ -2645,8 +2645,14 @@ def _beam_analysis(spot: float, z: float):
     T = dte / 365
     r = 0.045
     candidates = []
+    seen_K = set()
     for otm in [0.02, 0.05, 0.08, 0.12, 0.15, 0.20]:
-        K = round(spot * (1 - otm), 2)
+        # REAL STRIKE GRID: UNG trades $0.50 increments (integers on
+        # monthlies) — synthetic 2-decimal strikes were unexecutable
+        K = round(spot * (1 - otm) * 2) / 2
+        if K in seen_K:
+            continue
+        seen_K.add(K)
         # IV at K
         iv = None
         if surf:
