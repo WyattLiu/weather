@@ -66,6 +66,50 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-6 OOS GATE (sealed test 2024-2026, real fills + costs) — FINAL
+
+| Kernel | TEST ann | TEST Sharpe | TEST MDD |
+|--------|---------|------------|----------|
+| **g6_cb_a20_b10** | +17.9% | 2.43 | -4.8% |
+| g6_cb_a20_b30 | +17.1% | 2.49 | -4.4% |
+| g6_cb_tightfloor | +16.7% | 2.43 | -4.5% |
+| g5_band_k15 (plain band) | +16.6% | 2.51 | -4.4% |
+| champion_kold15_ivrank (model fills) | +31.1% | 2.16 | -9.2% |
+| [champion under REAL fills = g5_promo_rf] | +22.7% | 1.77 | -8.5% |
+
+**No overfitting:** all conviction cells cluster (Sharpe 2.43-2.49, MDD
+-4.4 to -4.8%); in-sample leaders stayed OOS leaders. The conviction
+band's return-recovery shows OOS too — g6_cb_a20_b10 recovers +1.3pp
+OOS return (17.9 vs plain band 16.6) at near-identical Sharpe/MDD.
+Confirmed: the design works, modestly.
+
+### FINAL PROMOTION DECISION (apples-to-apples, all real fills)
+| | Return | Sharpe | MaxDD |
+|---|--------|--------|-------|
+| Current production (kold15_ivrank, real-world) | ~22.7% | 1.77 | -8.5% |
+| Best band (g6_cb_a20_b10) | ~17.9% | 2.43 | -4.8% |
+
+The band trades **~5pp OOS return for +0.66 Sharpe and 44% less
+drawdown.** This is a pure risk-appetite choice:
+- **USER HAS REPEATEDLY STATED A RETURN PREFERENCE** → KEEP current
+  champion_kold15_ivrank. The band's edge is risk-adjusted, not return.
+- If capital-preservation / smoothness becomes the priority → promote
+  g6_cb_a20_b10 (best return among the band family, top-tier Sharpe/MDD).
+- Conviction refinement over plain band is real but marginal (+1.3pp).
+
+RECOMMENDATION: hold current champion; keep g6_cb_a20_b10 documented as
+the risk-off alternative. The band research is COMPLETE — diminishing
+returns on further band tuning.
+
+### GEN-7 QUEUE (move off band tuning — exhausted)
+1. Hedge structure B (KOLD shares + covered calls) wired for the Sept
+   shoulder window — ~+3.6%/yr honest rent, the clearest unbanked win.
+2. Risk-reversal overlay at low IV-rank (better tail, 1/5 capital;
+   live-relevant NOW at IV-rank 0.00).
+3. Separate the band's hold vs half-step effects (mechanism clarity).
+4. Conditional what-if distributions (condition scenarios on z/iv_rank
+   bucket — today's live what-if is unconditional).
+
 ### GEN-6 RESULTS (conviction-scaled band) — 2026-06-13
 
 | Kernel | Annual | MaxDD | Sharpe | Floor | avg shares |
@@ -327,6 +371,7 @@ research/gex daily collector); IV-rank daily CSV extends the same way.
 - [x] Gen-2 complete — smooth_ddtrim_ivrank leads (2.10 Sharpe, +4.8% floor)
 - [x] Gen-3 complete — real fills cost 5pp; kold15_ivrank_rf leads
 - [x] Gen-4 complete
-- [x] Gen-5 complete — delta band OOS-validated (Sharpe 2.51, half MDD, -14pp return trade-off); gen-6 = shallow-band return recovery
+- [x] Gen-5 complete — delta band OOS-validated (half MDD, ~5pp real-fill return cost)
+- [x] Gen-6 complete — conviction band = frontier refinement (+1.3pp OOS recovery); band research EXHAUSTED. REC: keep current champion (return pref); band documented as risk-off alt. Gen-7 = hedge B + risk-reversal.
 - [x] honest_walkforward complete — kold15_ivrank wins OOS (Sharpe 2.16)
 - [x] PROMOTED champion_kold15_ivrank (2026-06-13); dashboard phase-2 live (label/OOS/knobs/timing/what-if)
