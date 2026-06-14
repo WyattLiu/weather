@@ -66,6 +66,35 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-7 RESULTS (book hedges, real fills) — frontier-break test
+
+Baseline g7_baseline_rf: +27.9% / MDD -10.4% / Sharpe 1.81 / floor +1.6% / 9,037 sh
+
+| Hedge | Return | MDD | Sharpe | Floor | Shares | VERDICT |
+|-------|--------|-----|--------|-------|--------|---------|
+| **g7_kold_bookhedge** | +27.3% | **-9.6%** | **2.06** | **+5.4%** | 10,992 | **WINS** |
+| g7_combo_collar_kold | (see OOS) | — | — | +4.1% | 9,682 | partial |
+| g7_funded_collar | +28.8% | -10.9% | 1.78 | +1.9% | 9,755 | NO-HELP (MDD worse) |
+| g7_collar_aggr | +29.1% | -10.8% | 1.78 | +3.2% | 9,912 | NO-HELP (MDD worse) |
+| g7_scaled_floor | +27.3% | -10.6% | 1.77 | +0.3% | 8,846 | NO-HELP |
+| g7_scaled_floor_hi | +26.4% | -11.2% | 1.70 | — | — | NO-HELP |
+
+**THE LESSON (overturns my own headline prediction): the funded collar
+FAILED.** OTM put-spreads insure against CRASHES, but the drawdowns are
+moderate GRINDS (the 2023-26 chop on a big book), so the protection
+never activates and just drags theta — MDD actually got slightly WORSE.
+The KOLD book hedge WON because a continuously-offsetting 2x-inverse
+position cancels continuous grind drawdowns — right tool for the actual
+risk shape. Hedge FORM matters more than hedge presence.
+
+**g7_kold_bookhedge vs baseline: -0.6pp return for -0.8pp MDD, +0.25
+Sharpe, +3.8pp floor — AND holds MORE shares (10,992 vs 9,037)** (fewer
+drawdowns → dd_trim fires less → book stays fuller, virtuous cycle).
+This is a far better frontier point than the band (band gave up ~5pp
+return for its MDD cut; KOLD hedge gives up 0.6pp). It does NOT reach
+the band's -8% MDD, but at a tiny fraction of the cost. Forensics 0
+flags. OOS gate running.
+
 ### GEN-7 RUNNING (2026-06-13): BOOK HEDGES — keep shares, hedge the book
 
 DIAGNOSIS (corrected, data-backed): the drawdowns are NOT over-exposure
