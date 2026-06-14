@@ -66,6 +66,47 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-8 CONTROLLED RE-TEST (2026-06-14) — confound removed, rigor applied
+
+DATA INTEGRITY: PASS. Replay KOLD corr -0.984 / beta -1.82 vs UNG
+(genuine -2x inverse); decays -37.9%/yr, captured. (gen-7 nan was an
+analysis-script bug, not the sim.)
+
+CONTROL VALID: g8_kold_matched vs g8_baseline_matched hold equal shares
+(8,179 vs 8,142, +0.5%) via hedge_sizing_neutral → confound removed.
+
+CONFOUND-FREE VERDICT (equal shares):
+| | Return | Sharpe | MaxDD |
+|---|--------|--------|-------|
+| matched_baseline | +29.1% | 1.87 | -10.5% |
+| matched_hedge | +28.8% | 2.41 | -9.9% |
+| hedge effect | -0.3pp | **+0.54** | +0.6pp |
+
+The TRUE hedge effect (vs the gen-7 confounded +0.25): +0.54 Sharpe for
+-0.3pp return. Effect is daily-VOL smoothing (the -2x inverse dampens
+swings) more than tail-MDD (only -0.6pp). Confound had MASKED half the
+real Sharpe effect (more shares inflated the gen-7 denominator).
+
+RIGOR CHECKS:
+(a) REGIME-STRATIFIED — the critical caveat: the +0.54 is ~ALL from 2023
+    (+1.98 edge, the deep-grind year). Other years: 2021 -0.57, 2022
+    +0.09, 2024 +0.15, 2025 +0.35, 2026 -0.19. NOT all-weather — pays
+    big in deep-grind regimes, mildly negative in spike/calm.
+(b) BOOTSTRAP — 90% CI on Sharpe diff [+0.19, +1.01], EXCLUDES 0 →
+    statistically significant in-sample (but driven by 2023 blocks).
+(c) COST — $16.6k/yr KOLD bleed paid, offset to -0.3pp net return:
+    cheap regime-insurance, ~breakeven on return, Sharpe-positive.
+(d) Forensics: 0 integrity flags.
+
+HONEST CONCLUSION (pending OOS /tmp/walkforward_g8.log): the KOLD book
+hedge at matched shares is a REAL, significant, ~free Sharpe improver —
+but it is REGIME INSURANCE concentrated in deep-grind years, not an
+all-weather edge. Promote ONLY if OOS (2024-26, the non-2023 window)
+shows the edge holds forward; if OOS edge ~0, it is documented as
+"cheap grind-regime insurance, deploy tactically when a grind regime is
+diagnosed" rather than a standing kernel change. Far better than the
+band either way (-0.3pp vs -5pp return cost).
+
 ### GEN-7 RIGOROUS REVIEW (2026-06-14) — DOWNGRADE: "win" NOT proven
 A professional regime+trade+confound review demolishes the easy verdict:
 1. REGIME-CONCENTRATED: per-year Sharpe edge vs baseline 2021 -0.02,
