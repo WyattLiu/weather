@@ -724,6 +724,19 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         if cur_nav > nav_peak:
             nav_peak = cur_nav
         dd_pct = (cur_nav - nav_peak) / nav_peak * 100 if nav_peak > 0 else 0
+        # GEN-8 CONTROLLED TEST: when hedge_sizing_neutral, the share-sizing
+        # drawdown signal EXCLUDES the KOLD hedge P&L, so the share book
+        # follows the SAME path as an unhedged baseline. This isolates the
+        # hedge overlay's effect from the share-count confound (the hedge
+        # otherwise dampens DD → fewer trims → more shares = exposure
+        # confound). Used only for the matched-share controlled comparison.
+        if p.get('hedge_sizing_neutral'):
+            _nav_exhedge = cur_nav - s['kold'] * spot_k
+            _peak_exh = s.get('_peak_exhedge', _nav_exhedge)
+            if _nav_exhedge > _peak_exh:
+                _peak_exh = _nav_exhedge
+            s['_peak_exhedge'] = _peak_exh
+            dd_pct = (_nav_exhedge - _peak_exh) / _peak_exh * 100 if _peak_exh > 0 else 0
 
         # TREND-FOLLOWING SHARE TRIM — generic protection against multi-year
         # declines. When UNG in confirmed downtrend (per ung_downtrend flag),
@@ -4425,11 +4438,19 @@ STRATEGIES['g7_combo_collar_kold'] = {**_H, 'funded_collar': True, 'collar_cover
                                       'kold_book_hedge': True, 'kold_book_frac': 0.3}
 STRATEGIES['g7_baseline_rf']    = {**_H}   # promoted kernel, real fills, no hedge
 
+# ── GEN-8 (2026-06-14): CONTROLLED hedge test — matched share book.
+# hedge_sizing_neutral makes share-sizing ignore KOLD P&L so the hedge
+# and baseline run near-identical share paths; the ONLY difference is the
+# KOLD overlay → isolates hedge effect from the exposure confound.
+STRATEGIES['g8_kold_matched']   = {**_H, 'kold_book_hedge': True,
+                                   'kold_book_frac': 0.5, 'hedge_sizing_neutral': True}
+STRATEGIES['g8_baseline_matched'] = {**_H, 'hedge_sizing_neutral': True}  # same sizing, no hedge
+STRATEGIES['g8_kold_light']     = {**_H, 'kold_book_hedge': True,
+                                   'kold_book_frac': 0.25, 'hedge_sizing_neutral': True}
+
 _KEEP_STRATEGIES = {
-    'g7_funded_collar', 'g7_collar_aggr', 'g7_scaled_floor',
-    'g7_scaled_floor_hi', 'g7_kold_bookhedge', 'g7_combo_collar_kold',
-    'g7_baseline_rf', 'g6_cb_a20_b10', 'champion_kold15_ivrank',
-    'g6_cb_a20_b20', 'g6_cb_a20_b30',
+    'g8_kold_matched', 'g8_baseline_matched', 'g8_kold_light',
+    'g7_kold_bookhedge', 'g7_baseline_rf', 'champion_kold15_ivrank',
     'g6_cb_a35_b10', 'g6_cb_a35_b20', 'g6_cb_a35_b30',
     'g6_cb_a50_b10', 'g6_cb_a50_b20', 'g6_cb_a50_b30',
     'g6_cb_tightfloor',
