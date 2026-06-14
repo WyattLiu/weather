@@ -66,6 +66,36 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-7 RIGOROUS REVIEW (2026-06-14) — DOWNGRADE: "win" NOT proven
+A professional regime+trade+confound review demolishes the easy verdict:
+1. REGIME-CONCENTRATED: per-year Sharpe edge vs baseline 2021 -0.02,
+   2022 +0.04, 2023 +0.48, 2024 +0.09, 2025 +0.18, 2026 +0.20. The
+   aggregate Sharpe (2.06) is dominated by ONE year (2023 deep-grind).
+   Directionally consistent + regime-coherent, but not a uniform win.
+2. SHARE-COUNT CONFOUND (fatal to the easy read): KOLD-hedge holds 22%
+   MORE shares (10,992 vs 9,037) but earns LESS per share (2.12 vs 2.67
+   bp/10k-sh-yr). The aggregate Sharpe lift is partly just more
+   exposure, not hedge efficiency. Must control share count to attribute.
+3. MECHANISM UNVERIFIED: corr(KOLD,UNG) returned nan; KOLD price path in
+   the sim could not be validated to move inverse to UNG. CANNOT prove
+   the hedge hedged. Possible KOLD-pricing/alignment bug in replay.
+VERDICT: promising in the grind regime ONLY; confounded + unverified.
+DO NOT promote. The funded-collar/floor failures stand (grinds != crashes).
+
+### GEN-8 QUEUE (controlled re-test — quant discipline)
+1. VERIFY KOLD pricing in replay_engine (spot_k path): confirm the sim
+   marks KOLD at real inverse-correlated prices, not static/NaN. BLOCKING
+   — nothing about KOLD is believable until this passes.
+2. CONTROLLED hedge test: KOLD-hedge vs baseline at MATCHED share targets
+   (force identical share book; only difference = the hedge overlay) to
+   isolate hedge effect from exposure. This is the ONLY fair test.
+3. Regime-stratified OOS: report per-regime (spike/grind/calm) Sharpe+MDD
+   separately, not blended — demand the edge holds in the grind regime
+   out-of-sample, accept neutrality elsewhere.
+4. Block-bootstrap the Sharpe difference — is 2.06 vs 1.81 inside noise?
+5. Only after 1-4: revisit gen-7 hedge promotion. Until then champion
+   kold15_ivrank stands; band documented as risk-off alt.
+
 ### GEN-7 RESULTS (book hedges, real fills) — frontier-break test
 
 Baseline g7_baseline_rf: +27.9% / MDD -10.4% / Sharpe 1.81 / floor +1.6% / 9,037 sh
