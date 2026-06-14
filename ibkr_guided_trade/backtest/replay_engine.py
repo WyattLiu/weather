@@ -2177,6 +2177,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if prem > 0.05 and qty >= 1:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['cash'] += credit
+                    # decaying tracker of recent CC premium → funds the G7-1 collar
+                    s['_cc_prem_recent'] = s.get('_cc_prem_recent', 0) * 0.7 + credit
                     s['short_calls'].append({'entry': idx, 'K': K, 'dte': cc_dte,
                                              'qty': qty, 'entry_prem': prem,
                                              'is_itm_aggressive': use_itm})
@@ -2244,6 +2246,65 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         trades.append({'date': idx, 'type': 'OPEN_PROTECTIVE_COLLAR',
                                        'pnl': -debit, 'K': Kp, 'qty': shortfall,
                                        'spot': spot_u, 'ratio': collar_ratio})
+
+            # ── GEN-7 BOOK HEDGES (diagnosis: drawdowns are 84%-uncovered
+            # share-book beta, NOT over-exposure). Hedge the book, keep the
+            # shares. uncov_lots = uncovered share lots (the unhedged risk).
+            _cc_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+            _lp_lots = sum(lp.get('qty', 0) for lp in s['long_puts'])
+            uncov_lots = max(0, s['shares'] // 100 - _cc_lots - _lp_lots)
+
+            # G7-1 FUNDED COLLAR: buy a 10%-OTM put-spread on a fraction of
+            # the uncovered book, funded by recent CC premium → ~0 net cost,
+            # caps catastrophic share-book drawdown without cutting shares.
+            if p.get('funded_collar') and uncov_lots >= 5:
+                cover = int(uncov_lots * p.get('collar_cover_frac', 0.5))
+                if cover >= 1:
+                    Kp_long = round(spot_u * 0.90)
+                    Kp_short = round(spot_u * 0.80)   # spread floor (cheapens it)
+                    long_c = bs_put(spot_u, Kp_long, 60/365, iv_at(Kp_long, 60, 'P'))
+                    short_c = bs_put(spot_u, Kp_short, 60/365, iv_at(Kp_short, 60, 'P'))
+                    net = (long_c - short_c) * 100 * cover + cover * SPREAD_OPTION * 100
+                    # only if recent CC premium roughly funds it (within budget)
+                    budget = s.get('_cc_prem_recent', 0)
+                    if net < budget * p.get('collar_fund_ratio', 1.0) + 50 and s['cash'] > net + 1000:
+                        s['cash'] -= net
+                        s['long_puts'].append({'entry': idx, 'K': Kp_long, 'dte': 60,
+                                               'qty': cover, 'cost': long_c - short_c,
+                                               'spread_floor': Kp_short})
+                        trades.append({'date': idx, 'type': 'FUNDED_COLLAR',
+                                       'pnl': -net, 'K': Kp_long, 'floor': Kp_short,
+                                       'qty': cover, 'uncov_lots': uncov_lots})
+
+            # G7-2 SCALED PUT FLOOR: protective puts sized to the UNCOVERED
+            # book (not a token count). Cheapest at low IV-rank.
+            if p.get('scaled_put_floor') and uncov_lots >= 5:
+                target_hedge = int(uncov_lots * p.get('floor_cover_frac', 0.3))
+                if _lp_lots < target_hedge:
+                    need = target_hedge - _lp_lots
+                    Kp = round(spot_u * 0.92)
+                    cost = bs_put(spot_u, Kp, 90/365, iv_at(Kp, 90, 'P'))
+                    debit = cost * 100 * need + need * SPREAD_OPTION * 100
+                    if s['cash'] > debit + 1000:
+                        s['cash'] -= debit
+                        s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': 90,
+                                               'qty': need, 'cost': cost})
+                        trades.append({'date': idx, 'type': 'SCALED_PUT_FLOOR',
+                                       'pnl': -debit, 'K': Kp, 'qty': need,
+                                       'uncov_lots': uncov_lots})
+
+            # G7-3 KOLD BOOK HEDGE: scale KOLD shares to offset the uncovered
+            # UNG book year-round (not shoulder-only). 2x inverse → ~half the
+            # KOLD notional offsets the book.
+            if p.get('kold_book_hedge') and spot_k > 0 and pd.notna(spot_k) and uncov_lots >= 5:
+                target_kold = int(uncov_lots * 100 * spot_u * 0.5
+                                  * p.get('kold_book_frac', 0.5) / spot_k)
+                if target_kold > s['kold'] and s['cash'] > (target_kold - s['kold']) * spot_k + 500:
+                    add = target_kold - s['kold']
+                    s['kold'] += add
+                    s['cash'] -= add * spot_k + add * SPREAD_SHARE
+                    trades.append({'date': idx, 'type': 'KOLD_BOOK_HEDGE',
+                                   'pnl': 0.0, 'qty': add, 'uncov_lots': uncov_lots})
 
             # TAIL-HEDGE FLOOR (production-port #5) — maintain minimum long
             # put count regardless of regime. Production default = 2 LEAPS.
@@ -4348,8 +4409,27 @@ for _a in (0.20, 0.35, 0.50):
 STRATEGIES['g6_cb_tightfloor'] = {**_CB, 'conviction_a': 0.35,
                                   'conviction_b': 0.20, 'conviction_floor': 0.02}
 
+# ── GEN-7 (2026-06-13): BOOK HEDGES — keep the shares, hedge the 84%-
+# uncovered book that causes the drawdowns. One knob per clone on the
+# PROMOTED kernel + real fills, so each hedge's effect is clean. Goal:
+# the band's low MDD WITHOUT the band's return cost.
+_H = {**STRATEGIES['champion_kold15_ivrank'], 'real_fill_model': True}
+STRATEGIES['g7_funded_collar']  = {**_H, 'funded_collar': True,
+                                   'collar_cover_frac': 0.5, 'collar_fund_ratio': 1.0}
+STRATEGIES['g7_collar_aggr']    = {**_H, 'funded_collar': True,
+                                   'collar_cover_frac': 0.7, 'collar_fund_ratio': 1.5}
+STRATEGIES['g7_scaled_floor']   = {**_H, 'scaled_put_floor': True, 'floor_cover_frac': 0.3}
+STRATEGIES['g7_scaled_floor_hi']= {**_H, 'scaled_put_floor': True, 'floor_cover_frac': 0.5}
+STRATEGIES['g7_kold_bookhedge'] = {**_H, 'kold_book_hedge': True, 'kold_book_frac': 0.5}
+STRATEGIES['g7_combo_collar_kold'] = {**_H, 'funded_collar': True, 'collar_cover_frac': 0.5,
+                                      'kold_book_hedge': True, 'kold_book_frac': 0.3}
+STRATEGIES['g7_baseline_rf']    = {**_H}   # promoted kernel, real fills, no hedge
+
 _KEEP_STRATEGIES = {
-    'g6_cb_a20_b10', 'g6_cb_a20_b20', 'g6_cb_a20_b30',
+    'g7_funded_collar', 'g7_collar_aggr', 'g7_scaled_floor',
+    'g7_scaled_floor_hi', 'g7_kold_bookhedge', 'g7_combo_collar_kold',
+    'g7_baseline_rf', 'g6_cb_a20_b10', 'champion_kold15_ivrank',
+    'g6_cb_a20_b20', 'g6_cb_a20_b30',
     'g6_cb_a35_b10', 'g6_cb_a35_b20', 'g6_cb_a35_b30',
     'g6_cb_a50_b10', 'g6_cb_a50_b20', 'g6_cb_a50_b30',
     'g6_cb_tightfloor',

@@ -66,6 +66,30 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-7 RUNNING (2026-06-13): BOOK HEDGES — keep shares, hedge the book
+
+DIAGNOSIS (corrected, data-backed): the drawdowns are NOT over-exposure
+at tops — they are 84%-UNCOVERED share-book beta in 2023-26 (the kernel
+holds avg 12,594 shares but covers only 16% with calls; 84% naked-long
+takes full UNG downside). The gen-5/6 band only fixed this by holding a
+smaller book (crude → costs return). Gen-7 hedges the book and KEEPS the
+shares. Goal: the band's -4.8% MDD WITHOUT its ~5pp return cost.
+
+7 candidates, one knob per clone on promoted kernel + real fills, vs
+g7_baseline_rf (same, no hedge) — clean attribution:
+- g7_funded_collar / g7_collar_aggr: 10%-OTM put-SPREAD on the uncovered
+  book, funded by recent CC premium (~0 net cost). THE HEADLINE — only
+  angle that can break the frontier (protection without cutting shares).
+- g7_scaled_floor / _hi: protective puts sized to the UNCOVERED book
+  (vs token tail_hedge_floor). Cheapest at low IV-rank (now).
+- g7_kold_bookhedge: KOLD shares scaled to offset the uncovered UNG book
+  year-round (2x inverse).
+- g7_combo_collar_kold: collar + KOLD stack.
+
+Tracked one-by-one: each must reduce MDD vs g7_baseline_rf WITHOUT
+giving up the return (that is the frontier-break test). OOS gate
+mandatory. Smoke: all three hedge types fire correctly.
+
 ### GEN-6 OOS GATE (sealed test 2024-2026, real fills + costs) — FINAL
 
 | Kernel | TEST ann | TEST Sharpe | TEST MDD |
