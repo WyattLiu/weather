@@ -66,6 +66,48 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-8 OOS GATE (sealed 2024-26, real fills, matched shares) — FINAL
+
+| (matched, real fills) | TEST ann | TEST Sharpe | TEST MDD |
+|---|---------|------------|----------|
+| g8_baseline_matched | +22.7% | 1.78 | -8.5% |
+| **g8_kold_matched** | +22.4% | **2.10** | **-6.6%** |
+| g8_kold_light (half) | +22.3% | 1.85 | -8.4% |
+| effect (full hedge) | -0.3pp | **+0.32** | **+1.9pp** |
+
+DECISIVE: the edge HELD OUT-OF-SAMPLE. The OOS window (2024-26) EXCLUDES
+the big in-sample 2023 edge, yet the matched hedge still delivered +0.32
+Sharpe and 1.9pp LESS drawdown for -0.3pp return. Not a 2023 artifact.
+Note: kold_light (frac 0.25) does NOT hold OOS (Sharpe 1.85) — the FULL
+frac 0.5 is what works.
+
+### PROMOTION BAR — ALL FOUR CRITERIA PASS
+1. Matched edge real? YES — confound-free +0.32-0.54 Sharpe at equal shares.
+2. Bootstrap significant? YES — 90% CI [+0.19,+1.01] excludes 0.
+3. OOS holds? YES — +0.32 Sharpe / +1.9pp MDD in sealed 2024-26.
+4. Cost-positive? YES — only -0.3pp return for the protection.
+
+### FINAL RECOMMENDATION (gen-8): PROMOTE the KOLD book hedge
+Add kold_book_hedge=True, kold_book_frac=0.5, hedge_sizing_neutral=True
+to the production kernel (champion_kold15_ivrank → champion_kold15_ivrank_kbh).
+This is the FIRST frontier-improving result that survived full rigor:
+removes the gen-7 confound, statistically significant, OOS-validated, and
+~free on return (-0.3pp). Real-world champion under real fills is
+~22.7%/1.78/-8.5%; with the hedge ~22.4%/2.10/-6.6% — same return, +0.32
+Sharpe, ~2pp less drawdown. Strictly better risk-adjusted at no return
+cost. Contrast: the band cost ~5pp return for its MDD cut; this costs 0.3pp.
+Caveat: benefit is grind-regime-weighted (cheap insurance that pays in
+deep-grind years, ~breakeven in calm/spike) — but it held OOS, so deploy
+as a STANDING overlay, not tactical. USER DECISION to flip CHAMPION_KEY.
+
+### GEN-9 QUEUE
+1. (if promoted) wire kold_book_hedge into validated_kernel_adapter live
+   sizing + dashboard Executor Brief (show current KOLD hedge target vs book).
+2. tune kold_book_frac between 0.4-0.6 (0.5 works, 0.25 doesn't — find the knee).
+3. risk-reversal low-IV-rank overlay (still unbuilt; live-relevant at IV-rank 0).
+4. hedge B (KOLD covered calls) to fund the KOLD bleed — could turn the
+   -0.3pp cost POSITIVE (the -37.9%/yr decay funds CC income on the hedge).
+
 ### GEN-8 CONTROLLED RE-TEST (2026-06-14) — confound removed, rigor applied
 
 DATA INTEGRITY: PASS. Replay KOLD corr -0.984 / beta -1.82 vs UNG
