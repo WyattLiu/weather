@@ -2287,6 +2287,37 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                'pnl': -wing_debit, 'K': K_wing,
                                                'qty': qty, 'cc_K': K, 'spot': spot_u})
 
+                    # GEN-11 C1 — COVERED CALL BACKSPREAD (bullish-convex).
+                    # The short CC just opened is SHARE-covered (qty<=uncovered//100).
+                    # On top, buy backspread_long_ratio x qty long calls further OTM
+                    # → NET LONG convexity (long minus the 1 short). Pays in
+                    # vol-EXPANSION / trend-up — the regime the grinder misses.
+                    # Short stays covered 1:1 by shares; longs are pure debit
+                    # convexity. Fire only z-cheap + momentum-up (surge>0), where
+                    # an up-move is plausible, and fund within the CC credit.
+                    if (p.get('call_backspread')
+                            and z < p.get('backspread_z_max', -0.5)
+                            and float(row.get('ung_surge_z') or 0.0)
+                                > p.get('backspread_surge_min', 0.0)):
+                        _lr = p.get('backspread_long_ratio', 2)
+                        _lq = int(qty * _lr)
+                        K_long = round(spot_u * (1 + p.get('backspread_long_otm', 0.15)))
+                        lcost = bs_call(spot_u, K_long, cc_dte/365,
+                                        iv_at(K_long, cc_dte, 'C'))
+                        if lcost > 0.02 and _lq > 0:
+                            bs_debit = lcost * 100 * _lq + _lq * SPREAD_OPTION * 100
+                            _budget = credit * p.get('backspread_budget_frac', 1.0)
+                            if bs_debit < _budget and s['cash'] > bs_debit + 500:
+                                s['cash'] -= bs_debit
+                                s.setdefault('long_calls', []).append({
+                                    'entry': idx, 'K': K_long, 'dte': cc_dte,
+                                    'qty': _lq, 'cost': lcost,
+                                    'wing_for_cc_K': K})
+                                trades.append({'date': idx, 'type': 'OPEN_CALL_BACKSPREAD',
+                                               'pnl': -bs_debit, 'K': K_long,
+                                               'qty': _lq, 'short_K': K, 'short_qty': qty,
+                                               'spot': spot_u, 'z': z})
+
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
                 if not s['long_puts']:
@@ -4577,9 +4608,20 @@ STRATEGIES['g11_itmcc_eager']  = {**_KBH, 'itm_cc_divest': True,
 STRATEGIES['g11_itmcc_deep']   = {**_KBH, 'itm_cc_divest': True,
                                   'itm_cc_divest_pct': -0.12}            # deeper ITM, near-certain assign
 
+# GEN-11 C1 — COVERED call backspread (bullish-convex). Short CC share-covered;
+# 2x long calls on top = net long convexity for vol-expansion / trend-up.
+STRATEGIES['g11_backspread']      = {**_KBH, 'call_backspread': True}   # ratio2, longs15%OTM, z<-0.5+surge>0
+STRATEGIES['g11_backspread_wide'] = {**_KBH, 'call_backspread': True,
+                                     'backspread_long_otm': 0.20}        # cheaper, more convex longs
+STRATEGIES['g11_backspread_3x']   = {**_KBH, 'call_backspread': True,
+                                     'backspread_long_ratio': 3}         # more convexity per short
+STRATEGIES['g11_backspread_deep'] = {**_KBH, 'call_backspread': True,
+                                     'backspread_z_max': -1.0}           # only deep-cheap (higher conviction)
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
+    'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',

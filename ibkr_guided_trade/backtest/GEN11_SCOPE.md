@@ -127,8 +127,8 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | champion_kold15_ivrank_kbh | (anchor) | live champion | — |
 | g11_itmput_conv | bullish | conviction-scaled ITM put depth | ✅ DONE (OOS-neutral/safe) |
 | g11_itmcc_divest | bearish | ITM CC on rich-z/hot shares | ✅ DONE (OOS-neutral/safe) |
-| g11_backspread | bullish-convex | call backspread in vol-expansion | ⬜ C1 NEXT |
-| g11_covratio | neutral-income | covered upside-tail ratio | ⬜ C2 |
+| g11_backspread | bullish-convex | call backspread in vol-expansion | ❌ DONE — REJECTED (drag) |
+| g11_covratio | neutral-income | covered upside-tail ratio | ⬜ C2 NEXT |
 | g11_putratio | bullish | cash-secured put ratio + floor | ⬜ C3 |
 | g11_router | all | signal→structure router (best stacked) | ⬜ final |
 
@@ -138,6 +138,15 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | champion (anchor) | +27.3/2.06/-9.6 | +22.1/1.90/-8.7 | — | live |
 | A g11_itmput_conv | +28.2/2.09/-9.6 | +22.1/1.90/-8.6 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 | B g11_itmcc_eager | +28.2/2.10/-9.6 | +22.2/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
+| C1 g11_backspread_wide | +27.2/2.03/-9.6 | +20.0/1.77/-8.7 | clean, 0.97x, CI<0 | ❌ REJECTED — drag IS & OOS |
+
+**C1 finding (important):** the call backspread DRAGS both in-sample and OOS
+(OOS +20.0/1.77 < champion +22.1/1.90 on every axis). Root cause is STRUCTURAL:
+the kernel already holds a large SHARE book → it is already long the upside.
+Long-call convexity pays twice for the same exposure and just bleeds premium;
+it only pays off for explosive >15% moves inside the option window, which UNG
+rarely delivers fast enough. **Convexity overlays are redundant on a share-heavy
+book** (they'd help a cash-heavy book). Don't re-attempt long-call convexity here.
 
 **Meta-pattern (A+B):** both are compliant + confound-FREE (1.03x shares = geometry
 not exposure) and OOS-SAFE, but OOS-NEUTRAL — their triggers (deep-cheap for A,
