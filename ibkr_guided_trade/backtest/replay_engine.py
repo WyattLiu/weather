@@ -1985,6 +1985,38 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     put_qty = max(2, int(put_qty * 0.6))  # smaller qty
                     trades.append({'date': idx, 'type': 'CALM_BOOST_PUT',
                                    'pnl': 0.0, 'z': z, 'spot': spot_u})
+                # GEN-11 ANGLE A — CONVICTION ITM PUT (bullish expression).
+                # When DEEP-CHEAP z + LOW iv-rank + momentum-confirm (not a
+                # falling knife, regime NORMAL) and we have room to acquire,
+                # sell ITM puts to accumulate at a CUSHIONED effective basis.
+                # Return source = basis discount + intrinsic premium, NOT extra
+                # net delta: at the SAME target share count we arrive cheaper
+                # and with less time-at-risk. Depth scales with conviction
+                # (deeper-cheap z → deeper ITM). [[project_ung_iv_rank_alpha]]
+                # says LOW real IV-rank is the bullish-entry condition.
+                if p.get('conviction_itm_put'):
+                    _civ = row.get('iv_rank')
+                    _ivr_ok = (_civ != _civ) or (_civ is None) \
+                        or (_civ < p.get('conviction_itm_ivr_max', 0.4))
+                    _zg = p.get('conviction_itm_z', -1.0)
+                    _pctb = p.get('z_share_target_pct_nav')
+                    if _pctb and spot_u > 0:
+                        _tgt = int(cur_nav * _pctb / spot_u)
+                    else:
+                        _tgt = p.get('z_share_target_base', 6200)
+                    if (z < _zg and _ivr_ok and not falling_knife(row)
+                            and anomaly == 'NORMAL'
+                            and s['shares'] < _tgt * 1.2):
+                        # scale depth: 1 full z-unit below gate → full depth
+                        _md = p.get('conviction_itm_depth', 0.06)
+                        _sc = min(1.0, max(0.0, (_zg - z)))
+                        effective_otm = -(_md * (0.5 + 0.5 * _sc))  # ITM (K>spot)
+                        put_qty = int(put_qty
+                                      * p.get('conviction_itm_qty_mult', 1.3))
+                        trades.append({'date': idx, 'type': 'CONVICTION_ITM_PUT',
+                                       'pnl': 0.0, 'z': z, 'spot': spot_u,
+                                       'depth': round(effective_otm, 4),
+                                       'iv_rank': _civ})
                 K = round(spot_u * (1 - effective_otm))
                 # Tunable open-DTE (default 30; tastytrade rule uses 45).
                 open_dte = p.get('open_dte', 30)
@@ -4505,7 +4537,19 @@ STRATEGIES['g10_full']         = {**_KBH, 'open_dte': 60, 'smooth_z_target': Tru
                                   'z_share_target_pct_nav': 0.45, 'kold_book_frac': 0.6,
                                   'conviction_amplify': True, 'conviction_amplify_mult': 1.4}
 
+# GEN-11 ANGLE A — conviction ITM put (bullish expression; return from cushioned
+# basis, not extra delta). Built on the champion to isolate the structure knob,
+# and on g10_base (60-DTE) to stack the proven-clean fill edge.
+STRATEGIES['g11_itmput_conv']  = {**_KBH, 'conviction_itm_put': True}   # default: z<-1, depth 6%, ivr<0.4
+STRATEGIES['g11_itmput_deep']  = {**_KBH, 'conviction_itm_put': True,
+                                  'conviction_itm_depth': 0.10}          # deeper ITM cushion
+STRATEGIES['g11_itmput_wide']  = {**_KBH, 'conviction_itm_put': True,
+                                  'conviction_itm_z': -0.5}              # fires more often (milder cheap)
+STRATEGIES['g11_itmput_60d']   = {**_KBH, 'open_dte': 60,
+                                  'conviction_itm_put': True}            # + proven 60-DTE fill edge
+
 _KEEP_STRATEGIES = {
+    'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
