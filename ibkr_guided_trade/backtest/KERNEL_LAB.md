@@ -66,6 +66,39 @@ recommendation is OOS-VALIDATED.** smooth_ddtrim_ivrank's +40.8% OOS
 return is real but with worse Sharpe, deeper MDD, and the gen-3
 fill-fragility flag — aggressive-profile alternative only.
 
+### GEN-9 FINAL (2026-06-15): smooth return recovery — REJECTED on Sharpe-robustness
+
+In-sample (2021-26) g9_smooth_60d_iv looked ideal: +37.6%/Sharpe 2.04/
+MDD -13.4%, audit QUALIFIED (broad edge, not one-year, bootstrap-sig).
+60-DTE recovered the fill fragility (+9pp vs g9_smooth_rf); IV-rank
+lifted Sharpe over 2.0. BUT the OOS sealed test (2024-26) breaks it:
+
+| Kernel | OOS ann | OOS Sharpe | OOS MDD |
+|--------|--------|-----------|---------|
+| g9_smooth_60d_iv | +43.2% | 1.60 | -24.1% |
+| g9_smooth_full | +43.8% | 1.61 | -24.1% |
+| champion_kold15_ivrank | +31.1% | 2.16 | -9.2% |
+
+VERDICT: REJECTED per user criterion (max return AT Sharpe>=2.0; reject
+Sharpe-collapse = bloated DD). OOS Sharpe FELL 2.04->1.60 (<2.0 bar) and
+MDD BLOATED -13.4%->-24.1% (super-linear, not proportionate). The
+in-sample Sharpe was not robust (train->test degradation -73.8pp, worst
+of any kernel — smooth's aggressive sizing overfit the in-sample window).
+The smooth engine is RETURN-MAX-at-MEDIOCRE-Sharpe, NOT the
+high-return-high-Sharpe profile requested. Champion kold15_ivrank is the
+ONLY kernel holding Sharpe>=2.0 OOS.
+
+RECOMMENDATION: do NOT promote smooth. Current champion stands. If the
+user later accepts -24% DD for +43% return that is a RISK-APPETITE
+override, not an edge — and it contradicts the stated 'no huge drawdown'.
+
+GEN-10 (where high-return-at-high-Sharpe might actually live):
+1. Real-chain (tier-3) wiring + frontier re-baseline (real_chain.py built).
+2. The conviction amplifier alone on the CHAMPION base (not smooth) —
+   modest exposure-up at extreme-cheap-z+low-IV may add return while the
+   champion's risk controls keep Sharpe>=2.0 (smooth lacks those controls).
+3. KOLD-CC to fund the hedge bleed (turn -0.3pp positive).
+
 ### GEN-8 OOS GATE (sealed 2024-26, real fills, matched shares) — FINAL
 
 | (matched, real fills) | TEST ann | TEST Sharpe | TEST MDD |
