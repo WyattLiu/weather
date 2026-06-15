@@ -210,6 +210,22 @@ def precompute_factor_z(df):
         # Downtrend: price below 200d AND 50d below 200d
         df['ung_downtrend'] = (df['UNG'] < df['ung_200d_ma']) & (df['ung_50d_ma'] < df['ung_200d_ma'])
     df = precompute_realized_vol(df, col='UNG')
+    # ── NaN GUARD (user requirement: no kernel decision is ever made on NaN).
+    # Two policies, applied here at the single source so all downstream logic
+    # is safe regardless of the (NaN-leaky) `float(x or D)` idiom:
+    #   (1) DIRECTIONAL signals → fill NaN with their NEUTRAL default, so a
+    #       missing value reads as "no signal", never as an accidental NaN.
+    #   (2) AGGRESSIVE-GATE signals (iv_rank, gex_call_wall) are intentionally
+    #       LEFT NaN — their gates already require a present value, so an
+    #       unknown reading correctly DISABLES the aggressive action rather
+    #       than firing it on a substituted guess.
+    _neutral0 = ['storage_z', 'days_supply_z', 'storage_surprise_z',
+                 'ung_5d_mom', 'ung_spike_60d', 'ung_surge_z', 'ung_5d_mom']
+    for _c in _neutral0:
+        if _c in df.columns:
+            df[_c] = df[_c].fillna(0.0)
+    if 'rv_30' in df.columns:
+        df['rv_30'] = df['rv_30'].fillna(0.5)
     return df
 
 
@@ -1996,8 +2012,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 # says LOW real IV-rank is the bullish-entry condition.
                 if p.get('conviction_itm_put'):
                     _civ = row.get('iv_rank')
-                    _ivr_ok = (_civ != _civ) or (_civ is None) \
-                        or (_civ < p.get('conviction_itm_ivr_max', 0.4))
+                    # NaN-SAFE: unknown IV-rank → do NOT take the IVR-gated
+                    # aggressive action (never decide on missing data).
+                    _ivr_ok = (_civ == _civ and _civ is not None
+                               and _civ < p.get('conviction_itm_ivr_max', 0.4))
                     _zg = p.get('conviction_itm_z', -1.0)
                     _pctb = p.get('z_share_target_pct_nav')
                     if _pctb and spot_u > 0:
