@@ -4484,7 +4484,31 @@ STRATEGIES['g9_smooth_full']    = {**_SM, 'open_dte': 60, 'iv_rank_z_scale': Tru
                                    'conviction_amplify': True, 'conviction_amplify_mult': 1.5,
                                    'kold_shoulder_hedge': 0.15}
 
+# ── GEN-10 (2026-06-15): the GEN-8 ANGLE to return. smooth got return
+# from UNHEDGED aggressive sizing → Sharpe collapsed OOS. Gen-8 proved
+# hedging the book lets you hold MORE safely (Sharpe UP, DD down). So push
+# return via a LARGER book + smooth's continuous engine, but PROTECTED by
+# the KOLD hedge AND the champion's risk controls (which smooth lacked).
+# All real fills (default), 60-DTE. Criterion: max return at Sharpe>=2.0 OOS.
+_KBH = STRATEGIES['champion_kold15_ivrank_kbh']
+STRATEGIES['g10_base']         = {**_KBH, 'open_dte': 60}        # frontier base, real fills
+STRATEGIES['g10_book45']       = {**_KBH, 'open_dte': 60, 'z_share_target_pct_nav': 0.45}
+STRATEGIES['g10_book55']       = {**_KBH, 'open_dte': 60, 'z_share_target_pct_nav': 0.55}
+STRATEGIES['g10_book45_h6']    = {**_KBH, 'open_dte': 60, 'z_share_target_pct_nav': 0.45,
+                                  'kold_book_frac': 0.6}        # more hedge for more book
+STRATEGIES['g10_conv']         = {**_KBH, 'open_dte': 60, 'conviction_amplify': True,
+                                  'conviction_amplify_mult': 1.4}
+STRATEGIES['g10_smoothz']      = {**_KBH, 'open_dte': 60, 'smooth_z_target': True}  # smooth engine, hedged
+STRATEGIES['g10_smoothz_book45']= {**_KBH, 'open_dte': 60, 'smooth_z_target': True,
+                                   'z_share_target_pct_nav': 0.45, 'kold_book_frac': 0.6}
+STRATEGIES['g10_full']         = {**_KBH, 'open_dte': 60, 'smooth_z_target': True,
+                                  'z_share_target_pct_nav': 0.45, 'kold_book_frac': 0.6,
+                                  'conviction_amplify': True, 'conviction_amplify_mult': 1.4}
+
 _KEEP_STRATEGIES = {
+    'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
+    'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
+    'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
     'g9_smooth_rf', 'g9_smooth_60d', 'g9_smooth_60d_iv',
     'g9_smooth_60d_conv', 'g9_smooth_full',
     'champion_target_25_smooth', 'champion_kold15_ivrank_kbh',
