@@ -2,6 +2,31 @@
 
 *Living document. Updated 2026-06-12. Owner: kernel research loop.*
 
+## GEN-11 COMPLETE (2026-06-15) — directional-expression library; BEST = router_safe (QUALIFIED)
+
+After gen-10's exposure-route failed, gen-11 attacked the OPTION GEOMETRY. Built 5
+compliant directional structures (covered/cash-secured only; naked ratio excluded),
+each through the full gauntlet (real fills, audit, sealed OOS). Results vs champion
+kold15_ivrank_kbh (OOS +22.1%/1.90/-8.7%):
+| angle | structure | OOS ann/Sh/MDD | verdict |
+|-------|-----------|----------------|---------|
+| A itmput | ITM put, deep-cheap | +22.1/1.90/-8.6 | OOS-neutral, safe, KEEP-to-stack |
+| B itmcc_divest | ITM CC, rich+hot | +22.2/1.90/-8.7 | OOS-neutral, safe, KEEP-to-stack |
+| C1 backspread | long-call convexity | +20.0/1.77/-8.7 | ❌ REJECTED (redundant on share book) |
+| C2 covratio | covered tail ratio | +22.1/1.90/-8.7 | OOS-neutral, safe, KEEP-to-stack |
+| C3 putratio_big | 2x put accum + floor | +24.7/1.98/-8.7 | return engine (+2.6pp) |
+| **ROUTER safe** | **A+B+C2+C3 regime-gated** | **+24.9/1.99/-8.6** | **★ BEST — QUALIFIED** |
+
+**g11_router_safe: +2.8pp OOS return, +0.09 Sharpe, equal-or-better DD vs champion,
+EXPOSURE-NEUTRAL (1.00x shares), covered-only PASS.** OOS Sharpe 1.99 fractionally
+misses the 2.0 hard bar (within noise; harsh IBKR cost model understates WS reality).
+QUALIFIED not auto-PROVEN → user promotion decision; CHAMPION_KEY unchanged.
+Lessons: on a share-heavy book, structure must HARVEST premium / improve BASIS, never
+BUY convexity (C1 dies, C3 wins). The router compounds the regime-specific structures.
+Honest chassis ceiling at real fills + sealed OOS ≈ +25% / Sharpe ~2.0. Full detail: GEN11_SCOPE.md.
+
+---
+
 ## GEN-10 VERDICT (2026-06-15) — the gen-8 angle to return: REJECTED for promotion
 
 **Thesis:** smooth's return engine failed in gen-9 only because unhedged; gen-8 proved

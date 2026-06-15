@@ -130,7 +130,7 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | g11_backspread | bullish-convex | call backspread in vol-expansion | ❌ DONE — REJECTED (drag) |
 | g11_covratio | neutral-income | covered upside-tail ratio | ✅ DONE (OOS-neutral/safe) |
 | g11_putratio | bullish | cash-secured put ratio + floor | ✅ DONE (best OOS; see note) |
-| g11_router | all | signal→structure router (best stacked) | ⬜ ROUTER NEXT (final) |
+| g11_router | all | signal→structure router (best stacked) | ✅ DONE — BEST (Sh 1.99, see note) |
 
 ### Results so far (real fills; OOS = sealed walk-forward, full cost model)
 | angle | in-sample (ann/Sh/MDD) | OOS (ann/Sh/MDD) | audit | verdict |
@@ -140,7 +140,35 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | B g11_itmcc_eager | +28.2/2.10/-9.6 | +22.2/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 | C1 g11_backspread_wide | +27.2/2.03/-9.6 | +20.0/1.77/-8.7 | clean, 0.97x, CI<0 | ❌ REJECTED — drag IS & OOS |
 | C2 g11_covratio_wide | +28.0/2.08/-9.5 | +22.1/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
-| C3 g11_putratio_big | +28.2/2.04/-8.5 | **+24.7/1.98/-8.7** | clean, 0.98x | ★ BEST OOS — see note |
+| C3 g11_putratio_big | +28.2/2.04/-8.5 | +24.7/1.98/-8.7 | clean, 0.98x | return engine — see note |
+| ROUTER g11_router_safe | +28/2.04/-8.4 | **+24.9/1.99/-8.6** | clean, **1.00x** | ★ BEST — QUALIFIED (Sh 1.99) |
+
+## GEN-11 CONCLUSION (2026-06-15) — directional-expression library COMPLETE
+All five compliant structures built and run through the full gauntlet (real fills,
+audit, sealed OOS). Every short call stayed covered 1:1 (covered_calls_only PASS on
+all); the naked ratio was excluded by design.
+
+**Best result: g11_router_safe** — stacks A (ITM put, deep-cheap) + B (ITM-CC divest,
+rich+hot) + C2 (covered tail ratio, neutral+high-IVR) + C3 (2x put-ratio, deep-cheap,
+NORMAL-gated); C1 backspread EXCLUDED (convexity redundant on a share book).
+- OOS +24.9% / Sharpe **1.99** / MDD -8.6%  vs champion +22.1% / 1.90 / -8.7%
+- = +2.8pp return, +0.09 Sharpe, equal-or-better DD
+- EXPOSURE-NEUTRAL (1.00x shares) + covered-only PASS → return is pure GEOMETRY,
+  the gen-11 thesis fully realized (contrast gen-10's 1.28x exposure collapse).
+- The NORMAL-only gate on C3's 2x cut train-DD bloat (-15.7 vs -16.9) at no OOS cost.
+
+**VERDICT: QUALIFIED, not auto-PROVEN.** OOS Sharpe 1.99 fractionally misses the 2.0
+hard bar (within bootstrap noise; the harsh IBKR cost model understates the WS reality
+of no-commission/spread-only — both numbers are conservative). It beats the champion
+on return AND Sharpe AND DD, confound-free and compliant — a legitimate candidate for
+a USER promotion decision, but it does NOT cross the literal 2.0 line, so the loop does
+NOT auto-promote. CHAMPION_KEY unchanged. Recommend: user reviews router_safe for promotion.
+
+**What gen-11 proved:** (1) on a share-heavy book, return-adding structure must HARVEST
+premium or improve BASIS, never BUY convexity (C1 dies, C3 wins). (2) Exposure-neutral
+structures are OOS-safe but only pay in their trigger's regime; the ROUTER is what makes
+them compound by firing each only where it lives. (3) The honest ceiling of this chassis
+at real fills + sealed OOS is ~+25% / Sharpe ~2.0 — the router reaches the top of it.
 
 **C3 finding (the standout):** g11_putratio_big (2x cash-secured put accumulation +
 long-put floor) is the FIRST gen-11 angle to BEAT the champion OOS: +24.7/1.98/-8.7

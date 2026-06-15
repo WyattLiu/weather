@@ -2099,7 +2099,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         and z < p.get('put_ratio_z', -1.0)
                         and float(row.get('ung_surge_z') or 0.0)
                             > p.get('put_ratio_surge', 0.0)
-                        and not falling_knife(row)):
+                        and not falling_knife(row)
+                        # ROUTER safety: optionally only accumulate aggressively in
+                        # NORMAL regime — skips spike-crash periods where the 2x
+                        # accumulation bloated TRAIN DD to -16.9%.
+                        and (not p.get('put_ratio_normal_only')
+                             or anomaly == 'NORMAL')):
                     put_qty = int(put_qty * p.get('put_ratio_qty_mult', 1.5))
                     _c3_active = True
                 if prem > 0.05:
@@ -4704,12 +4709,26 @@ STRATEGIES['g11_putratio_tight']= {**_KBH, 'put_ratio': True,
 STRATEGIES['g11_putratio_big']  = {**_KBH, 'put_ratio': True,
                                    'put_ratio_qty_mult': 2.0}             # full short-2 (more accumulation)
 
+# GEN-11 ROUTER — signal->structure brain: stack the compliant winners (A,B,C2,C3),
+# each fires ONLY in its own regime (gates non-overlapping by design). C1 backspread
+# EXCLUDED (rejected: convexity redundant on a share book). C3 is the return engine
+# (+2.6pp OOS); router_safe gates its 2x to NORMAL regime to tame spike-crash DD.
+_ROUTER = {**_KBH, 'conviction_itm_put': True,   # A: deep-cheap + low-IVR
+                   'itm_cc_divest': True, 'itm_cc_divest_z': 0.5,  # B: rich + hot
+                   'cc_tail_ratio': True, 'cc_tail_z': 0.75,       # C2: neutral + high-IVR
+                   'put_ratio': True}                              # C3: deep-cheap + momentum
+STRATEGIES['g11_router']       = {**_ROUTER, 'put_ratio_qty_mult': 1.5}  # conservative C3
+STRATEGIES['g11_router_big']   = {**_ROUTER, 'put_ratio_qty_mult': 2.0}  # aggressive C3 (chase +2.6pp)
+STRATEGIES['g11_router_safe']  = {**_ROUTER, 'put_ratio_qty_mult': 2.0,
+                                  'put_ratio_normal_only': True}    # 2x C3 only in NORMAL regime
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
     'g11_covratio', 'g11_covratio_rich', 'g11_covratio_wide',
     'g11_putratio', 'g11_putratio_tight', 'g11_putratio_big',
+    'g11_router', 'g11_router_big', 'g11_router_safe',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
