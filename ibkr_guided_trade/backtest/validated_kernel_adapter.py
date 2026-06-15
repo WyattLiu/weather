@@ -2324,6 +2324,13 @@ def _extrinsic_and_smoothness(positions, spot):
     }
 
 
+# Spread-friction half-spreads as a fraction of mid, calibrated to measured UNG
+# chains (2026-06-12): near-term legs ~15% wide → ~8% half-spread; 45d legs
+# ~28-30% wide → ~14% half-spread. Tunable if WS fills come in tighter/wider.
+_ROLL_CLOSE_SPREAD_FRAC = 0.08
+_ROLL_OPEN_SPREAD_FRAC = 0.14
+
+
 def _roll_forward_plan(positions, spot, snap):
     """For each near-term contract, suggest a roll target + projected smoothness.
 
@@ -2396,18 +2403,33 @@ def _roll_forward_plan(positions, spot, snap):
                 old_val = spot*norm.cdf(d1o) - K*math.exp(-0.045*T_old)*norm.cdf(d2o)
             else:
                 old_val = K*math.exp(-0.045*T_old)*norm.cdf(-d2o) - spot*norm.cdf(-d1o)
-            close_cost = old_val * 100 * abs(qty)
-            new_credit = new_prem * 100 * abs(qty)
+            # REAL-FILL FRICTION (measured UNG chains 2026-06-12): you BUY-to-close
+            # the near-term leg at the ASK and SELL-to-open the 45d leg at the BID,
+            # so each leg loses ~half its bid/ask spread vs mid. Near-term legs run
+            # ~15% wide ($0.04 on $0.29), but 45d legs run ~28-30% wide ($0.17-0.19) —
+            # the wide far leg dominates. The old model used BS mid for BOTH legs
+            # (zero friction), overstating net credit by ~1 full far-spread/contract.
+            # Half-spreads below; floored at $0.02/sh for thin options.
+            close_hs = max(0.02, old_val * _ROLL_CLOSE_SPREAD_FRAC)   # pay above mid
+            open_hs = max(0.02, new_prem * _ROLL_OPEN_SPREAD_FRAC)    # receive below mid
+            eff_close = old_val + close_hs
+            eff_open = max(0.0, new_prem - open_hs)
+            close_cost = eff_close * 100 * abs(qty)
+            new_credit = eff_open * 100 * abs(qty)
             net_credit = new_credit - close_cost
+            friction_total = (close_hs + open_hs) * 100 * abs(qty)
             roll_actions.append({
                 'old': {'right': right, 'strike': K, 'expiry': p.get('expiry'), 'qty': qty, 'dte': dte},
                 'new': {'right': right, 'strike': new_K, 'expiry': new_exp, 'qty': qty, 'dte': new_dte},
-                'close_cost_per_contract': round(old_val, 3),
-                'new_credit_per_contract': round(new_prem, 3),
+                'close_cost_per_contract': round(eff_close, 3),
+                'new_credit_per_contract': round(eff_open, 3),
+                'mid_close_per_contract': round(old_val, 3),
+                'mid_open_per_contract': round(new_prem, 3),
+                'friction_total': round(friction_total, 0),
                 'net_credit_total': round(net_credit, 0),
                 'rationale': f'Roll {abs(qty)} contract(s) {dte}d→{new_dte}d, K ${K}→${new_K} '
                              f'({"shifts" if net_credit > 0 else "absorbs"} ${abs(net_credit):.0f} '
-                             f'into future weeks)',
+                             f'after ${friction_total:.0f} spread friction)',
             })
             # Synthetic rolled position for smoothness projection
             rolled_positions.append({
@@ -2428,6 +2450,10 @@ def _roll_forward_plan(positions, spot, snap):
         'projected_weekly_theta': projected['weekly_theta'],
         'projected_avg_weekly': projected['avg_weekly_theta'],
         'net_credit_total': round(sum(r['net_credit_total'] for r in roll_actions), 0),
+        'friction_total': round(sum(r.get('friction_total', 0) for r in roll_actions), 0),
+        'gross_credit_mid': round(sum(
+            (r['mid_open_per_contract'] - r['mid_close_per_contract']) * 100 * abs(r['old']['qty'])
+            for r in roll_actions), 0),
     }
 
 

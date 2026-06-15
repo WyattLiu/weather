@@ -1234,7 +1234,7 @@ async function refresh() {
         <div class="card">
           <div class="card-label">Net Credit (rolls)</div>
           <div class="card-value ${rp.net_credit_total>0?'positive':'negative'}">$${fmt(rp.net_credit_total,0)}</div>
-          <div class="card-sub">close − re-open</div>
+          <div class="card-sub">net after −$${fmt(rp.friction_total||0,0)} spread friction (gross $${fmt(rp.gross_credit_mid||0,0)})</div>
         </div>`;
       // Compare current vs projected weekly theta
       const projWk = rp.projected_weekly_theta || [0,0,0,0];
