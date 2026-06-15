@@ -2,6 +2,46 @@
 
 *Living document. Updated 2026-06-12. Owner: kernel research loop.*
 
+## GEN-10 VERDICT (2026-06-15) — the gen-8 angle to return: REJECTED for promotion
+
+**Thesis:** smooth's return engine failed in gen-9 only because unhedged; gen-8 proved
+hedging the book lets you hold more safely. So combine smooth engine + larger book +
+KOLD hedge + champion risk controls. Re-baselined under real fills (now engine default).
+
+**In-sample (real fills) looked spectacular — and that was the trap (same as gen-9 smooth):**
+| kernel | ann | Sharpe | MDD | worst-12mo |
+|--------|-----|--------|-----|-----------|
+| champion_kold15_ivrank_kbh (LIVE) | +27.3% | 2.06 | -9.6% | +5.4% |
+| g10_base (champ + 60-DTE) | +37.7% | 2.36 | -8.6% | +14.1% |
+| g10_conv (conviction amp) | +38.8% | 2.39 | -9.0% | +16.3% |
+| g10_book45_h6 (book.45/hedge.6) | +41.2% | 2.31 | -10.3% | +14.3% |
+| g10_book55 | +41.5% | 2.10 | -12.3% | — |
+
+**SEALED OOS (train→2024-01, test→2026-06, full cost model) — THE DECISIVE GATE:**
+| kernel | TEST ann | TEST Sharpe | TEST MDD | degradation |
+|--------|----------|-------------|----------|-------------|
+| champion_kold15_ivrank_kbh | +22.1% | **1.90** | **-8.7%** | -36.6pp |
+| g10_base | +29.2% | 1.81 | -14.8% | -46.9pp |
+| g10_book45_h6 | +29.3% | 1.68 | -18.6% | -50.7pp |
+| g10_conv | +27.4% | 1.66 | -17.5% | -50.1pp |
+
+**RULING — DO NOT PROMOTE. Champion holds.** Every pusher repeats the gen-9 failure mode:
+- OOS Sharpe collapses below 2.0 (1.66–1.81 vs champion 1.90) — breaches the user's hard floor.
+- OOS DD goes SUPER-LINEAR: +5–7pp more return but DD ~doubles (-15 to -19% vs -8.7%).
+  User rule: "if Sharpe is high, DD scales WITH return." Here DD scales ~2x faster than return.
+- audit(g10_base vs champ_kbh): QUALIFIED — 1.28x shares (edge is EXPOSURE not skill,
+  the gen-7 confound) + bootstrap 90%CI [-0.02,+0.56] STRADDLES ZERO (not significant even in-sample).
+
+**What the hedge DID buy:** pushers' OOS DD (-15 to -19%) beats naked gen-9 smooth (-24%);
+g10_base is the most contained pusher (-14.8%, OOS Sharpe 1.81, cleanest mechanism). The hedge
+helps — but cannot hold Sharpe at 2.0 once the book is bigger.
+
+**Honest frontier (real fills + sealed OOS):** the durable high-Sharpe point remains the
+gen-8 champion (kold15_ivrank_kbh): +22% / 1.90 / -8.7% OOS. The in-sample +37–41% was a mirage.
+**Standing lesson:** in-sample Sharpe≥2.0 is necessary but NOT sufficient — demand it in SEALED OOS.
+
+---
+
 ## Current standings (COMBINED gen-2/3/4 tournament, 2026-06-12 overnight)
 
 **Model fills (gen-2 basis):**
