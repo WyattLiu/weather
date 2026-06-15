@@ -961,6 +961,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         mult *= 0.8
                     elif _ivr < 0.2:
                         mult *= 1.3
+            # GEN-9 CONVICTION AMPLIFIER (return lever): when BOTH signals
+            # scream — extreme-cheap z AND bottom-quintile IV-rank (the
+            # validated +23% fwd-63d zone) — size the share book UP harder.
+            # Asymmetric: amplifies only at max conviction, never trims.
+            # The return-seeking mirror of the drawdown-cutting delta band.
+            if p.get('conviction_amplify'):
+                _ivr2 = row.get('iv_rank')
+                if (z < -1.0 and _ivr2 == _ivr2 and _ivr2 is not None
+                        and _ivr2 < 0.2 and not falling_knife(row)):
+                    mult *= p.get('conviction_amplify_mult', 1.4)
             # DD-aware override: if in deep DD, cap the multiplier
             dd_cap_15 = p.get('z_target_dd_cap_15', 0.6)
             dd_cap_10 = p.get('z_target_dd_cap_10', 0.8)
@@ -4455,10 +4465,30 @@ STRATEGIES['g8_baseline_matched'] = {**_H, 'hedge_sizing_neutral': True}  # same
 STRATEGIES['g8_kold_light']     = {**_H, 'kold_book_hedge': True,
                                    'kold_book_frac': 0.25, 'hedge_sizing_neutral': True}
 
+# ── GEN-9 (2026-06-15): SMOOTH RETURN-ENGINE RECOVERY. User priority =
+# high return + Sharpe, MDD secondary. smooth posted +32.7%/1.79 model
+# fills but only +19.0% real (fill-fragile: leans on premium volume the
+# 35-45 DTE haircut punishes). LEVER: 60-DTE fills are neutral-positive
+# (1.0-1.08x) → move smooth's premium there to recover the haircut. Plus
+# conviction amplifier (size up at extreme-cheap-z + low IV = return) and
+# IV-rank scaling. Real fills + real strikes on every entrant. The audit
+# gate (audit.py) is the HARD promotion gate.
+_SM = {**STRATEGIES['champion_target_25_smooth'],
+       'use_real_strikes': True, 'real_fill_model': True}
+STRATEGIES['g9_smooth_rf']      = {**_SM}                       # baseline: shows fill fragility
+STRATEGIES['g9_smooth_60d']     = {**_SM, 'open_dte': 60}       # recover the haircut
+STRATEGIES['g9_smooth_60d_iv']  = {**_SM, 'open_dte': 60, 'iv_rank_z_scale': True}
+STRATEGIES['g9_smooth_60d_conv']= {**_SM, 'open_dte': 60, 'iv_rank_z_scale': True,
+                                   'conviction_amplify': True, 'conviction_amplify_mult': 1.4}
+STRATEGIES['g9_smooth_full']    = {**_SM, 'open_dte': 60, 'iv_rank_z_scale': True,
+                                   'conviction_amplify': True, 'conviction_amplify_mult': 1.5,
+                                   'kold_shoulder_hedge': 0.15}
+
 _KEEP_STRATEGIES = {
-    'champion_kold15_ivrank_kbh',
-    'g8_kold_matched', 'g8_baseline_matched', 'g8_kold_light',
-    'g7_kold_bookhedge', 'g7_baseline_rf', 'champion_kold15_ivrank',
+    'g9_smooth_rf', 'g9_smooth_60d', 'g9_smooth_60d_iv',
+    'g9_smooth_60d_conv', 'g9_smooth_full',
+    'champion_target_25_smooth', 'champion_kold15_ivrank_kbh',
+    'g8_kold_matched', 'g8_baseline_matched',
     'g6_cb_a35_b10', 'g6_cb_a35_b20', 'g6_cb_a35_b30',
     'g6_cb_a50_b10', 'g6_cb_a50_b20', 'g6_cb_a50_b30',
     'g6_cb_tightfloor',
