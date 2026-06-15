@@ -2186,6 +2186,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'spot': spot_u, 'z': z})
                 else:
                     effective_otm = p.get('itm_cc_pct', otm_call) if use_itm else otm_call
+                # GEN-11 ANGLE B — ITM COVERED-CALL DIVEST (bearish expression).
+                # When z is RICH (z>0 = expensive) AND price is HOT (surge_z up)
+                # AND we're at/over the share target, sell DEEP-ITM covered calls
+                # to monetize the rich price and pre-commit a high-probability
+                # called-away exit — divest INTO strength. Pure income on shares
+                # already held, fully covered 1:1 (qty capped to uncovered//100
+                # below). [[feedback_synthetic_early_assignment]]
+                # [[feedback_hot_shares_rocket_divest]]
+                if p.get('itm_cc_divest'):
+                    _dz = p.get('itm_cc_divest_z', 0.75)   # rich threshold
+                    _sz = float(row.get('ung_surge_z') or 0.0)
+                    _hot = _sz > p.get('itm_cc_divest_surge', 0.5)
+                    # No over-target gate: the outer uncovered_shares>=100 already
+                    # ensures we hold shares to divest; when rich the book is
+                    # intentionally below full target, so divest what remains.
+                    if z > _dz and _hot:
+                        use_itm = True
+                        effective_otm = p.get('itm_cc_divest_pct', -0.08)  # ~8% ITM
+                        trades.append({'date': idx, 'type': 'ITM_CC_DIVEST',
+                                       'pnl': 0.0, 'spot': spot_u, 'z': z,
+                                       'surge_z': round(_sz, 2)})
                 K = round(spot_u * (1 + effective_otm))
                 # GEX WALL FLOOR (live-validated: 74% vs 69% final-week hold):
                 # never sell OTM CCs below the dealer call wall. ITM CCs
@@ -4548,8 +4569,17 @@ STRATEGIES['g11_itmput_wide']  = {**_KBH, 'conviction_itm_put': True,
 STRATEGIES['g11_itmput_60d']   = {**_KBH, 'open_dte': 60,
                                   'conviction_itm_put': True}            # + proven 60-DTE fill edge
 
+# GEN-11 ANGLE B — ITM covered-call DIVEST (bearish; monetize rich price, exit
+# into strength). Covered 1:1 by construction. Built on champion to isolate.
+STRATEGIES['g11_itmcc_divest'] = {**_KBH, 'itm_cc_divest': True}        # default z>0.75, surge>0.5, 8% ITM
+STRATEGIES['g11_itmcc_eager']  = {**_KBH, 'itm_cc_divest': True,
+                                  'itm_cc_divest_z': 0.5}                # divest earlier (milder rich)
+STRATEGIES['g11_itmcc_deep']   = {**_KBH, 'itm_cc_divest': True,
+                                  'itm_cc_divest_pct': -0.12}            # deeper ITM, near-certain assign
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
+    'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',

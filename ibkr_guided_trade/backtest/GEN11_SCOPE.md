@@ -121,16 +121,30 @@ A signal→structure router replaces "always sell OTM put / OTM call":
   rich z / surge hot / hot shares       → ITM CC divest + KOLD (lean defensive)
   anomaly / backwardation storm         → stand down + protective put (no falling knife)
 
-## Candidate ladder (revised)
-| key | view | structure |
-|-----|------|-----------|
-| champion_kold15_ivrank_kbh | (anchor) | live champion |
-| g11_itmput_conv | bullish | conviction-scaled ITM put depth |
-| g11_putratio | bullish | cash-secured put ratio + floor |
-| g11_backspread | bullish-convex | call backspread in vol-expansion |
-| g11_covratio | neutral-income | covered upside-tail ratio |
-| g11_itmcc_divest | bearish | ITM CC on rich-z/hot shares |
-| g11_router | all | signal→structure router (best stacked) |
+## Candidate ladder (revised) — STATUS
+| key | view | structure | status |
+|-----|------|-----------|--------|
+| champion_kold15_ivrank_kbh | (anchor) | live champion | — |
+| g11_itmput_conv | bullish | conviction-scaled ITM put depth | ✅ DONE (OOS-neutral/safe) |
+| g11_itmcc_divest | bearish | ITM CC on rich-z/hot shares | ✅ DONE (OOS-neutral/safe) |
+| g11_backspread | bullish-convex | call backspread in vol-expansion | ⬜ C1 NEXT |
+| g11_covratio | neutral-income | covered upside-tail ratio | ⬜ C2 |
+| g11_putratio | bullish | cash-secured put ratio + floor | ⬜ C3 |
+| g11_router | all | signal→structure router (best stacked) | ⬜ final |
+
+### Results so far (real fills; OOS = sealed walk-forward, full cost model)
+| angle | in-sample (ann/Sh/MDD) | OOS (ann/Sh/MDD) | audit | verdict |
+|-------|------------------------|------------------|-------|---------|
+| champion (anchor) | +27.3/2.06/-9.6 | +22.1/1.90/-8.7 | — | live |
+| A g11_itmput_conv | +28.2/2.09/-9.6 | +22.1/1.90/-8.6 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
+| B g11_itmcc_eager | +28.2/2.10/-9.6 | +22.2/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
+
+**Meta-pattern (A+B):** both are compliant + confound-FREE (1.03x shares = geometry
+not exposure) and OOS-SAFE, but OOS-NEUTRAL — their triggers (deep-cheap for A,
+rich for B) barely fired in the calm/cheap 2024-26 test window. They are
+regime-insurance that pays in their target regime, costs nothing otherwise.
+The real return upside should come from C1 (backspread convexity in vol-expansion)
+and the router (deploy each structure only where its regime lives).
 
 Build order: A (itmput) and B (itmcc) first — smallest deltas off the champion,
 reuse existing strike-selection plumbing. Then C1/C2/C3 (need multi-leg support).
