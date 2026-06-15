@@ -2006,7 +2006,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 # REAL-FILL MODEL: scale entry credit by the empirical
                 # bid/BSM grid from 8y of actual UNG quotes (30-45d OTM
                 # puts really fill at 0.67-0.95x the model estimate)
-                if p.get('real_fill_model'):
+                if p.get('real_fill_model', True):  # gen-9: real fills are now DEFAULT
                     prem *= fill_factor('P', open_dte, 1 - K / spot_u)
                 # MICROSTRUCTURE TIMING: Thursday put entries (post-print
                 # day bleeds -40bps intraday → cheaper strikes + the
@@ -2177,7 +2177,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                              expiration=_exp_d.isoformat(),
                                              spot=spot_u)
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
-                if p.get('real_fill_model'):
+                if p.get('real_fill_model', True):  # gen-9: real fills are now DEFAULT
                     prem *= fill_factor('C', cc_dte, K / spot_u - 1)
                 # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
@@ -4520,6 +4520,13 @@ _KEEP_STRATEGIES = {
     'champion_trifecta',
     'champion_20pct_protected_wing_all',
 }
+# GEN-9: REAL FILLS EVERYWHERE — every kept strategy trades at empirical
+# bid/BS-haircut fills unless it EXPLICITLY opts out (real_fill_model=False).
+# Makes the whole frontier honest + cross-comparable (kills the model-vs-
+# real conflation the audit kept catching).
+for _k, _v in STRATEGIES.items():
+    _v.setdefault('real_fill_model', True)
+
 # Defense-in-depth: also filter out any strategy missing use_real_strikes
 STRATEGIES = {k: v for k, v in STRATEGIES.items()
               if k in _KEEP_STRATEGIES and v.get('use_real_strikes')}
