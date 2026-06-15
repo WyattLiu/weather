@@ -53,6 +53,19 @@ from replay_engine import (
 # OOS metrics from backtest/honest_walkforward.py with sealed test data
 # (2024-01 → 2026-06) + IBKR cost model + leak-free z.
 KERNELS = {
+    'kold15_ivrank_kbh': {
+        'strategy': 'champion_kold15_ivrank_kbh',
+        'label': 'KOLD-15 + IV-Rank + Book Hedge (gen-8 champion)',
+        # OOS sealed test 2024-26, real fills, matched-share controlled:
+        # +0.32 Sharpe / -1.9pp MDD / -0.3pp return vs the unhedged kernel.
+        'oos_ann': 22.4,   'oos_sharpe': 2.10, 'oos_mdd': -6.6,
+        'is_ann': 58.9,    'is_sharpe': 3.03,  'is_mdd': -13.3,
+        'why': 'Promoted 2026-06-14. Adds a KOLD 2x-inverse book hedge '
+               '(frac 0.5) on the uncovered share book — passed all 4 rigor '
+               'gates (confound-free, bootstrap-significant, OOS-validated, '
+               'cost ~0). Same return as kold15_ivrank, +0.32 Sharpe, ~2pp '
+               'less drawdown. Cheap grind-regime insurance. See KERNEL_LAB.md.',
+    },
     'kold15_ivrank': {
         'strategy': 'champion_kold15_ivrank',
         'label': 'KOLD-15 + IV-Rank (gen-2 champion)',
@@ -101,7 +114,7 @@ KERNELS = {
     },
 }
 
-CHAMPION_KEY = 'kold15_ivrank'   # promoted 2026-06-13 (was premium_harvest_scale_invariant)
+CHAMPION_KEY = 'kold15_ivrank_kbh'   # promoted 2026-06-14 (+ KOLD book hedge); prior: kold15_ivrank
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 

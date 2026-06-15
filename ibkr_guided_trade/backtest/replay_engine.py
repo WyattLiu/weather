@@ -4334,6 +4334,13 @@ STRATEGIES['champion_smooth_gex'] = {**_smooth, 'cc_gex_floor': True}
 STRATEGIES['champion_psi_ivrank'] = {**_psi, 'iv_rank_z_scale': True}
 STRATEGIES['champion_kold15_ivrank'] = {**_psi, 'kold_shoulder_hedge': 0.15,
                                         'iv_rank_z_scale': True}
+# PROMOTED 2026-06-14 (gen-8): champion + KOLD book hedge (all 4 rigor
+# criteria passed: confound-free +0.32 OOS Sharpe, -1.9pp MDD, -0.3pp
+# return, bootstrap-significant). Standing overlay on the uncovered book.
+STRATEGIES['champion_kold15_ivrank_kbh'] = {**_psi, 'kold_shoulder_hedge': 0.15,
+                                            'iv_rank_z_scale': True,
+                                            'kold_book_hedge': True,
+                                            'kold_book_frac': 0.5}
 STRATEGIES['champion_smooth_ddtrim_ivrank'] = {**_smooth,
                                                'dd_trim_trigger_pct': -4,
                                                'dd_trim_qty_pct': 40,
@@ -4449,6 +4456,7 @@ STRATEGIES['g8_kold_light']     = {**_H, 'kold_book_hedge': True,
                                    'kold_book_frac': 0.25, 'hedge_sizing_neutral': True}
 
 _KEEP_STRATEGIES = {
+    'champion_kold15_ivrank_kbh',
     'g8_kold_matched', 'g8_baseline_matched', 'g8_kold_light',
     'g7_kold_bookhedge', 'g7_baseline_rf', 'champion_kold15_ivrank',
     'g6_cb_a35_b10', 'g6_cb_a35_b20', 'g6_cb_a35_b30',
