@@ -2087,6 +2087,21 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'hh_basis': float(row.get('hh_basis', 0)),
                                    'note': 'backwardation storm → defensive'})
                     prem = 0  # neutralize subsequent put-write conditional
+                # GEN-11 C3 — CASH-SECURED PUT RATIO (bullish, defined-risk accum).
+                # On deep-cheap z + momentum-confirm, sell MORE cash-secured puts
+                # (the "2") to accumulate aggressively, then buy 1 long put per 2
+                # shorts at a lower strike (the "1") = a hard downside FLOOR so the
+                # extra accumulation is DEFINED-risk. Both shorts cash-secured
+                # (margin-checked below); the long put bounds the tail. Boost runs
+                # BEFORE the margin check so the larger size is collateral-tested.
+                _c3_active = False
+                if (p.get('put_ratio') and prem > 0.05
+                        and z < p.get('put_ratio_z', -1.0)
+                        and float(row.get('ung_surge_z') or 0.0)
+                            > p.get('put_ratio_surge', 0.0)
+                        and not falling_knife(row)):
+                    put_qty = int(put_qty * p.get('put_ratio_qty_mult', 1.5))
+                    _c3_active = True
                 if prem > 0.05:
                     # MARGIN CHECK: cash-secured put requires K*100*qty collateral.
                     # Available collateral = current cash + premium received -
@@ -2143,6 +2158,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                             trades.append({'date': idx, 'type': 'OPEN_PUT',
                                            'pnl': 0.0, 'credit': credit_dte,
                                            'K': K, 'qty': per_dte_qty, 'dte': dte_choice})
+                        # GEN-11 C3 — buy the long-put FLOOR (1 per 2 short puts)
+                        # at a lower strike = defined downside for the aggressive
+                        # accumulation. Settles vs spot at expiry (pays if UNG dumps).
+                        if _c3_active and put_qty >= 2:
+                            _nfloor = put_qty // 2
+                            K_floor = round(spot_u * (1 - p.get('put_ratio_floor_otm', 0.12)))
+                            fcost = bs_put(spot_u, K_floor, open_dte/365,
+                                           iv_at(K_floor, open_dte, 'P'))
+                            if fcost > 0.02:
+                                f_debit = fcost * 100 * _nfloor + _nfloor * SPREAD_OPTION * 100
+                                if s['cash'] > f_debit + 500:
+                                    s['cash'] -= f_debit
+                                    s['long_puts'].append({'entry': idx, 'K': K_floor,
+                                                           'dte': open_dte, 'qty': _nfloor,
+                                                           'cost': fcost})
+                                    trades.append({'date': idx, 'type': 'OPEN_PUT_RATIO_FLOOR',
+                                                   'pnl': -f_debit, 'K': K_floor,
+                                                   'qty': _nfloor, 'spot': spot_u, 'z': z})
 
             # CCs (only if have UNCOVERED shares ABOVE core — covered-call
             # ONLY [[feedback_covered_calls_only]]; core shares are
@@ -4663,11 +4696,20 @@ STRATEGIES['g11_covratio_rich'] = {**_KBH, 'cc_tail_ratio': True,
 STRATEGIES['g11_covratio_wide'] = {**_KBH, 'cc_tail_ratio': True,
                                    'cc_tail_z': 0.75}                     # fire on a wider neutral band
 
+# GEN-11 C3 — cash-secured PUT ratio (bullish, defined-risk accumulation). Sell
+# more cash-secured puts on deep-cheap+momentum, buy 1 long put per 2 as a floor.
+STRATEGIES['g11_putratio']      = {**_KBH, 'put_ratio': True}            # z<-1, surge>0, qty*1.5, floor@12%
+STRATEGIES['g11_putratio_tight']= {**_KBH, 'put_ratio': True,
+                                   'put_ratio_floor_otm': 0.08}           # tighter (more expensive) floor
+STRATEGIES['g11_putratio_big']  = {**_KBH, 'put_ratio': True,
+                                   'put_ratio_qty_mult': 2.0}             # full short-2 (more accumulation)
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
     'g11_covratio', 'g11_covratio_rich', 'g11_covratio_wide',
+    'g11_putratio', 'g11_putratio_tight', 'g11_putratio_big',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',

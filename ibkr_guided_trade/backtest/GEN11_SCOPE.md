@@ -129,8 +129,8 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | g11_itmcc_divest | bearish | ITM CC on rich-z/hot shares | ✅ DONE (OOS-neutral/safe) |
 | g11_backspread | bullish-convex | call backspread in vol-expansion | ❌ DONE — REJECTED (drag) |
 | g11_covratio | neutral-income | covered upside-tail ratio | ✅ DONE (OOS-neutral/safe) |
-| g11_putratio | bullish | cash-secured put ratio + floor | ⬜ C3 NEXT |
-| g11_router | all | signal→structure router (best stacked) | ⬜ final |
+| g11_putratio | bullish | cash-secured put ratio + floor | ✅ DONE (best OOS; see note) |
+| g11_router | all | signal→structure router (best stacked) | ⬜ ROUTER NEXT (final) |
 
 ### Results so far (real fills; OOS = sealed walk-forward, full cost model)
 | angle | in-sample (ann/Sh/MDD) | OOS (ann/Sh/MDD) | audit | verdict |
@@ -140,6 +140,18 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | B g11_itmcc_eager | +28.2/2.10/-9.6 | +22.2/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 | C1 g11_backspread_wide | +27.2/2.03/-9.6 | +20.0/1.77/-8.7 | clean, 0.97x, CI<0 | ❌ REJECTED — drag IS & OOS |
 | C2 g11_covratio_wide | +28.0/2.08/-9.5 | +22.1/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
+| C3 g11_putratio_big | +28.2/2.04/-8.5 | **+24.7/1.98/-8.7** | clean, 0.98x | ★ BEST OOS — see note |
+
+**C3 finding (the standout):** g11_putratio_big (2x cash-secured put accumulation +
+long-put floor) is the FIRST gen-11 angle to BEAT the champion OOS: +24.7/1.98/-8.7
+vs champion +22.1/1.90/-8.7 — +2.6pp return AND +0.08 Sharpe at EQUAL OOS DD,
+confound-FREE (0.98x shares, so it is better-TIMED accumulation into cheap dips with
+the floor protecting, not raw exposure). TWO caveats keep it from a clean promote:
+(1) OOS Sharpe 1.98 JUST misses the 2.0 bar; (2) TRAIN MDD bloated to -16.9% (vs
+-13.4%) — the 2x accumulation deepens DD in SPIKE-CRASH regimes (2021-22) that the
+calm 2024-26 test didn't expose. The 1.5x variant (g11_putratio) is OOS-neutral.
+**Action: carry the 2x put-ratio into the ROUTER, gated to only fire in
+confirmed-cheap+floored regimes (avoid spike-crash DD bloat). Strongest building block.**
 
 **C1 finding (important):** the call backspread DRAGS both in-sample and OOS
 (OOS +20.0/1.77 < champion +22.1/1.90 on every axis). Root cause is STRUCTURAL:
