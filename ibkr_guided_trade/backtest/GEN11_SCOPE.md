@@ -128,8 +128,8 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | g11_itmput_conv | bullish | conviction-scaled ITM put depth | ✅ DONE (OOS-neutral/safe) |
 | g11_itmcc_divest | bearish | ITM CC on rich-z/hot shares | ✅ DONE (OOS-neutral/safe) |
 | g11_backspread | bullish-convex | call backspread in vol-expansion | ❌ DONE — REJECTED (drag) |
-| g11_covratio | neutral-income | covered upside-tail ratio | ⬜ C2 NEXT |
-| g11_putratio | bullish | cash-secured put ratio + floor | ⬜ C3 |
+| g11_covratio | neutral-income | covered upside-tail ratio | ✅ DONE (OOS-neutral/safe) |
+| g11_putratio | bullish | cash-secured put ratio + floor | ⬜ C3 NEXT |
 | g11_router | all | signal→structure router (best stacked) | ⬜ final |
 
 ### Results so far (real fills; OOS = sealed walk-forward, full cost model)
@@ -139,6 +139,7 @@ A signal→structure router replaces "always sell OTM put / OTM call":
 | A g11_itmput_conv | +28.2/2.09/-9.6 | +22.1/1.90/-8.6 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 | B g11_itmcc_eager | +28.2/2.10/-9.6 | +22.2/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 | C1 g11_backspread_wide | +27.2/2.03/-9.6 | +20.0/1.77/-8.7 | clean, 0.97x, CI<0 | ❌ REJECTED — drag IS & OOS |
+| C2 g11_covratio_wide | +28.0/2.08/-9.5 | +22.1/1.90/-8.7 | clean, 1.03x, CI~0 | KEEP-to-stack; OOS-neutral |
 
 **C1 finding (important):** the call backspread DRAGS both in-sample and OOS
 (OOS +20.0/1.77 < champion +22.1/1.90 on every axis). Root cause is STRUCTURAL:

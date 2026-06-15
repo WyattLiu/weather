@@ -2207,6 +2207,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         trades.append({'date': idx, 'type': 'ITM_CC_DIVEST',
                                        'pnl': 0.0, 'spot': spot_u, 'z': z,
                                        'surge_z': round(_sz, 2)})
+                # GEN-11 C2 — COVERED UPSIDE-TAIL RATIO (neutral-income).
+                # When z is NEUTRAL and IV-rank is ELEVATED (rich premium), push
+                # the CC strike CLOSER to money to harvest MORE premium, then buy
+                # 1 long call per 2 shorts (further OTM) as a tail cap so the
+                # extra assignment/upside give-up is bounded. All shorts stay
+                # covered 1:1 by shares (qty<=uncovered//100); the long tail is
+                # the "1" in the short-2/long-1 ratio. Income-POSITIVE on net
+                # (sell 2 collect, buy 1 pay) — unlike C1 which is a net debit.
+                _c2_active = False
+                if p.get('cc_tail_ratio') and not use_itm:
+                    _c2ivr = row.get('iv_rank')
+                    if (abs(z) < p.get('cc_tail_z', 0.5)
+                            and _c2ivr == _c2ivr and _c2ivr is not None
+                            and _c2ivr > p.get('cc_tail_ivr', 0.5)):
+                        effective_otm = min(effective_otm,
+                                            p.get('cc_tail_call_otm', 0.04))
+                        _c2_active = True
                 K = round(spot_u * (1 + effective_otm))
                 # GEX WALL FLOOR (live-validated: 74% vs 69% final-week hold):
                 # never sell OTM CCs below the dealer call wall. ITM CCs
@@ -2317,6 +2334,26 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                'pnl': -bs_debit, 'K': K_long,
                                                'qty': _lq, 'short_K': K, 'short_qty': qty,
                                                'spot': spot_u, 'z': z})
+
+                    # GEN-11 C2 — buy the upside-tail (1 long per 2 short CCs),
+                    # further OTM, to cap the give-up from the closer CC strike.
+                    if _c2_active and qty >= 2:
+                        _ntail = qty // 2
+                        K_tail = round(spot_u * (1 + p.get('cc_tail_long_otm', 0.12)))
+                        tcost = bs_call(spot_u, K_tail, cc_dte/365,
+                                        iv_at(K_tail, cc_dte, 'C'))
+                        if tcost > 0.02:
+                            t_debit = tcost * 100 * _ntail + _ntail * SPREAD_OPTION * 100
+                            if t_debit < credit * 0.5 and s['cash'] > t_debit + 500:
+                                s['cash'] -= t_debit
+                                s.setdefault('long_calls', []).append({
+                                    'entry': idx, 'K': K_tail, 'dte': cc_dte,
+                                    'qty': _ntail, 'cost': tcost,
+                                    'wing_for_cc_K': K})
+                                trades.append({'date': idx, 'type': 'OPEN_CC_TAIL_RATIO',
+                                               'pnl': -t_debit, 'K': K_tail,
+                                               'qty': _ntail, 'short_K': K,
+                                               'short_qty': qty, 'spot': spot_u, 'z': z})
 
             # EXTREME_RICH bearish stack
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
@@ -4618,10 +4655,19 @@ STRATEGIES['g11_backspread_3x']   = {**_KBH, 'call_backspread': True,
 STRATEGIES['g11_backspread_deep'] = {**_KBH, 'call_backspread': True,
                                      'backspread_z_max': -1.0}           # only deep-cheap (higher conviction)
 
+# GEN-11 C2 — COVERED upside-tail ratio (neutral-income). Closer CC strike for
+# more premium + 1 long per 2 shorts as tail cap; all shorts share-covered.
+STRATEGIES['g11_covratio']      = {**_KBH, 'cc_tail_ratio': True}        # z neutral<0.5, IVR>0.5, CC@4%, tail@12%
+STRATEGIES['g11_covratio_rich'] = {**_KBH, 'cc_tail_ratio': True,
+                                   'cc_tail_ivr': 0.6, 'cc_tail_call_otm': 0.03}  # only high IVR, sell closer
+STRATEGIES['g11_covratio_wide'] = {**_KBH, 'cc_tail_ratio': True,
+                                   'cc_tail_z': 0.75}                     # fire on a wider neutral band
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
+    'g11_covratio', 'g11_covratio_rich', 'g11_covratio_wide',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
