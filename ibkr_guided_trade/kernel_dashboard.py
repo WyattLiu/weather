@@ -1195,14 +1195,16 @@ async function refresh() {
         </div>`;
       // Weekly theta bars
       if (ex.weekly_theta) {
+        const _tmax = Math.max(...ex.weekly_theta.map(v=>+v||0), 1);
         Plotly.newPlot('weekly-theta-bars', [
           {x: ['Week 1','Week 2','Week 3','Week 4'], y: ex.weekly_theta, type:'bar',
            marker: {color: '#39d2c0'}, text: ex.weekly_theta.map(v=>'$'+fmt(v,0)),
-           textposition: 'outside', textfont: {color: '#e6edf3'}},
+           textposition: 'outside', textfont: {color: '#e6edf3'}, cliponaxis: false},
         ], {
           ...PLOTLY_LAYOUT_BASE,
-          yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$' },
-          margin: { l: 50, r: 10, t: 10, b: 30 },
+          // headroom so the tallest bar's outside label isn't clipped at top
+          yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$', range: [0, _tmax * 1.18] },
+          margin: { l: 50, r: 10, t: 26, b: 30 },
         }, {displayModeBar: false, responsive: true});
       }
     }
@@ -1237,19 +1239,21 @@ async function refresh() {
       // Compare current vs projected weekly theta
       const projWk = rp.projected_weekly_theta || [0,0,0,0];
       const currWk = ex ? ex.weekly_theta : [0,0,0,0];
+      const _rmax = Math.max(...currWk.map(v=>+v||0), ...projWk.map(v=>+v||0), 1);
       Plotly.newPlot('roll-theta-comparison', [
         {x: ['W1','W2','W3','W4'], y: currWk, type:'bar', name:'Current',
          marker: {color: 'rgba(57,210,192,0.6)'}, text: currWk.map(v=>'$'+fmt(v,0)),
-         textposition: 'outside', textfont: {color: '#e6edf3'}},
+         textposition: 'outside', textfont: {color: '#e6edf3'}, cliponaxis: false},
         {x: ['W1','W2','W3','W4'], y: projWk, type:'bar', name:'After rolls',
          marker: {color: 'rgba(63,185,80,0.7)'}, text: projWk.map(v=>'$'+fmt(v,0)),
-         textposition: 'outside', textfont: {color: '#e6edf3'}},
+         textposition: 'outside', textfont: {color: '#e6edf3'}, cliponaxis: false},
       ], {
         ...PLOTLY_LAYOUT_BASE,
-        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$ weekly θ' },
+        // headroom for outside labels; legend sits above the headroom, not the bars
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$ weekly θ', range: [0, _rmax * 1.22] },
         barmode: 'group',
-        legend: { x: 0, y: 1.15, orientation: 'h' },
-        margin: { l: 50, r: 10, t: 30, b: 30 },
+        legend: { x: 0, y: 1.16, orientation: 'h' },
+        margin: { l: 50, r: 10, t: 40, b: 30 },
       }, {displayModeBar: false, responsive: true});
       // Roll table
       const rows = (rp.rolls || []).map(r => `
@@ -1358,15 +1362,17 @@ async function refresh() {
     // Theta by expiry bar
     const tbe = v.theta_by_expiry;
     if (tbe && tbe.length) {
+      const _tbmax = Math.max(...tbe.map(t => +t.theta_per_day || 0), 1);
       Plotly.newPlot('chart-theta-bar', [
         {x: tbe.map(t => t.expiry), y: tbe.map(t => t.theta_per_day),
          type: 'bar', marker: {color: '#39d2c0'},
          text: tbe.map(t => '$' + t.theta_per_day.toFixed(0)), textposition: 'outside',
-         textfont: {color: '#e6edf3'}},
+         textfont: {color: '#e6edf3'}, cliponaxis: false},
       ], {
         ...PLOTLY_LAYOUT_BASE,
-        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$/day' },
+        yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: '$/day', range: [0, _tbmax * 1.18] },
         xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'category', tickangle: -45 },
+        margin: { ...PLOTLY_LAYOUT_BASE.margin, t: 22 },
       }, {displayModeBar: false, responsive: true});
     }
 
@@ -1657,14 +1663,19 @@ async function drawCharts() {
     // Yearly P&L bars
     const yrs = a.yearly;
     const yrColors = yrs.map(y => y.pnl_pct > 0 ? '#3fb950' : '#f85149');
+    const _ymax = Math.max(...yrs.map(y => +y.pnl_pct || 0), 0);
+    const _ymin = Math.min(...yrs.map(y => +y.pnl_pct || 0), 0);
+    const _ypad = Math.max((_ymax - _ymin) * 0.15, 5);
     Plotly.newPlot('chart-yearly', [
       { x: yrs.map(y => y.year), y: yrs.map(y => y.pnl_pct), type: 'bar',
         marker: { color: yrColors }, text: yrs.map(y => y.pnl_pct.toFixed(1) + '%'),
-        textposition: 'outside', textfont: { color: '#e6edf3' } },
+        textposition: 'outside', textfont: { color: '#e6edf3' }, cliponaxis: false },
     ], {
       ...PLOTLY_LAYOUT_BASE,
-      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'P&L %' },
+      // pad both ends: positive bars label above, negative bars label below
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'P&L %', range: [_ymin - _ypad, _ymax + _ypad] },
       xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'category' },
+      margin: { ...PLOTLY_LAYOUT_BASE.margin, t: 20 },
     }, {displayModeBar: false, responsive: true});
 
     // Yearly table
