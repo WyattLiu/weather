@@ -112,6 +112,22 @@ KERNELS = {
         'why': 'Reactive DD-trim, between smooth and walkforward_safe. '
                'Solid return with active risk control.',
     },
+    'g14_gap_wheel_real': {
+        'strategy': 'g14_gap_wheel_real',
+        'label': 'Gen-14 Gap-Wheel (premium-centric, real fills)',
+        # Sealed OOS on REAL ThetaData bid/ask (real_chain tier-3), de-duped costs.
+        # Audit bootstrap CI [+0.38,+2.01] EXCLUDES 0 (first significant edge). Tail:
+        # -40% UNG crash → -19.6% MDD (bounded by 15%-NAV cash-secured collateral cap).
+        'oos_ann': 66.0,   'oos_sharpe': 2.50, 'oos_mdd': -11.1,
+        'is_ann': 90.9,    'is_sharpe': 3.46,  'is_mdd': -14.3,
+        'why': 'Promoted 2026-06-16. PREMIUM-CENTRIC pivot (user insight): stop churning '
+               'shares — the z-target DELTA drives put sizing/strike/DTE so the book steers '
+               'via ASSIGNMENT. Tiny share book, harvest UNG real high premium at ATM/near '
+               '30-45 DTE. Priced on REAL bid/ask (real_chain). Capital-compliant (max 15% '
+               'NAV collateral, cash-secured). OOS +66/2.50 vs router_safe +20/1.50, '
+               'bootstrap-significant, -40% crash → -19.6% MDD bounded, +edge every year. '
+               'Breaks the share-heavy ceiling. See KERNEL_LAB.md.',
+    },
     'g11_router_safe': {
         'strategy': 'g11_router_safe',
         'label': 'Gen-11 Router (signal→structure, safe)',
@@ -131,7 +147,7 @@ KERNELS = {
     },
 }
 
-CHAMPION_KEY = 'g11_router_safe'     # promoted 2026-06-16 (OOS-dominates gen-8 champ on corrected engine); prior: kold15_ivrank_kbh
+CHAMPION_KEY = 'g14_gap_wheel_real'  # promoted 2026-06-16 (premium-centric, real fills, OOS +66/2.50, tail -19.6%, bootstrap-significant); prior: g11_router_safe
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 
