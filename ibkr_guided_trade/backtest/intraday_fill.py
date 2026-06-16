@@ -25,8 +25,15 @@ def _conn():
     return _CONN
 
 
+# Regular trading hours (US equity options): 09:30–16:00 ET. NO fill may be modeled
+# outside this window — enforced in SQL (defence-in-depth with the backfill filter).
+RTH_OPEN = '09:30:00'
+RTH_CLOSE = '16:00:00'
+
+
 def _bars(trade_date, expiration, strike_raw, right):
-    """Intraday (bar_time, bid, ask) for a contract on a day, BID/ASK pivoted."""
+    """Intraday (bar_time, bid, ask) for a contract on a day, BID/ASK pivoted.
+    RTH-ONLY: bars outside 09:30–16:00 are excluded at the source."""
     cur = _conn().cursor()
     cur.execute("""
         SELECT bar_time,
@@ -35,8 +42,9 @@ def _bars(trade_date, expiration, strike_raw, right):
         FROM ung_options_history
         WHERE trade_date=%s AND expiration=%s
           AND ABS(strike-%s) < 0.001 AND option_right=%s
+          AND bar_time::time >= %s AND bar_time::time <= %s
         GROUP BY bar_time ORDER BY bar_time""",
-                (trade_date, expiration, float(strike_raw), right))
+                (trade_date, expiration, float(strike_raw), right, RTH_OPEN, RTH_CLOSE))
     return [(t, float(b) if b is not None else None,
              float(a) if a is not None else None) for t, b, a in cur.fetchall()]
 

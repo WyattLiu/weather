@@ -31,6 +31,8 @@ DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 MAX_DTE = 60
 BAND_PCT = 0.25      # ± of spot — strikes that can act
+RTH_OPEN = '09:30'   # regular trading hours window (HH:MM, inclusive)
+RTH_CLOSE = '16:00'
 
 
 def create_table():
@@ -115,11 +117,17 @@ def process_day(args):
                     ts = bar.get('timestamp')
                     if not ts:
                         continue
+                    # RTH-ONLY: 09:30 ≤ time ≤ 16:00 (drop pre/post-market & opening auction)
+                    hhmm = ts[11:16] if len(ts) >= 16 else ''
+                    if hhmm and not (RTH_OPEN <= hhmm <= RTH_CLOSE):
+                        continue
                     bid, ask = bar.get('bid'), bar.get('ask')
-                    # store raw strike + raw spot (split-consistent); adjust at query time
+                    # TWO-SIDED ONLY: store only real tradeable quotes (bid>0, ask>bid).
+                    # This is exactly what the fill model uses and slashes minute-bar
+                    # row count (most minute bars are 0/0 or one-sided in UNG options).
+                    if bid is None or ask is None or bid <= 0 or ask <= bid:
+                        continue
                     for dtype, val in (('BID', bid), ('ASK', ask)):
-                        if val is None:
-                            continue
                         rows.append((d_str, ts, exp, float(K_raw), right,
                                      float(val), float(val), float(val), float(val),
                                      0, 0, round(raw_spot, 4), dtype))
