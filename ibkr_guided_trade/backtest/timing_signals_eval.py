@@ -90,6 +90,23 @@ def build_signals(df):
         ivr = pd.read_csv(ivp, index_col=0, parse_dates=True)['iv_rank']
         sig['iv_rank'] = -(ivr.reindex(df.index, method='ffill', limit=10) - 0.5) * 2
 
+    # 12-15. WEATHER / DEMAND: degree-day anomaly vs seasonal normal. More heating
+    #     (HDD) or cooling (CDD) demand than normal = more gas burn = BULLISH.
+    #     Seasonal normal = day-of-year climatology (mild in-sample lookahead in the
+    #     normal only; removes the deterministic seasonal cycle, not the anomaly).
+    ddp = os.path.join(CACHE, 'degree_days_daily.csv')
+    if os.path.exists(ddp):
+        dd = pd.read_csv(ddp, index_col=0, parse_dates=True)
+        doy = dd.index.dayofyear
+        hdd_a = dd['hdd'] - dd['hdd'].groupby(doy).transform('mean')
+        cdd_a = dd['cdd'] - dd['cdd'].groupby(doy).transform('mean')
+        tot_a = hdd_a + cdd_a
+        rdx = lambda s: s.reindex(df.index, method='ffill', limit=3)
+        sig['demand_anom'] = _z(rdx(tot_a))                 # total degree-day anomaly
+        sig['demand_anom_7d'] = _z(rdx(tot_a.rolling(7).mean()))  # 7d-smoothed
+        sig['hdd_anom'] = _z(rdx(hdd_a))                    # heating only
+        sig['cdd_anom'] = _z(rdx(cdd_a))                    # cooling only
+
     return sig
 
 
