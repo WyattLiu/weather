@@ -1424,15 +1424,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         elif _ivr < 0.4:
                             tp_thresh = 0.7
             if tp_thresh is not None and T_left > 1/365:
-                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
-                if p.get('real_chain_pricing'):   # pay the real ASK to buy back
-                    _ra = real_chain_price(idx, sp['K'], int(T_left*365), 'P', spot_u, side='buy')
-                    if _ra is not None:
-                        cv = _ra
+                _cv_model = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
+                cv, _aud = exec_fill(idx, sp['K'], int(T_left*365), 'P', 'buy',
+                                     spot_u, p, _cv_model)
                 if cv < sp['entry_prem'] * tp_thresh:
                     pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     s['cash'] += pnl
-                    trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl})
+                    trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl,
+                                   'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
+                                   'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
+                                   'fill_source': _aud['source']})
                     continue
 
             # Roll down — only if remaining DTE is above min_roll_dte
@@ -1511,16 +1512,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     trades.append({'date': idx, 'type': 'PUT_ROLL_SKIP_STAGGER',
                                    'pnl': 0.0, 'K': sp['K']})
             if roll_eligible:
-                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 nk = round(spot_u * (1 - p.get('otm_put', 0.10)))
-                npr = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
-                if p.get('real_chain_pricing'):   # buy back at ASK, sell new at BID
-                    _ra = real_chain_price(idx, sp['K'], int(T_left*365), 'P', spot_u, side='buy')
-                    if _ra is not None:
-                        cv = _ra
-                    _rb = real_chain_price(idx, nk, 30, 'P', spot_u, side='sell')
-                    if _rb is not None:
-                        npr = _rb
+                # close leg: buy back old at AUDITED ask; open leg: sell new at AUDITED bid
+                _cv_model = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
+                cv, _aud_c = exec_fill(idx, sp['K'], int(T_left*365), 'P', 'buy',
+                                       spot_u, p, _cv_model)
+                _npr_model = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
+                npr, _aud_o = exec_fill(idx, nk, 30, 'P', 'sell', spot_u, p, _npr_model)
                 close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
                 s['cash'] -= cv * 100 * sp['qty']
                 s['cash'] += npr * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
@@ -1530,7 +1528,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 s['_rolls_day'] = (idx, (_rd[1] + 1) if (_rd and _rd[0] == idx) else 1)
                 # Roll P&L = closed leg's gain (premium collected may be future credit)
                 trades.append({'date': idx, 'type': 'PUT_ROLL_DOWN', 'pnl': close_pnl,
-                               'from_K': sp['K'], 'to_K': nk, 'qty': sp['qty']})
+                               'from_K': sp['K'], 'to_K': nk, 'qty': sp['qty'],
+                               'exec_time': _aud_o['exec_time'], 'bid': _aud_o['bid'],
+                               'ask': _aud_o['ask'], 'spread_pct': _aud_o['spread_pct'],
+                               'fill_source': _aud_o['source'],
+                               'close_exec_time': _aud_c['exec_time'],
+                               'close_spread_pct': _aud_c['spread_pct'],
+                               'close_fill_source': _aud_c['source']})
                 continue
 
             if days >= sp['dte']:
@@ -1583,12 +1587,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if p.get('grind_tp_accelerate') and detect_grind_down(row):
                     tp_thresh = min(tp_thresh, 0.3)
             if tp_thresh is not None and T_left > 1/365:
-                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
+                _cv_model = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
+                cv, _aud = exec_fill(idx, sc['K'], int(T_left*365), 'C', 'buy',
+                                     spot_u, p, _cv_model)
                 if cv < sc['entry_prem'] * tp_thresh:
                     pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'CALL_TP', 'pnl': pnl,
-                                   'K': sc['K'], 'qty': sc['qty']})
+                                   'K': sc['K'], 'qty': sc['qty'],
+                                   'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
+                                   'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
+                                   'fill_source': _aud['source']})
                     continue
 
             # ELEVATOR CLOSE (user's "Russia-spike" pattern):
@@ -2486,10 +2495,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
                 if p.get('real_fill_model', True):  # gen-9: real fills are now DEFAULT
                     prem *= fill_factor('C', cc_dte, K / spot_u - 1)
-                if p.get('real_chain_pricing'):       # TIER-3 real bid (see put side)
-                    _rb = real_chain_price(idx, K, cc_dte, 'C', spot_u)
-                    if _rb is not None:
-                        prem = _rb
+                # AUDITED fill (intraday minute → EOD real → model)
+                prem, _aud_cc = exec_fill(idx, K, cc_dte, 'C', 'sell', spot_u, p, prem)
                 # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, cc_dte, 'C')
@@ -2519,7 +2526,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     open_kind = 'OPEN_ITM_CC' if use_itm else 'OPEN_CC'
                     trades.append({'date': idx, 'type': open_kind,
                                    'pnl': 0.0, 'credit': credit,
-                                   'K': K, 'qty': qty, 'z': z})
+                                   'K': K, 'qty': qty, 'z': z,
+                                   'exec_time': _aud_cc['exec_time'], 'bid': _aud_cc['bid'],
+                                   'ask': _aud_cc['ask'], 'spread_pct': _aud_cc['spread_pct'],
+                                   'fill_source': _aud_cc['source']})
 
                     # UPSIDE WING — when shorting an ITM/ATM CC, buy a far-OTM
                     # call at K_wing = K * (1 + wing_otm_pct) so if UNG spikes
