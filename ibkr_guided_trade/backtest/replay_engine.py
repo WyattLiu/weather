@@ -2501,6 +2501,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                'short_qty': qty, 'spot': spot_u, 'z': z})
 
             # EXTREME_RICH bearish stack
+            # SUPER-OTM PUT TAIL HEDGE (user exploration): the gap-wheel is SHORT
+            # ATM premium, so buy cheap super-OTM puts as crash insurance, sized to
+            # the SHORT-PUT exposure (the real risk). Super-OTM = cheap drag, big
+            # payoff in a -40% gap — caps the tail. Refresh when none outstanding.
+            if p.get('put_tail_hedge'):
+                _sp_lots = sum(sp.get('qty', 0) for sp in s['short_puts'])
+                _have = sum(lp.get('qty', 0) for lp in s['long_puts'] if lp.get('tail'))
+                _want = int(_sp_lots * p.get('put_tail_hedge_ratio', 0.5))
+                if _want > _have and _sp_lots >= 2:
+                    Kp = round(spot_u * (1 - p.get('put_tail_hedge_otm', 0.20)), 1)
+                    hdte = p.get('put_tail_hedge_dte', 60)
+                    cost = bs_put(spot_u, Kp, hdte/365, iv_at(Kp, hdte, 'P'))
+                    need = _want - _have
+                    debit = cost * 100 * need + need * SPREAD_OPTION * 100
+                    if cost > 0.005 and s['cash'] > debit + 2000:
+                        s['cash'] -= debit
+                        s['long_puts'].append({'entry': idx, 'K': Kp, 'dte': hdte,
+                                               'qty': need, 'cost': cost, 'tail': True})
+                        trades.append({'date': idx, 'type': 'OPEN_TAIL_HEDGE_PUT',
+                                       'pnl': -debit, 'K': Kp, 'qty': need, 'spot': spot_u})
+
             if p.get('bearish_stack') and r == 'EXTREME_RICH':
                 if not s['long_puts']:
                     Kp = round(spot_u * 0.95)
@@ -4856,6 +4877,10 @@ STRATEGIES['g14_gap_wheel_bwd']  = {**STRATEGIES['g11_router_safe'], 'gap_to_whe
 # TIER-3 real-chain pricing (real historical bid/ask) to settle the fidelity question.
 STRATEGIES['g14_gap_wheel_real'] = {**STRATEGIES['g11_router_safe'], 'gap_to_wheel': True,
                                     'real_chain_pricing': True}
+# Tail-hedge exploration: gap-wheel + super-OTM long-put crash insurance.
+STRATEGIES['g15_gap_wheel_hedge']= {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True}
+STRATEGIES['g15_hedge_deep']     = {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True,
+                                    'put_tail_hedge_otm': 0.25, 'put_tail_hedge_ratio': 0.75}
 
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
@@ -4867,6 +4892,7 @@ _KEEP_STRATEGIES = {
     'g12_bwd_derisk', 'g12_bwd_derisk_deep', 'g12_bwd_derisk_d10', 'g12_bwd_on_router',
     'g13_wheel_only', 'g13_wheel_ddtrim', 'g13_wheel_bwd',
     'g14_gap_wheel', 'g14_gap_wheel_bwd', 'g14_gap_wheel_real',
+    'g15_gap_wheel_hedge', 'g15_hedge_deep',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
