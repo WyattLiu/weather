@@ -48,6 +48,15 @@ def _compute_live():
             cash = (bal.get('cash') or bal.get('total_cash')
                     or bal.get('net_liquidation') or 100000)
         data = get_live_recommendation(pos, cash=cash, spot=spot)
+        # EXECUTION ADVISOR: annotate each order with a manual-execution plan
+        # (which minute to work it + limit ladder mid→touch). Operator runs these by hand.
+        try:
+            from execution_advisor import plan_for_recs
+            if isinstance(data, dict) and data.get('recommendations'):
+                data['recommendations'] = plan_for_recs(data['recommendations'],
+                                                        spot=data.get('spot'))
+        except Exception as _e:
+            data['exec_advisor_error'] = repr(_e)[:160]
         _LIVE_CACHE['data'] = data
         _LIVE_CACHE['ts'] = time.time()
     except Exception as e:
@@ -1669,10 +1678,34 @@ async function drawSOT(){
       sotCard('Theta after / month', '$'+fmt(t.after_per_month,0), 'extrinsic only · gross of assign','positive')+
       sotCard('As of', d.asof, 'spot $'+fmt(d.spot,2),'');
     const recs = d.recommendations||[];
-    oel.innerHTML = recs.length ? recs.map(o =>
-      '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
-      (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+
-      '<div class="rec-why" style="color:var(--text-dim)">↳ '+(o.why||'')+'</div></div>').join('')
+    oel.innerHTML = recs.length ? recs.map(o => {
+      const ep = o.exec_plan;
+      let exec = '';
+      if (ep && ep.live_quote){
+        const q = ep.live_quote, lad = ep.ladder||{};
+        const rungs = (lad.rungs||[]).map(rg =>
+          '<tr><td style="padding:1px 10px 1px 0;color:var(--text-dim)">'+rg.clock+'</td>'+
+          '<td style="padding:1px 10px 1px 0;font-weight:600">$'+rg.limit.toFixed(2)+'</td>'+
+          '<td style="color:var(--text-dim)">'+rg.rung+'</td></tr>').join('');
+        exec = '<div class="exec-plan" style="margin:6px 0 2px 14px;padding:8px 10px;'+
+          'border-left:2px solid #4a9;background:rgba(74,153,136,.07);border-radius:4px;font-size:.82rem">'+
+          '<div style="margin-bottom:3px">⏱ <b>Work near '+(ep.timing.recommended||'')+'</b></div>'+
+          '<div style="color:var(--text-dim);margin-bottom:4px">Live: bid $'+q.bid.toFixed(2)+
+            ' / ask $'+q.ask.toFixed(2)+' / mid $'+q.mid.toFixed(2)+'  ('+q.spread_pct+
+            '% wide · P(mid) '+lad.p_mid+')</div>'+
+          '<div style="margin-bottom:2px">Limit ladder (patient→cross):</div>'+
+          '<table style="margin-left:6px">'+rungs+'</table>'+
+          '<div style="margin-top:3px">Expected fill ≈ <b>$'+(lad.expected_fill||0).toFixed(2)+'</b></div>'+
+          ((ep.caveats&&ep.caveats.length)?'<div class="warn" style="margin-top:3px">⚠ '+ep.caveats[0]+'</div>':'')+
+          '</div>';
+      } else if (ep && ep.note){
+        exec = '<div style="margin:4px 0 2px 14px;color:var(--text-dim);font-size:.8rem">⏱ '+
+          (ep.timing?ep.timing.recommended:'')+' · '+ep.note+'</div>';
+      }
+      return '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
+        (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+
+        '<div class="rec-why" style="color:var(--text-dim)">↳ '+(o.why||'')+'</div>'+exec+'</div>';
+    }).join('')
       : '<div class="rec-why">Engine holds — no new orders today.</div>';
   }catch(e){ document.getElementById('sot-orders').innerHTML='<div class="rec-why">live fetch failed: '+e+'</div>'; }
 }
