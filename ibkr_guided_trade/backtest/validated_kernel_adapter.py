@@ -123,6 +123,16 @@ def get_kernel_info(key=None):
     return KERNELS.get(key or CHAMPION_KEY, KERNELS[CHAMPION_KEY])
 
 
+def _snap_strike(K: float) -> float:
+    """Snap a computed strike to UNG's real listed grid so every suggestion is
+    actually tradeable. UNG lists $0.50 increments near the money (…10.5, 11.0,
+    11.5, 12.0…); wider out it's $1, but $0.50 rounding is always a listed strike.
+    Returns a float rounded to one decimal (avoids 11.5000001 noise)."""
+    if not K or K <= 0:
+        return K
+    return round(round(K * 2) / 2, 1)
+
+
 def _z_mult(z: float) -> float:
     """Champion's z-bucket multiplier curve."""
     if z < -1.5: return 2.0
@@ -510,22 +520,22 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
 
     # CC posture: regime-specific
     if snap['regime'] in ('RICH', 'EXTREME_RICH'):
-        K_itm = round(spot * 0.95, 2)
+        K_itm = _snap_strike(spot * 0.95)
         out['recommendations'].append({
-            'action': f'Sell ITM CCs at K=${K_itm} (5% ITM) to force-assign at high prices',
+            'action': f'Sell ITM CCs at K=${K_itm} (~5% ITM) to force-assign at high prices',
             'why': f'z={snap["z_surprise"]:+.2f} → {snap["regime"]} → aggressive_itm_cc_z fires; '
                    f'force assignment locks gains via wheel exit',
             'priority': 'medium',
             'when': 'this week',
         })
     elif snap['regime'] == 'NEUTRAL':
-        K_otm = round(spot * 1.05, 2)
+        K_otm = _snap_strike(spot * 1.05)
         # Only if there are uncovered shares
         uncovered = current_shares - current_short_calls * 100
         if uncovered >= 100:
             n_ccs = uncovered // 100
             out['recommendations'].append({
-                'action': f'Sell up to {n_ccs} CCs at K=${K_otm} (5% OTM, 30-45 DTE)',
+                'action': f'Sell up to {n_ccs} CCs at K=${K_otm} (~5% OTM, 30-45 DTE)',
                 'why': f'NEUTRAL regime; harvest premium on {uncovered} uncovered shares',
                 'priority': 'low',
                 'when': 'this week',
@@ -541,7 +551,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         })
     elif snap['regime'] == 'NEUTRAL':
         out['recommendations'].append({
-            'action': 'Standard 5% OTM CCs on uncovered shares (K ≈ ${:.2f})'.format(spot * 1.05),
+            'action': 'Standard 5% OTM CCs on uncovered shares (K = ${:.2f})'.format(_snap_strike(spot * 1.05)),
             'why': 'NEUTRAL regime; normal premium harvest mode',
             'priority': 'low',
         })
@@ -1175,7 +1185,7 @@ def _beam_per_kernel(spot, z, nav):
         # Score each candidate
         candidates = []
         for otm in otms:
-            K = round(spot * (1 - otm), 2)
+            K = _snap_strike(spot * (1 - otm))
             iv = None
             if surf and latest:
                 iv = iv_from_surface(surf, latest, K, default_dte, 'P')
@@ -1725,10 +1735,10 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
     itm_z = sp.get('aggressive_itm_put_z')
     if itm_z is not None and z > itm_z:
         strike_pct = sp.get('itm_put_pct', -0.05)  # negative = ITM
-        K = round(spot * (1 - strike_pct), 2)
+        K = _snap_strike(spot * (1 - strike_pct))
         order_label = f'SHORT_PUT_ITM (z>{itm_z} threshold met)'
     else:
-        K = round(spot * (1 - sp.get('otm_put', 0.10)), 2)
+        K = _snap_strike(spot * (1 - sp.get('otm_put', 0.10)))
         order_label = 'SHORT_PUT_OTM (standard)'
     # Estimate premium for limit price
     iv = 0.50  # fallback; surface lookup would be better but kernel handles that
@@ -1889,7 +1899,7 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
             'priority': 'low',
         })
     elif uncovered >= 100:
-        Kc = round(spot * (1 + sp.get('otm_call', 0.05)), 2)
+        Kc = _snap_strike(spot * (1 + sp.get('otm_call', 0.05)))
         # GEX WALL FLOOR: never sell CCs below the dealer call wall.
         # Backtest (100 monthlies 2018-2026): final-week high stayed under
         # the wall 74% vs 69% for naive same-OTM strikes (+5pp hold rate).
@@ -2377,7 +2387,7 @@ def _roll_forward_plan(positions, spot, snap):
             new_exp = (today + timedelta(days=new_dte)).isoformat()
             # Keep ~same OTM offset
             otm_pct = (spot - K) / spot if right == 'P' else (K - spot) / spot
-            new_K = round(spot * (1 - otm_pct) if right == 'P' else spot * (1 + otm_pct), 1)
+            new_K = _snap_strike(spot * (1 - otm_pct) if right == 'P' else spot * (1 + otm_pct))
             # Estimate new premium
             iv = None
             if surf and latest_surf:
@@ -2416,20 +2426,31 @@ def _roll_forward_plan(positions, spot, snap):
             eff_open = max(0.0, new_prem - open_hs)
             close_cost = eff_close * 100 * abs(qty)
             new_credit = eff_open * 100 * abs(qty)
-            net_credit = new_credit - close_cost
-            friction_total = (close_hs + open_hs) * 100 * abs(qty)
+            # EXPIRE-AND-REOPEN (user insight, friction-aware): this leg is OTM and
+            # ≤14d out — it will most likely expire WORTHLESS. Rolling it means
+            # BUYING IT BACK (paying its residual value + close-leg friction) just
+            # to re-sell a far leg. That's paying to close a penny. Instead: LET IT
+            # EXPIRE ($0 cost, keep the premium already collected) and SELL the new
+            # far leg fresh — friction is paid ONCE (the open), not twice. We keep
+            # the close-cost math only to show what rolling would have wasted.
+            # (Matches the backtest, which only rolls ITM puts and lets OTM expire.)
+            open_friction = open_hs * 100 * abs(qty)
+            roll_would_cost = close_cost  # buyback (incl. its friction) avoided
             roll_actions.append({
+                'mode': 'EXPIRE_REOPEN',
                 'old': {'right': right, 'strike': K, 'expiry': p.get('expiry'), 'qty': qty, 'dte': dte},
                 'new': {'right': right, 'strike': new_K, 'expiry': new_exp, 'qty': qty, 'dte': new_dte},
-                'close_cost_per_contract': round(eff_close, 3),
                 'new_credit_per_contract': round(eff_open, 3),
-                'mid_close_per_contract': round(old_val, 3),
                 'mid_open_per_contract': round(new_prem, 3),
-                'friction_total': round(friction_total, 0),
-                'net_credit_total': round(net_credit, 0),
-                'rationale': f'Roll {abs(qty)} contract(s) {dte}d→{new_dte}d, K ${K}→${new_K} '
-                             f'({"shifts" if net_credit > 0 else "absorbs"} ${abs(net_credit):.0f} '
-                             f'after ${friction_total:.0f} spread friction)',
+                'mid_close_per_contract': round(old_val, 3),
+                'friction_total': round(open_friction, 0),     # open leg only
+                'net_credit_total': round(new_credit, 0),       # the new open credit
+                'roll_would_cost': round(roll_would_cost, 0),   # what rolling wastes
+                'savings_vs_roll': round(roll_would_cost, 0),
+                'rationale': f'OTM, {dte}d to expiry → LET ${K} {right} EXPIRE ($0, keep premium), '
+                             f'then SELL {abs(qty)}x ${new_K} {right} {new_dte}d for ~${new_credit:.0f} '
+                             f'(open friction ${open_friction:.0f}). Rolling would waste '
+                             f'~${roll_would_cost:.0f} buying back a near-worthless leg.',
             })
             # Synthetic rolled position for smoothness projection
             rolled_positions.append({
@@ -2441,19 +2462,20 @@ def _roll_forward_plan(positions, spot, snap):
         else:
             rolled_positions.append(p)
 
-    # Project smoothness assuming all rolls executed
+    # Project smoothness assuming the new (reopened) legs are sold
     projected = _extrinsic_and_smoothness(rolled_positions, spot)
     return {
         'rolls': roll_actions,
         'roll_count': len(roll_actions),
+        'mode': 'EXPIRE_REOPEN',
         'projected_smoothness': projected['smoothness'],
         'projected_weekly_theta': projected['weekly_theta'],
         'projected_avg_weekly': projected['avg_weekly_theta'],
+        # net = sum of NEW open credits (the expiring OTM legs cost $0 to retire)
         'net_credit_total': round(sum(r['net_credit_total'] for r in roll_actions), 0),
         'friction_total': round(sum(r.get('friction_total', 0) for r in roll_actions), 0),
-        'gross_credit_mid': round(sum(
-            (r['mid_open_per_contract'] - r['mid_close_per_contract']) * 100 * abs(r['old']['qty'])
-            for r in roll_actions), 0),
+        # what you SAVE by letting OTM expire instead of rolling (penny-buybacks avoided)
+        'savings_vs_roll_total': round(sum(r.get('savings_vs_roll', 0) for r in roll_actions), 0),
     }
 
 

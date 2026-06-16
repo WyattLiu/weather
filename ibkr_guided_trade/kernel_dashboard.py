@@ -132,15 +132,37 @@ def _build_series():
     return out
 
 
+def _live_champion_strat(STRATEGIES):
+    """Resolve the CURRENT live champion strategy, resilient to renames/stale
+    filtering. Old code hardcoded 'champion_target_25_dd_trim', which the
+    _KEEP_STRATEGIES/lifecycle filter now drops → KeyError → blank charts.
+    Prefer the adapter's promoted CHAMPION_KEY, then known fallbacks."""
+    candidates = []
+    try:
+        from validated_kernel_adapter import CHAMPION_KEY  # type: ignore
+        candidates.append(f'champion_{CHAMPION_KEY}')
+    except Exception:
+        pass
+    candidates += ['champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
+                   'champion_target_25_smooth', 'champion_target_25_dd_trim']
+    for k in candidates:
+        if k in STRATEGIES:
+            return STRATEGIES[k], k
+    for k in STRATEGIES:  # last resort: any champion
+        if k.startswith('champion_'):
+            return STRATEGIES[k], k
+    raise KeyError('no champion strategy available in STRATEGIES')
+
+
 def _build_walkforward():
-    """Run champion_target_25_dd_trim on rolling 12-month windows."""
+    """Run the live champion on rolling 12-month windows."""
     import pandas as pd
     import math
     from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z  # type: ignore
     csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
     df = pd.read_csv(csv, index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG'])
-    strat = STRATEGIES['champion_target_25_dd_trim']
+    strat, _ = _live_champion_strat(STRATEGIES)
     windows = []
     start_dates = pd.date_range('2021-07-01', '2025-04-01', freq='3MS')
     for start in start_dates:
@@ -176,7 +198,7 @@ def _build_backtest_curve():
     csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
     df = pd.read_csv(csv, index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG'])
-    strat = STRATEGIES['champion_target_25_dd_trim']
+    strat, _ = _live_champion_strat(STRATEGIES)
     hist, _ = run_strategy_simple(df, strat, 100000, 0)
     hist = hist.set_index(pd.to_datetime(hist['date']))
     nav = hist['nav'].tolist()
@@ -199,7 +221,7 @@ def _build_yearly_pnl():
     csv = os.path.join(THIS_DIR, 'backtest', 'cache', 'master_dataset.csv')
     df = pd.read_csv(csv, index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG'])
-    strat = STRATEGIES['champion_target_25_dd_trim']
+    strat, _ = _live_champion_strat(STRATEGIES)
     hist, _ = run_strategy_simple(df, strat, 100000, 0)
     hist = hist.set_index(pd.to_datetime(hist['date']))
     years = []
@@ -703,7 +725,7 @@ td.neutral { color: var(--blue); }
 
   <!-- Roll forward planner (kernel's wheel-rhythm projection) -->
   <div class="section">
-    <h2>🔄 Roll Forward Planner — projected smoothness after rolls</h2>
+    <h2>🔄 Expire &amp; Reopen Planner — let OTM near-DTE expire, sell fresh (no penny-buybacks)</h2>
     <div class="summary-row" style="margin-bottom:0" id="roll-summary"></div>
     <div id="roll-theta-comparison" style="height:200px;margin-top:12px"></div>
     <div class="scrollable" style="margin-top:12px">
@@ -1217,9 +1239,9 @@ async function refresh() {
       const sDelta = (projS - currS).toFixed(3);
       $('roll-summary').innerHTML = `
         <div class="card">
-          <div class="card-label">Rolls Suggested</div>
+          <div class="card-label">Expire + Reopen</div>
           <div class="card-value neutral">${rp.roll_count}</div>
-          <div class="card-sub">near-DTE OTM contracts</div>
+          <div class="card-sub">OTM legs: let expire, sell fresh</div>
         </div>
         <div class="card">
           <div class="card-label">Current Smoothness</div>
@@ -1232,9 +1254,9 @@ async function refresh() {
           <div class="card-sub">Δ ${sDelta>0?'+':''}${sDelta}</div>
         </div>
         <div class="card">
-          <div class="card-label">Net Credit (rolls)</div>
+          <div class="card-label">New-Open Credit</div>
           <div class="card-value ${rp.net_credit_total>0?'positive':'negative'}">$${fmt(rp.net_credit_total,0)}</div>
-          <div class="card-sub">net after −$${fmt(rp.friction_total||0,0)} spread friction (gross $${fmt(rp.gross_credit_mid||0,0)})</div>
+          <div class="card-sub">reopen credit (friction −$${fmt(rp.friction_total||0,0)}) · saves $${fmt(rp.savings_vs_roll_total||0,0)} vs rolling</div>
         </div>`;
       // Compare current vs projected weekly theta
       const projWk = rp.projected_weekly_theta || [0,0,0,0];
@@ -1255,21 +1277,21 @@ async function refresh() {
         legend: { x: 0, y: 1.16, orientation: 'h' },
         margin: { l: 50, r: 10, t: 40, b: 30 },
       }, {displayModeBar: false, responsive: true});
-      // Roll table
+      // Roll table — expire-and-reopen framing
       const rows = (rp.rolls || []).map(r => `
         <tr>
           <td><span class="tag ${r.old.right==='C'?'tag-call':'tag-put'}">${r.old.right}</span></td>
-          <td class="mono">$${r.old.strike} <span style="color:var(--text-dim)">→</span> $${r.new.strike}</td>
+          <td class="mono">$${r.old.strike} <span style="color:var(--text-dim)">exp→sell</span> $${r.new.strike}</td>
           <td class="mono">${r.old.dte}d <span style="color:var(--text-dim)">→</span> ${r.new.dte}d</td>
           <td class="mono">${r.old.qty}</td>
-          <td class="mono negative">-$${fmt(r.close_cost_per_contract,2)}</td>
           <td class="mono positive">+$${fmt(r.new_credit_per_contract,2)}</td>
-          <td class="mono ${r.net_credit_total>0?'positive':'negative'}">$${fmt(r.net_credit_total,0)}</td>
+          <td class="mono positive">$${fmt(r.net_credit_total,0)}</td>
+          <td class="mono" style="color:var(--text-dim)">saves $${fmt(r.savings_vs_roll||0,0)}</td>
         </tr>`).join('');
       $('roll-table').innerHTML = `
         <thead><tr>
-          <th>R</th><th>K (old→new)</th><th>DTE (old→new)</th><th>Qty</th>
-          <th>Close ea</th><th>New ea</th><th>Net Total</th>
+          <th>R</th><th>K (expire→sell)</th><th>DTE (old→new)</th><th>Qty</th>
+          <th>New ea</th><th>Reopen $</th><th>vs roll</th>
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="7" class="rec-why">No near-DTE rolls suggested</td></tr>'}</tbody>`;
     }

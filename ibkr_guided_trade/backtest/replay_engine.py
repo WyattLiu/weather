@@ -36,7 +36,11 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # WS = zero commission
 COMMISSION = 0.0
-SPREAD_OPTION = 0.05  # $0.05/share half-spread (pessimistic): UNG NBBO
+SPREAD_OPTION = 0.07  # $0.07/share half-spread, calibrated to MEASURED UNG NBBO
+# (2026-06-12): near-term legs ~$0.04 wide (~$0.02 half), but the 45-60d legs the
+# kernel actually trades run ~$0.14-0.19 wide (~$0.07-0.09 half). Modal DTE ~45d →
+# $0.07. The old $0.05 flat was ~$0.04 too low on the legs that dominate, inflating
+# returns ~1.7pp/yr (see roll-friction audit 2026-06-15). DTE-aware spread is a TODO.
                       # on ATM is typically $0.04-0.10 wide → half ≈ 0.02-0.05
                       # Bumped from 0.03 for realism; honest_walkforward also
                       # adds 5% slippage on opens — together = full-cycle realism.
