@@ -688,6 +688,29 @@ def fill_factor(right, dte_days, otm_pct):
     return 0.92
 
 
+_REAL_CHAIN = None
+def real_chain_price(date, K, dte, right, spot):
+    """REAL historical BID for SELLING this option (tier-3 fidelity, ThetaData
+    real bid/ask). Returns the real bid when ThetaData covers it — INCLUDING ~$0
+    when bids have collapsed in an illiquid/low-price regime (that's the whole
+    point: you can't harvest premium that isn't bid). Returns None when off-grid
+    so the caller falls back to the BS×fill_grid estimate."""
+    global _REAL_CHAIN
+    if _REAL_CHAIN is None:
+        try:
+            import real_chain as _rc
+            _REAL_CHAIN = _rc
+        except Exception:
+            _REAL_CHAIN = False
+    if not _REAL_CHAIN:
+        return None
+    try:
+        b, a, m, real = _REAL_CHAIN.price(date, K, dte, right, spot_adj=spot)
+        return float(b) if real else None
+    except Exception:
+        return None
+
+
 def _is_tom(idx):
     """NG futures expiry window: month-end ±2 calendar days."""
     return idx.day >= 27 or idx.day <= 2
@@ -1111,6 +1134,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 except Exception:
                     pass
             delta = 0 if band_skip else (target - current)
+            # GAP-DRIVEN WHEEL (user design): store the share gap so the put/call
+            # sections can size + strike-pick to STEER the book via assignment
+            # instead of churning shares directly. Positive = need shares (acquire
+            # via puts), negative = excess (divest via calls).
+            s['_share_gap_lots'] = int(round((target - current) / 100))
             # MICROSTRUCTURE TIMING for ADDS only (trims fire anytime —
             # risk control never waits): Tuesday adds (open bleeds -40bps
             # overnight → cheaper entries) and skip the NG-expiry
@@ -1137,7 +1165,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # Must keep enough shares to cover existing short calls
             short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
             min_shares_required = short_call_lots * 100
-            if adjust < 0:  # selling
+            if adjust < 0 and not p.get('gap_to_wheel'):  # selling (direct; OFF when gap_to_wheel → divest via CCs)
                 max_sell = current - min_shares_required
                 adjust = max(adjust, -max(0, max_sell))
                 if adjust <= -100:
@@ -1166,7 +1194,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                 trades.append({'date': idx, 'type': 'OPEN_REBUILD_PUT_Z',
                                                'pnl': 0.0, 'credit': credit, 'K': Kp,
                                                'qty': put_qty_rebuild, 'spot': spot_u, 'z': z})
-            elif adjust >= 100:  # buying
+            elif adjust >= 100 and not p.get('gap_to_wheel'):  # buying (direct; OFF when gap_to_wheel → acquire via puts)
                 max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
                 max_afford = (max_afford // 100) * 100
                 adjust = min(adjust, max_afford)
@@ -2066,9 +2094,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                        'pnl': 0.0, 'z': z, 'spot': spot_u,
                                        'depth': round(effective_otm, 4),
                                        'iv_rank': _civ})
+                # GAP-DRIVEN WHEEL (user design): the share gap drives put SIZING,
+                # STRIKE-depth (and DTE below) so the book steers to target via
+                # ASSIGNMENT — get PAID to acquire, never direct-buy. Deeper gap →
+                # bigger size + closer/ITM strike (high Δ, fast paid acquisition).
+                _gap_dte = None
+                if p.get('gap_to_wheel'):
+                    _gap = s.get('_share_gap_lots', 0)
+                    if _gap > 0 and z < p.get('gap_wheel_z_max', 0.75):
+                        _per = max(1, int(math.ceil(_gap * p.get('gap_wheel_fill_frac', 0.34))))
+                        put_qty = max(put_qty, min(_per, int(p.get('gap_wheel_max_lots', 25))))
+                        if _gap >= p.get('gap_wheel_itm_lots', 12):
+                            effective_otm = min(effective_otm, p.get('gap_wheel_itm_otm', -0.03))
+                            _gap_dte = p.get('gap_wheel_itm_dte', 30)   # urgent → shorter DTE
+                        elif _gap >= p.get('gap_wheel_atm_lots', 5):
+                            effective_otm = min(effective_otm, 0.01)
+                    elif _gap < 0:
+                        put_qty = 0   # above target → acquire nothing; CCs divest
                 K = round(spot_u * (1 - effective_otm))
                 # Tunable open-DTE (default 30; tastytrade rule uses 45).
-                open_dte = p.get('open_dte', 30)
+                # GAP-DRIVEN: urgent acquisition (deep gap) → shorter DTE to assign sooner.
+                open_dte = _gap_dte if _gap_dte else p.get('open_dte', 30)
                 if p.get('vol_aware_dte'):
                     rv30 = float(row.get('rv_30') or 0.5)
                     if rv30 > 0.80:   open_dte = 60
@@ -2089,6 +2135,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 # puts really fill at 0.67-0.95x the model estimate)
                 if p.get('real_fill_model', True):  # gen-9: real fills are now DEFAULT
                     prem *= fill_factor('P', open_dte, 1 - K / spot_u)
+                # TIER-3 REAL CHAIN: when on, replace the model premium with the
+                # ACTUAL historical bid you'd sell into (incl. ~$0 in illiquid
+                # low-price regimes). The `prem > 0.05` gate below then naturally
+                # SKIPS puts that aren't really bid — no fictional premium.
+                if p.get('real_chain_pricing'):
+                    _rb = real_chain_price(idx, K, open_dte, 'P', spot_u)
+                    if _rb is not None:
+                        prem = _rb
                 # MICROSTRUCTURE TIMING: Thursday put entries (post-print
                 # day bleeds -40bps intraday → cheaper strikes + the
                 # executor's validated 14:30-15:30 window)
@@ -2336,6 +2390,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 prem = bs_call(spot_u, K, cc_dte/365, iv_at(K, cc_dte, 'C'))
                 if p.get('real_fill_model', True):  # gen-9: real fills are now DEFAULT
                     prem *= fill_factor('C', cc_dte, K / spot_u - 1)
+                if p.get('real_chain_pricing'):       # TIER-3 real bid (see put side)
+                    _rb = real_chain_price(idx, K, cc_dte, 'C', spot_u)
+                    if _rb is not None:
+                        prem = _rb
                 # KELLY SIZING for CCs (with conviction + firmness)
                 if p.get('kelly_sizing') and prem > 0.05:
                     iv_use = iv_at(K, cc_dte, 'C')
@@ -4780,6 +4838,25 @@ STRATEGIES['g12_bwd_derisk_d10'] = {**_KBH, 'backwardation_derisk': True,
                                     'bwd_derisk_thresh': 0.18}                               # top-decile (fires more)
 STRATEGIES['g12_bwd_on_router']  = {**STRATEGIES['g11_router_safe'], 'backwardation_derisk': True}  # stack on best
 
+# GEN-13 — WHEEL-ONLY share-book management (user insight: don't churn shares by
+# direct buy/sell; let put/call ASSIGNMENT move the book — get PAID to enter/exit).
+# Direct z-targeting round-trips on z noise (buy-high/sell-low + spread). Disabling
+# it cuts churn ~99% AND improves return/Sharpe/DD in-sample.
+STRATEGIES['g13_wheel_only']     = {**STRATEGIES['g11_router_safe'], 'z_share_target_enabled': False}
+STRATEGIES['g13_wheel_ddtrim']   = {**STRATEGIES['g11_router_safe'], 'z_share_target_enabled': False,
+                                    'dd_trim_trigger_pct': -25}   # + emergency-only direct de-risk
+STRATEGIES['g13_wheel_bwd']      = {**STRATEGIES['g11_router_safe'], 'z_share_target_enabled': False,
+                                    'backwardation_derisk': True}  # wheel + validated bwd de-risk
+
+# GEN-14 — GAP-DRIVEN WHEEL (user design): z-target DELTA drives put sizing+strike+DTE
+# (and CC divest) so the book steers to target via ASSIGNMENT, never direct churn.
+STRATEGIES['g14_gap_wheel']      = {**STRATEGIES['g11_router_safe'], 'gap_to_wheel': True}
+STRATEGIES['g14_gap_wheel_bwd']  = {**STRATEGIES['g11_router_safe'], 'gap_to_wheel': True,
+                                    'backwardation_derisk': True}
+# TIER-3 real-chain pricing (real historical bid/ask) to settle the fidelity question.
+STRATEGIES['g14_gap_wheel_real'] = {**STRATEGIES['g11_router_safe'], 'gap_to_wheel': True,
+                                    'real_chain_pricing': True}
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
@@ -4788,6 +4865,8 @@ _KEEP_STRATEGIES = {
     'g11_putratio', 'g11_putratio_tight', 'g11_putratio_big',
     'g11_router', 'g11_router_big', 'g11_router_safe',
     'g12_bwd_derisk', 'g12_bwd_derisk_deep', 'g12_bwd_derisk_d10', 'g12_bwd_on_router',
+    'g13_wheel_only', 'g13_wheel_ddtrim', 'g13_wheel_bwd',
+    'g14_gap_wheel', 'g14_gap_wheel_bwd', 'g14_gap_wheel_real',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
