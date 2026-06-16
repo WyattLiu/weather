@@ -118,9 +118,9 @@ KERNELS = {
         # Sealed OOS on REAL ThetaData bid/ask (real_chain tier-3), de-duped costs.
         # Audit bootstrap CI [+0.38,+2.01] EXCLUDES 0 (first significant edge). Tail:
         # -40% UNG crash → -19.6% MDD (bounded by 15%-NAV cash-secured collateral cap).
-        'oos_ann': 66.0,   'oos_sharpe': 2.50, 'oos_mdd': -11.1,
-        'is_ann': 90.9,    'is_sharpe': 3.46,  'is_mdd': -14.3,
-        'why': 'Promoted 2026-06-16. PREMIUM-CENTRIC pivot (user insight): stop churning '
+        'oos_ann': 67.8,   'oos_sharpe': 2.60, 'oos_mdd': -11.1,
+        'is_ann': 96.4,    'is_sharpe': 3.68,  'is_mdd': -14.2,
+        'why': 'Promoted 2026-06-16 (numbers post put-assign bugfix). PREMIUM-CENTRIC pivot (user insight): stop churning '
                'shares — the z-target DELTA drives put sizing/strike/DTE so the book steers '
                'via ASSIGNMENT. Tiny share book, harvest UNG real high premium at ATM/near '
                '30-45 DTE. Priced on REAL bid/ask (real_chain). Capital-compliant (max 15% '
