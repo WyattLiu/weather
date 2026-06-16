@@ -716,8 +716,15 @@ def _is_tom(idx):
     return idx.day >= 27 or idx.day <= 2
 
 
-def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200):
-    """Simpler procedural runner with state dict."""
+def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200,
+                        seed_state=None, live_decision=False):
+    """Simpler procedural runner with state dict.
+
+    SINGLE SOURCE OF TRUTH for live recs: with live_decision=True + seed_state
+    (your real positions), the engine runs its NORMAL loop, then on the FINAL row
+    overwrites state with your live portfolio and emits the engine's actual orders
+    for today. Those captured trades ARE the recommendation — no re-implementation,
+    so live == backtest by construction."""
     s = {
         'cash': initial_cash, 'shares': initial_shares, 'boxx': 0, 'kold': 0,
         'short_puts': [], 'short_calls': [], 'long_puts': [], 'long_calls': [],
@@ -739,12 +746,26 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
     # BOTH sharp crashes (2021-12 → 2022-02) AND slow declines (2023-2026).
     nav_peak = float(initial_cash + initial_shares * (df['UNG'].iloc[0] if len(df) else 1))
 
-    for i in range(len(df) - 30):
+    _last_i = len(df) - 1
+    for i in range(len(df) if live_decision else len(df) - 30):
         idx = df.index[i]
         row = df.iloc[i]
         spot_u = row.get('UNG', 0)
         if spot_u <= 0:
             continue
+        # LIVE-DECISION SEED: on the final row, replace the engine's accumulated
+        # paper portfolio with the operator's REAL positions, then let the normal
+        # body emit today's orders. nav_peak reset so dd_scale doesn't see a false
+        # drawdown from the paper run.
+        if live_decision and i == _last_i and seed_state is not None:
+            s['cash'] = float(seed_state.get('cash', s['cash']))
+            s['shares'] = int(seed_state.get('shares', s['shares']))
+            s['short_puts'] = list(seed_state.get('short_puts', []))
+            s['short_calls'] = list(seed_state.get('short_calls', []))
+            s['long_puts'] = list(seed_state.get('long_puts', []))
+            s['long_calls'] = list(seed_state.get('long_calls', []))
+            nav_peak = s['cash'] + s['shares'] * spot_u
+            _live_trade_mark = len(trades)   # capture trades emitted from here
         spot_k = row.get('KOLD', 0) or 0
         if isinstance(spot_k, float) and math.isnan(spot_k):
             spot_k = 0
@@ -2694,6 +2715,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             'nav': nav, 'short_puts': len(s['short_puts']), 'short_calls': len(s['short_calls']),
         })
 
+    if live_decision and seed_state is not None:
+        # Return ONLY the orders the engine decided for today (today's seeded state).
+        _mark = locals().get('_live_trade_mark', len(trades))
+        today_orders = trades[_mark:]
+        return pd.DataFrame(history), pd.DataFrame(today_orders)
     return pd.DataFrame(history), pd.DataFrame(trades)
 
 
@@ -4881,6 +4907,11 @@ STRATEGIES['g14_gap_wheel_real'] = {**STRATEGIES['g11_router_safe'], 'gap_to_whe
 STRATEGIES['g15_gap_wheel_hedge']= {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True}
 STRATEGIES['g15_hedge_deep']     = {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True,
                                     'put_tail_hedge_otm': 0.25, 'put_tail_hedge_ratio': 0.75}
+# GEN-16 — ASSIGN instead of ROLL-DOWN (plug the -$992k PUT_ROLL_DOWN leak): when
+# puts go ITM, let them ASSIGN (acquire shares at the chosen strike), then sell CCs.
+STRATEGIES['g16_assign']         = {**STRATEGIES['g14_gap_wheel_real'], 'roll_down': False}
+STRATEGIES['g16_assign_bwd']     = {**STRATEGIES['g14_gap_wheel_real'], 'roll_down': False,
+                                    'backwardation_derisk': True}
 
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
@@ -4893,6 +4924,7 @@ _KEEP_STRATEGIES = {
     'g13_wheel_only', 'g13_wheel_ddtrim', 'g13_wheel_bwd',
     'g14_gap_wheel', 'g14_gap_wheel_bwd', 'g14_gap_wheel_real',
     'g15_gap_wheel_hedge', 'g15_hedge_deep',
+    'g16_assign', 'g16_assign_bwd',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
