@@ -58,9 +58,14 @@ KERNELS = {
         'label': 'KOLD-15 + IV-Rank + Book Hedge (gen-8 champion)',
         # OOS sealed test 2024-26, real fills, matched-share controlled:
         # +0.32 Sharpe / -1.9pp MDD / -0.3pp return vs the unhedged kernel.
-        'oos_ann': 22.4,   'oos_sharpe': 2.10, 'oos_mdd': -6.6,
-        'is_ann': 58.9,    'is_sharpe': 3.03,  'is_mdd': -13.3,
-        'why': 'Promoted 2026-06-14. Adds a KOLD 2x-inverse book hedge '
+        # HONEST numbers (2026-06-16, real opens+closes via real_chain). The old
+        # 2.10 OOS was inflated by model-mid close pricing. Under real bid/ask the
+        # forward (2024-26) edge is THIN — most prior return was 2021-22 spike + the
+        # close-fidelity gap. Best of a mediocre lot; manage expectations accordingly.
+        'oos_ann': 7.3,    'oos_sharpe': 0.70, 'oos_mdd': -13.6,
+        'is_ann': 18.8,    'is_sharpe': 1.64,  'is_mdd': -12.0,
+        'why': 'Re-instated 2026-06-16 (honest best after the close-fidelity correction). '
+               'Adds a KOLD 2x-inverse book hedge '
                '(frac 0.5) on the uncovered share book — passed all 4 rigor '
                'gates (confound-free, bootstrap-significant, OOS-validated, '
                'cost ~0). Same return as kold15_ivrank, +0.32 Sharpe, ~2pp '
@@ -147,7 +152,7 @@ KERNELS = {
     },
 }
 
-CHAMPION_KEY = 'g14_gap_wheel_real'  # promoted 2026-06-16 (premium-centric, real fills, OOS +66/2.50, tail -19.6%, bootstrap-significant); prior: g11_router_safe
+CHAMPION_KEY = 'kold15_ivrank_kbh'   # REVERTED 2026-06-16: g14 gap-wheel collapsed under honest close fills (+43→+18%/1.03/-35%); the close-pricing gap inflated it. kold15_ivrank_kbh is the honest best (+18.8%/1.64/-12% full-sample, real opens+closes).
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 

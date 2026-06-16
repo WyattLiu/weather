@@ -4990,6 +4990,10 @@ _KEEP_STRATEGIES = {
 # real conflation the audit kept catching).
 for _k, _v in STRATEGIES.items():
     _v.setdefault('real_fill_model', True)
+    # HONEST FILLS DEFAULT (2026-06-16): price opens at the real BID and closes/rolls
+    # at the real ASK (tier-3 real_chain), falling back to model only off-grid. Closes
+    # were silently at model mid before — that inflated every churn-heavy strategy.
+    _v.setdefault('real_chain_pricing', True)
 
 # Defense-in-depth: also filter out any strategy missing use_real_strikes
 STRATEGIES = {k: v for k, v in STRATEGIES.items()
