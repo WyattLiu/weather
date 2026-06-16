@@ -689,12 +689,12 @@ def fill_factor(right, dte_days, otm_pct):
 
 
 _REAL_CHAIN = None
-def real_chain_price(date, K, dte, right, spot):
-    """REAL historical BID for SELLING this option (tier-3 fidelity, ThetaData
-    real bid/ask). Returns the real bid when ThetaData covers it — INCLUDING ~$0
-    when bids have collapsed in an illiquid/low-price regime (that's the whole
-    point: you can't harvest premium that isn't bid). Returns None when off-grid
-    so the caller falls back to the BS×fill_grid estimate."""
+def real_chain_price(date, K, dte, right, spot, side='sell'):
+    """REAL historical fill for this option (tier-3, ThetaData real bid/ask).
+    side='sell' (open short / sell to close) → you receive the BID.
+    side='buy'  (buy to close a short / buy a long) → you pay the ASK.
+    Returns None when off-grid so the caller falls back to the model estimate.
+    Includes ~$0 bids in illiquid regimes (you can't harvest premium that isn't bid)."""
     global _REAL_CHAIN
     if _REAL_CHAIN is None:
         try:
@@ -706,7 +706,9 @@ def real_chain_price(date, K, dte, right, spot):
         return None
     try:
         b, a, m, real = _REAL_CHAIN.price(date, K, dte, right, spot_adj=spot)
-        return float(b) if real else None
+        if not real:
+            return None
+        return float(a) if side == 'buy' else float(b)
     except Exception:
         return None
 
@@ -1373,6 +1375,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                             tp_thresh = 0.7
             if tp_thresh is not None and T_left > 1/365:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
+                if p.get('real_chain_pricing'):   # pay the real ASK to buy back
+                    _ra = real_chain_price(idx, sp['K'], int(T_left*365), 'P', spot_u, side='buy')
+                    if _ra is not None:
+                        cv = _ra
                 if cv < sp['entry_prem'] * tp_thresh:
                     pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     s['cash'] += pnl
@@ -1456,10 +1462,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'pnl': 0.0, 'K': sp['K']})
             if roll_eligible:
                 cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
-                close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
-                s['cash'] -= cv * 100 * sp['qty']
                 nk = round(spot_u * (1 - p.get('otm_put', 0.10)))
                 npr = bs_put(spot_u, nk, 30/365, iv_at(nk, 30, 'P'))
+                if p.get('real_chain_pricing'):   # buy back at ASK, sell new at BID
+                    _ra = real_chain_price(idx, sp['K'], int(T_left*365), 'P', spot_u, side='buy')
+                    if _ra is not None:
+                        cv = _ra
+                    _rb = real_chain_price(idx, nk, 30, 'P', spot_u, side='sell')
+                    if _rb is not None:
+                        npr = _rb
+                close_pnl = (sp['entry_prem'] - cv) * 100 * sp['qty']
+                s['cash'] -= cv * 100 * sp['qty']
                 s['cash'] += npr * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                 keep.append({'entry': idx, 'K': nk, 'dte': 30, 'qty': sp['qty'],
                              'entry_prem': npr, 'rolls': sp.get('rolls', 0) + 1})
