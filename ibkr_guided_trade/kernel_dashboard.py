@@ -32,6 +32,35 @@ sys.path.insert(0, '/home/wyatt/ibkr_guided_trade')
 
 from validated_kernel_adapter import validated_verdict, CHAMPION_NAME  # type: ignore
 
+# Live single-source recommendation cache (the engine run is ~30-40s, so cache it
+# and warm it in the background — the panel then loads instantly).
+_LIVE_CACHE = {'ts': 0.0, 'data': None}
+_LIVE_TTL = 180.0
+
+
+def _compute_live():
+    try:
+        from live_kernel import get_live_recommendation
+        with _STATE_LOCK:
+            spot = _STATE_CACHE.get('spot')
+            pos = _STATE_CACHE.get('positions', [])
+            bal = _STATE_CACHE.get('balance') or {}
+            cash = (bal.get('cash') or bal.get('total_cash')
+                    or bal.get('net_liquidation') or 100000)
+        data = get_live_recommendation(pos, cash=cash, spot=spot)
+        _LIVE_CACHE['data'] = data
+        _LIVE_CACHE['ts'] = time.time()
+    except Exception as e:
+        _LIVE_CACHE['data'] = {'error': repr(e)}
+        _LIVE_CACHE['ts'] = time.time()
+    return _LIVE_CACHE['data']
+
+
+def _live_warm_loop():
+    while True:
+        _compute_live()
+        time.sleep(_LIVE_TTL)
+
 try:
     from ws_sdk.client import WSClient
     WS_AVAILABLE = True
@@ -587,6 +616,14 @@ td.neutral { color: var(--blue); }
 </head><body>
 <div class="container">
   <h1>UNG Kernel Dashboard <span class="tag" id="kernel-tag"></span></h1>
+  <section class="card" id="sot-panel" style="border:2px solid #39d2c0; margin:14px 0; padding:16px;">
+    <h2 style="color:#39d2c0; margin-bottom:8px">⚡ TODAY — Single Source of Truth <span class="tag" id="sot-kernel"></span></h2>
+    <div class="sub" style="margin-bottom:10px">Orders below come straight from the live champion engine run on your real positions — same code as the backtest, every order justified. No re-implementation, no noise.</div>
+    <div id="sot-z" class="summary-row" style="margin-bottom:8px"></div>
+    <div id="sot-theta" class="summary-row" style="margin-bottom:8px"></div>
+    <h3 style="margin:10px 0 6px">Orders for today</h3>
+    <div id="sot-orders"></div>
+  </section>
   <div class="sub">
     Validated by walk-forward backtest · <a href="http://localhost:9999">Production dashboard</a> ·
     Refresh: <span id="freshness">–</span> ·
@@ -623,14 +660,15 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- EXECUTOR BRIEF — everything the human needs to act -->
-  <div class="section">
+  <!-- EXECUTOR BRIEF — SUPERSEDED by SOT panel (Z models live there now) -->
+  <div class="section" style="display:none">
     <h2>🎯 Executor Brief</h2>
     <div id="executor-brief">Loading...</div>
   </div>
 
-  <!-- DIRECTLY USABLE ORDERS — concrete trades with OSI + ladders -->
-  <div class="section">
+  <!-- DIRECTLY USABLE ORDERS — SUPERSEDED by SOT panel (adapter recs caused the
+       phantom 'buy shares'/fake strikes; the SOT panel is the single source now) -->
+  <div class="section" style="display:none">
     <h2>📋 Directly Usable Orders (from active kernel)</h2>
     <div id="actionable-orders">Loading kernel orders...</div>
     <div class="rec-why" style="margin-top:8px">
@@ -639,8 +677,8 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- SOPHISTICATED BEAM — per-kernel candidate scoring -->
-  <div class="section">
+  <!-- SOPHISTICATED BEAM — SUPERSEDED (hidden) -->
+  <div class="section" style="display:none">
     <h2>🎯 Sophisticated Beam Search — what each kernel would do</h2>
     <div id="beam-by-kernel">Loading kernel beams...</div>
     <div class="rec-why" style="margin-top:8px">
@@ -703,7 +741,7 @@ td.neutral { color: var(--blue); }
   </div>
 
   <!-- Deep beam analysis -->
-  <div class="section">
+  <div class="section" style="display:none">
     <h2>🎯 Deep Beam Analysis — why this strike?</h2>
     <div id="beam-content">–</div>
     <div class="rec-why" style="margin-top:8px">
@@ -802,8 +840,8 @@ td.neutral { color: var(--blue); }
     <div class="summary-row" id="greeks-cards" style="margin-bottom:0"></div>
   </div>
 
-  <!-- Per-position analysis -->
-  <div class="section">
+  <!-- Per-position analysis — SUPERSEDED by SOT panel (hidden) -->
+  <div class="section" style="display:none">
     <h2>🎯 Per-position action — what to do with each contract</h2>
     <div class="scrollable">
       <table>
@@ -1606,6 +1644,53 @@ async function refreshWithKernel() {
 refresh();
 setInterval(refresh, 30000);
 
+// ── SINGLE SOURCE OF TRUTH panel (orders straight from the live engine) ──
+function sotCard(label, val, sub, cls){
+  return '<div class="card"><div class="card-label">'+label+'</div>'+
+    '<div class="card-value '+(cls||'')+'">'+(val==null?'–':val)+'</div>'+
+    '<div class="card-sub">'+(sub||'')+'</div></div>';
+}
+async function drawSOT(){
+  try{
+    const r = await fetch('/api/live'); const d = await r.json();
+    const oel = document.getElementById('sot-orders');
+    if(d.error){ oel.innerHTML='<div class="rec-why">live error: '+d.error+'</div>'; return; }
+    document.getElementById('sot-kernel').textContent = d.kernel_label || d.kernel || '';
+    const z = d.z_models||{};
+    document.getElementById('sot-z').innerHTML =
+      sotCard('Z — valuation', z.z_valuation, z.regime, z.regime==='CHEAP'?'positive':z.regime==='RICH'?'warn':'neutral')+
+      sotCard('Surge-Z — momentum', z.surge_z_momentum, z.surge_z_momentum<-1?'dumping':z.surge_z_momentum>1?'ripping':'calm','')+
+      sotCard('IV-rank', z.iv_rank==null?'–':z.iv_rank, (z.iv_rank!=null&&z.iv_rank<0.2)?'cheap vol':(z.iv_rank>0.6?'rich vol':''),'')+
+      sotCard('HH basis', z.hh_basis, z.hh_basis>0.33?'backwardation⚠':'normal', z.hh_basis>0.33?'warn':'');
+    const t = d.theta||{};
+    document.getElementById('sot-theta').innerHTML =
+      sotCard('Theta / day', '$'+fmt(t.per_day,0), 'income accruing','positive')+
+      sotCard('Theta / week', '$'+fmt(t.per_week,0), '','positive')+
+      sotCard('Theta / month', '$'+fmt(t.per_month,0), 'projected stream','positive')+
+      sotCard('As of', d.asof, 'spot $'+fmt(d.spot,2),'');
+    const recs = d.recommendations||[];
+    oel.innerHTML = recs.length ? recs.map(o =>
+      '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
+      (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+
+      '<div class="rec-why" style="color:var(--text-dim)">↳ '+(o.why||'')+'</div></div>').join('')
+      : '<div class="rec-why">Engine holds — no new orders today.</div>';
+  }catch(e){ document.getElementById('sot-orders').innerHTML='<div class="rec-why">live fetch failed: '+e+'</div>'; }
+}
+drawSOT();
+setInterval(drawSOT, 60000);
+
+// ── SCRATCH NOISE PANELS — keep only the genuinely useful ones ──
+(function scrubNoise(){
+  const HIDE = ['Executor Brief','Directly Usable','Beam','Expiration Timeline',
+    'Theta Smoothness','Expire &amp; Reopen','Expire & Reopen','What-If','P&L Profile',
+    'P&amp;L Profile','Delta Exposure','Daily Theta by Expiry','Theta Decay Waterfall',
+    'Rolling Calendar','Portfolio Greeks','Per-position','Next 45 days'];
+  document.querySelectorAll('.section').forEach(sec=>{
+    const h=sec.querySelector('h2'); if(!h) return;
+    if(HIDE.some(k=>h.textContent.includes(k.replace('&amp;','&')))) sec.style.display='none';
+  });
+})();
+
 // Chart rendering (10-minute cache on backend)
 const PLOTLY_LAYOUT_BASE = {
   paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
@@ -1751,6 +1836,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(body.encode('utf-8'))
+        elif parsed.path == '/api/live':
+            # SINGLE SOURCE OF TRUTH: orders straight from the champion engine on
+            # the real positions — justified, + theta stream + Z models. No adapter.
+            try:
+                # serve the warmed cache (engine run is ~40s); compute on miss
+                if _LIVE_CACHE['data'] is None or (time.time() - _LIVE_CACHE['ts']) > _LIVE_TTL:
+                    _compute_live()
+                body = json.dumps(_LIVE_CACHE['data'], default=str)
+            except Exception as e:
+                body = json.dumps({'error': repr(e)})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body.encode('utf-8'))
         elif parsed.path == '/api/refresh':
             _refresh()
             self.send_response(200)
@@ -1781,6 +1881,7 @@ def main():
     print(f'[kernel-dash] Bootstrapping state from WS / PG...')
     _refresh()
     threading.Thread(target=_refresh_loop, daemon=True).start()
+    threading.Thread(target=_live_warm_loop, daemon=True).start()  # warm the SOT cache
     server = ReusableTCPServer(('0.0.0.0', port), Handler)
     print(f'[kernel-dash] Serving on http://localhost:{port}  (kernel: {CHAMPION_NAME})')
     print(f'[kernel-dash] Production dashboard untouched at :9999')
