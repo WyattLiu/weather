@@ -190,29 +190,30 @@ def precompute_factor_z(df):
         df['iv_rank'] = _ivr['iv_rank'].reindex(df.index, method='ffill', limit=10)
     except Exception:
         df['iv_rank'] = float('nan')
-        # HH basis storm: spot-futures backwardation > +$0.40 → defensive mode
-        # Empirically validated: 41 events in 5yr, UNG -4.5% in 5d on storm days
-        # (see commit 8da5689 backwardation analysis). Counter-intuitive: spot
-        # crashes back to futures, not the other way around.
-        if 'eia_hh_spot_daily' in df.columns:
-            df['hh_basis'] = (df['eia_hh_spot_daily'] - df['NG']).fillna(0.0)
-            df['hh_basis_storm'] = (df['hh_basis'] > 0.40).astype(int)
-        else:
-            df['hh_basis'] = 0.0
-            df['hh_basis_storm'] = 0
-        df['ung_5d_mom'] = df['UNG'].pct_change(5)
-        df['ung_30d_return'] = df['UNG'].pct_change(30)  # for grind-down detection
-        # 60d high (for called-away cycle peak detection)
-        df['ung_60d_high'] = df['UNG'].rolling(60).max()
-        # 252d (1yr) range — for anomaly detection AND trend
-        df['ung_252d_mean'] = df['UNG'].rolling(252).mean()
-        df['ung_252d_std'] = df['UNG'].rolling(252).std()
-        df['ung_200d_ma'] = df['UNG'].rolling(200).mean()
-        df['ung_50d_ma'] = df['UNG'].rolling(50).mean()
-        # Trend: 50d above 200d AND price above 50d = uptrend confirmed
-        df['ung_uptrend'] = (df['UNG'] > df['ung_50d_ma']) & (df['ung_50d_ma'] > df['ung_200d_ma'])
-        # Downtrend: price below 200d AND 50d below 200d
-        df['ung_downtrend'] = (df['UNG'] < df['ung_200d_ma']) & (df['ung_50d_ma'] < df['ung_200d_ma'])
+    # BUGFIX 2026-06-16: the features below were mis-indented INSIDE the except
+    # above, so they only ran when the iv_rank CSV FAILED to load — i.e. almost
+    # never. That silently left hh_basis / MAs / trend flags absent in every
+    # normal backtest. Dedented to function level so they're ALWAYS computed.
+    # HH basis storm: spot-futures backwardation > +$0.40 → defensive (validated:
+    # top-5% basis → UNG -3.7% fwd-5d, see timing_signals_eval).
+    if 'eia_hh_spot_daily' in df.columns:
+        # ffill BOTH legs: NG futures is only ~50% populated, so a raw spot−NG
+        # zeros out most days. Forward-fill (≤5d) for a continuous basis.
+        df['hh_basis'] = (df['eia_hh_spot_daily'].ffill(limit=5)
+                          - df['NG'].ffill(limit=5)).fillna(0.0)
+        df['hh_basis_storm'] = (df['hh_basis'] > 0.40).astype(int)
+    else:
+        df['hh_basis'] = 0.0
+        df['hh_basis_storm'] = 0
+    df['ung_5d_mom'] = df['UNG'].pct_change(5)
+    df['ung_30d_return'] = df['UNG'].pct_change(30)  # for grind-down detection
+    df['ung_60d_high'] = df['UNG'].rolling(60).max()
+    df['ung_252d_mean'] = df['UNG'].rolling(252).mean()
+    df['ung_252d_std'] = df['UNG'].rolling(252).std()
+    df['ung_200d_ma'] = df['UNG'].rolling(200).mean()
+    df['ung_50d_ma'] = df['UNG'].rolling(50).mean()
+    df['ung_uptrend'] = (df['UNG'] > df['ung_50d_ma']) & (df['ung_50d_ma'] > df['ung_200d_ma'])
+    df['ung_downtrend'] = (df['UNG'] < df['ung_200d_ma']) & (df['ung_50d_ma'] < df['ung_200d_ma'])
     df = precompute_realized_vol(df, col='UNG')
     # ── NaN GUARD (user requirement: no kernel decision is ever made on NaN).
     # Two policies, applied here at the single source so all downstream logic
@@ -757,6 +758,32 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _peak_exh = _nav_exhedge
             s['_peak_exhedge'] = _peak_exh
             dd_pct = (_nav_exhedge - _peak_exh) / _peak_exh * 100 if _peak_exh > 0 else 0
+
+        # BACKWARDATION-SPIKE DE-RISK (validated 2026-06-16 timing_signals_eval:
+        # HH spot−futures basis in its top decile (≥$0.18) / top-5% (≥$0.33)
+        # precedes UNG −2.7% / −3.7% over the next 5 days, ~70% down — a sharp,
+        # rare BEARISH event, NOT a continuous signal (continuous basis IC≈0).
+        # The SHARE BOOK is what bleeds, so trim it ahead of the drop and let the
+        # normal z-target re-accumulate after. Respects CC coverage + a floor;
+        # cooldown prevents churn within one event window.
+        if p.get('backwardation_derisk'):
+            _basis = float(row.get('hh_basis') or 0.0)
+            _last_bwd = s.get('_last_bwd_trim_i', -999)
+            if (_basis >= p.get('bwd_derisk_thresh', 0.33)
+                    and (i - _last_bwd) >= p.get('bwd_derisk_cooldown', 5)
+                    and s['shares'] > 100):
+                _cc_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
+                _bfloor = max(p.get('bwd_derisk_floor', 1000), _cc_lots * 100)
+                _btrim = int(s['shares'] * p.get('bwd_derisk_trim_pct', 25) / 100)
+                _btrim = (_btrim // 100) * 100
+                _btrim = min(_btrim, s['shares'] - _bfloor)
+                if _btrim >= 100:
+                    s['cash'] += _btrim * (spot_u - SPREAD_SHARE)
+                    s['shares'] -= _btrim
+                    s['_last_bwd_trim_i'] = i
+                    trades.append({'date': idx, 'type': 'BACKWARDATION_DERISK_TRIM',
+                                   'pnl': 0.0, 'qty': _btrim, 'spot': spot_u,
+                                   'basis': round(_basis, 3), 'shares_after': s['shares']})
 
         # TREND-FOLLOWING SHARE TRIM — generic protection against multi-year
         # declines. When UNG in confirmed downtrend (per ung_downtrend flag),
@@ -4744,6 +4771,15 @@ STRATEGIES['g11_router_big']   = {**_ROUTER, 'put_ratio_qty_mult': 2.0}  # aggre
 STRATEGIES['g11_router_safe']  = {**_ROUTER, 'put_ratio_qty_mult': 2.0,
                                   'put_ratio_normal_only': True}    # 2x C3 only in NORMAL regime
 
+# GEN-12 — BACKWARDATION-SPIKE DE-RISK (validated directional timing overlay):
+# trim the share book on top-decile/5% HH-basis spikes (-3.7% fwd-5d, 70% down).
+STRATEGIES['g12_bwd_derisk']     = {**_KBH, 'backwardation_derisk': True}                    # thr 0.33, trim 25%
+STRATEGIES['g12_bwd_derisk_deep']= {**_KBH, 'backwardation_derisk': True,
+                                    'bwd_derisk_trim_pct': 40}                               # trim harder
+STRATEGIES['g12_bwd_derisk_d10'] = {**_KBH, 'backwardation_derisk': True,
+                                    'bwd_derisk_thresh': 0.18}                               # top-decile (fires more)
+STRATEGIES['g12_bwd_on_router']  = {**STRATEGIES['g11_router_safe'], 'backwardation_derisk': True}  # stack on best
+
 _KEEP_STRATEGIES = {
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
@@ -4751,6 +4787,7 @@ _KEEP_STRATEGIES = {
     'g11_covratio', 'g11_covratio_rich', 'g11_covratio_wide',
     'g11_putratio', 'g11_putratio_tight', 'g11_putratio_big',
     'g11_router', 'g11_router_big', 'g11_router_safe',
+    'g12_bwd_derisk', 'g12_bwd_derisk_deep', 'g12_bwd_derisk_d10', 'g12_bwd_on_router',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
     'g10_smoothz', 'g10_smoothz_book45', 'g10_full',
     'champion_kold15_ivrank_kbh', 'champion_kold15_ivrank',
