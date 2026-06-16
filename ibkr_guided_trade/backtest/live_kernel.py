@@ -97,13 +97,20 @@ def _to_engine_positions(positions):
 
 
 def _est_theta(short_puts, short_calls, spot):
-    """Rough daily theta ($/day) from outstanding shorts: premium/DTE per contract,
-    summed. Positive = income accruing to you."""
+    """Daily EXTRINSIC (time-value) decay = real theta. Only the time value decays;
+    INTRINSIC (moneyness) does not. The gap-wheel sells ITM puts whose premium is
+    mostly intrinsic, so real theta << premium/DTE. Gross of assignment."""
     th = 0.0
-    for leg in list(short_puts) + list(short_calls):
-        prem = leg.get('entry_prem', 0.3)
-        dte = max(1, leg.get('dte', 30))
-        th += prem * 100 * leg.get('qty', 0) / dte
+    for leg in short_puts:
+        K = leg.get('K', spot) or spot
+        intrinsic = max(0.0, K - spot)            # short put ITM when K > spot
+        extr = max(0.0, leg.get('entry_prem', 0) - intrinsic)
+        th += extr * 100 * leg.get('qty', 0) / max(1, leg.get('dte', 30))
+    for leg in short_calls:
+        K = leg.get('K', spot) or spot
+        intrinsic = max(0.0, spot - K)            # short call ITM when K < spot
+        extr = max(0.0, leg.get('entry_prem', 0) - intrinsic)
+        th += extr * 100 * leg.get('qty', 0) / max(1, leg.get('dte', 30))
     return th
 
 
@@ -160,21 +167,22 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                      'why': (why.format(credit=credit, pnl=pnl) if '{' in why else why),
                      'type': ty})
 
-    # projected theta from resulting shorts (seed shorts kept + new opens)
-    new_sp = sp + [{'entry': pd.Timestamp.today(), 'K': o.get('K', spot),
-                    'dte': o.get('dte', 30), 'qty': abs(o.get('qty', 0)),
-                    'entry_prem': (o.get('credit', 0) / max(1, abs(o.get('qty', 1)) * 100))}
-                   for _, o in (orders.iterrows() if len(orders) else [])
-                   if o.get('type') == 'OPEN_PUT']
-    theta_day = _est_theta(new_sp, sc, spot)
+    # EXTRINSIC-only theta, BEFORE (your current book) vs AFTER today's orders
+    # (the engine's actual post-decision book). Gross of assignment.
+    final = getattr(R, '_LIVE_FINAL', {}) or {}
+    theta_now = _est_theta(sp, sc, spot)
+    theta_after = _est_theta(final.get('short_puts', sp), final.get('short_calls', sc), spot)
 
     z = R.compute_historical_z(row)
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
         'spot': round(spot, 2), 'asof': str(df.index[-1].date()),
         'recommendations': recs,
-        'theta': {'per_day': round(theta_day, 0), 'per_week': round(theta_day * 7, 0),
-                  'per_month': round(theta_day * 30, 0)},
+        'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
+                  'after_per_month': round(theta_after * 30, 0),
+                  'note': 'extrinsic (time-value) decay only — intrinsic excluded; gross of assignment',
+                  'per_day': round(theta_after, 0), 'per_week': round(theta_after * 7, 0),
+                  'per_month': round(theta_after * 30, 0)},
         'z_models': {
             'z_valuation': round(z, 2),
             'surge_z_momentum': round(float(row.get('ung_surge_z') or 0), 2),

@@ -1472,10 +1472,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
             if days >= sp['dte']:
                 if spot_u < sp['K']:
-                    # Assigned: P&L = premium kept - assignment loss
+                    # Assigned: buy 100*qty shares at the strike (worth spot now).
+                    # BUGFIX 2026-06-16: was double-deducting the intrinsic loss
+                    # (extra `cash -= (K-spot)*...` on top of paying the strike) —
+                    # asymmetric vs CALL_ASSIGN. Correct = pay strike, receive shares;
+                    # NAV then drops by exactly (K-spot)*100*qty = the real loss.
                     loss = (sp['K'] - spot_u) * 100 * sp['qty']
-                    pnl = sp['entry_prem'] * 100 * sp['qty'] - loss
-                    s['cash'] -= (sp['K'] - spot_u) * 100 * sp['qty']
+                    pnl = sp['entry_prem'] * 100 * sp['qty'] - loss   # trade-record P&L
                     s['shares'] += sp['qty'] * 100
                     s['cash'] -= sp['qty'] * 100 * sp['K']
                     trades.append({'date': idx, 'type': 'PUT_ASSIGN', 'qty': sp['qty'],
@@ -2716,9 +2719,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         })
 
     if live_decision and seed_state is not None:
-        # Return ONLY the orders the engine decided for today (today's seeded state).
+        # Return ONLY the orders the engine decided for today (today's seeded state),
+        # and stash the POST-decision book so callers can compute after-action theta.
         _mark = locals().get('_live_trade_mark', len(trades))
         today_orders = trades[_mark:]
+        globals()['_LIVE_FINAL'] = {
+            'short_puts': list(s['short_puts']), 'short_calls': list(s['short_calls']),
+            'shares': s['shares'], 'cash': s['cash'], 'kold': s['kold'],
+        }
         return pd.DataFrame(history), pd.DataFrame(today_orders)
     return pd.DataFrame(history), pd.DataFrame(trades)
 

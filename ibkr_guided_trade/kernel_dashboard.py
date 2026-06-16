@@ -1664,9 +1664,9 @@ async function drawSOT(){
       sotCard('HH basis', z.hh_basis, z.hh_basis>0.33?'backwardation⚠':'normal', z.hh_basis>0.33?'warn':'');
     const t = d.theta||{};
     document.getElementById('sot-theta').innerHTML =
-      sotCard('Theta / day', '$'+fmt(t.per_day,0), 'income accruing','positive')+
-      sotCard('Theta / week', '$'+fmt(t.per_week,0), '','positive')+
-      sotCard('Theta / month', '$'+fmt(t.per_month,0), 'projected stream','positive')+
+      sotCard('Theta now / day', '$'+fmt(t.now_per_day,0), 'current book','')+
+      sotCard('Theta after orders / day', '$'+fmt(t.after_per_day,0), 'post today','positive')+
+      sotCard('Theta after / month', '$'+fmt(t.after_per_month,0), 'extrinsic only · gross of assign','positive')+
       sotCard('As of', d.asof, 'spot $'+fmt(d.spot,2),'');
     const recs = d.recommendations||[];
     oel.innerHTML = recs.length ? recs.map(o =>
