@@ -112,9 +112,26 @@ KERNELS = {
         'why': 'Reactive DD-trim, between smooth and walkforward_safe. '
                'Solid return with active risk control.',
     },
+    'g11_router_safe': {
+        'strategy': 'g11_router_safe',
+        'label': 'Gen-11 Router (signal→structure, safe)',
+        # HONEST post-correction sealed OOS (real fills, $0.07 MEASURED spread,
+        # de-duped cost model, feature-indentation bugfix). NOT comparable to the
+        # inflated pre-2026-06-16 figures on the other entries above.
+        'oos_ann': 20.1,   'oos_sharpe': 1.50, 'oos_mdd': -9.2,
+        'is_ann': 53.5,    'is_sharpe': 2.67,  'is_mdd': -17.4,
+        'why': 'Promoted 2026-06-16. Signal→structure router: stacks ITM-put '
+               '(deep-cheap), ITM-CC divest (rich+hot), covered tail-ratio '
+               '(neutral+high-IV) and 2x put-ratio (deep-cheap, NORMAL-gated); C1 '
+               'backspread excluded. Under the FULLY-CORRECTED engine it OOS-DOMINATES '
+               'the gen-8 champion: +3.2pp return, +0.13 Sharpe, tighter DD, '
+               'exposure-neutral (geometry not delta). These are HONEST post-correction '
+               'numbers (~1.5 OOS) — the old entries above show inflated pre-6/16 figures. '
+               'See frontier.png + KERNEL_LAB.md.',
+    },
 }
 
-CHAMPION_KEY = 'kold15_ivrank_kbh'   # promoted 2026-06-14 (+ KOLD book hedge); prior: kold15_ivrank
+CHAMPION_KEY = 'g11_router_safe'     # promoted 2026-06-16 (OOS-dominates gen-8 champ on corrected engine); prior: kold15_ivrank_kbh
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 
