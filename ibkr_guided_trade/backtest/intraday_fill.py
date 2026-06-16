@@ -119,6 +119,54 @@ def intraday_fill_price(date, K_adj, dte, right, spot, side, patience=0.6):
     return px, r.get('spread_pct'), r.get('vs_mid')
 
 
+def execute_audit(date, K_adj, dte, right, side, exec_window=15,
+                  avoid_print=True, patience=0.6):
+    """Full audit execution: returns dict with the fill PRICE, the EXEC TIME (minute),
+    the BID/ASK/SPREAD at that time, and the SOURCE ('intraday' / None for fallback).
+    Microstructure timing: prefer the `exec_window` hour, and AVOID the Thursday
+    pre-EIA-print window (before 11:00 ET) where spreads blow out. Picks, among the
+    allowed bars, the one nearest exec_window (tie-break: tightest spread)."""
+    import pandas as pd
+    d = pd.Timestamp(date).normalize()
+    ds = d.date().isoformat()
+    exps = _expiries_on(ds)
+    if not exps:
+        return None
+    target = (d + pd.Timedelta(days=int(dte))).date()
+    exp = min(exps, key=lambda e: abs((e - target).days))
+    if abs((exp - target).days) > 12:
+        return None
+    K_raw = float(K_adj)
+    for sd, f in _SPLITS:
+        if d < pd.Timestamp(sd):
+            K_raw /= f
+    bars = [(t, b, a) for (t, b, a) in _bars(ds, exp.isoformat(), round(K_raw, 1), right)
+            if b and a and a > b and b > 0]
+    if not bars:
+        return None
+    is_thu = d.dayofweek == 3
+    allowed = [(t, b, a) for (t, b, a) in bars
+               if not (avoid_print and is_thu and t.hour < 11)] or bars
+    # choose exec bar: nearest the preferred window, tie-break tightest spread
+    def key(x):
+        t, b, a = x
+        return (abs(t.hour - exec_window), (a - b) / ((a + b) / 2))
+    t, bid, ask = min(allowed, key=key)
+    mid = (bid + ask) / 2
+    half = (ask - bid) / 2
+    rel = (ask - bid) / mid if mid > 0 else 1.0
+    cross = (1.0 - patience) * min(1.0, rel / 0.30)
+    px = (mid - cross * half) if side == 'sell' else (mid + cross * half)
+    sf = 1.0
+    for sd, f in _SPLITS:
+        if d < pd.Timestamp(sd):
+            sf = f
+    return {'price': round(px * sf, 4), 'exec_time': str(t),
+            'bid': round(bid * sf, 4), 'ask': round(ask * sf, 4),
+            'spread_pct': round(rel * 100, 1), 'mid': round(mid * sf, 4),
+            'vs_mid': round((px - mid) * sf, 4), 'source': 'intraday'}
+
+
 if __name__ == '__main__':
     # demo: the $11 put on 2026-06-12 — sell, patient vs eager, vs the EOD touch
     print("Intraday fill demo — UNG $11 PUT, 2026-06-12 (exp 2026-07-17):")

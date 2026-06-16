@@ -742,6 +742,32 @@ def _is_tom(idx):
     return idx.day >= 27 or idx.day <= 2
 
 
+def exec_fill(idx, K, dte, right, side, spot, p, model_price):
+    """Unified, AUDITABLE fill. Returns (price, audit) where audit always carries
+    exec_time, bid, ask, spread_pct, source. Priority: intraday (real minute path +
+    microstructure timing) → EOD real bid/ask → BS model. Every backtest trade can
+    thus be audited: WHEN it filled, the SPREAD then, and WHERE the price came from."""
+    eod_str = (idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]) + ' EOD'
+    if p.get('intraday_exec'):
+        try:
+            from intraday_fill import execute_audit
+            a = execute_audit(idx, K, dte, right, side,
+                              exec_window=p.get('exec_window', 15),
+                              avoid_print=p.get('avoid_eia_print', True),
+                              patience=p.get('exec_patience', 0.6))
+            if a:
+                return a['price'], a
+        except Exception:
+            pass
+    if p.get('real_chain_pricing'):
+        rb = real_chain_price(idx, K, dte, right, spot, side=side)
+        if rb is not None:
+            return rb, {'price': round(rb, 4), 'exec_time': eod_str, 'bid': None,
+                        'ask': None, 'spread_pct': None, 'source': 'eod_real'}
+    return model_price, {'price': round(model_price, 4), 'exec_time': eod_str,
+                         'bid': None, 'ask': None, 'spread_pct': None, 'source': 'model'}
+
+
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200,
                         seed_state=None, live_decision=False):
     """Simpler procedural runner with state dict.
@@ -2315,9 +2341,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         per_dte_qty = max(1, put_qty // n_dtes)
                         # Re-margin-check the FULL allocation
                         for dte_choice in dte_ladder:
-                            # Re-price for this specific DTE
+                            # Re-price for this specific DTE — model, then AUDITED fill
+                            # (intraday minute path → EOD real → model), stamping the
+                            # trade with exec_time / bid / ask / spread / source.
                             iv_dte = iv_at(K, dte_choice, 'P')
-                            prem_dte = bs_put(spot_u, K, dte_choice/365, iv_dte)
+                            model_dte = bs_put(spot_u, K, dte_choice/365, iv_dte)
+                            if p.get('real_fill_model', True):
+                                model_dte *= fill_factor('P', dte_choice, 1 - K / spot_u)
+                            prem_dte, _aud = exec_fill(idx, K, dte_choice, 'P', 'sell',
+                                                       spot_u, p, model_dte)
                             if prem_dte < 0.05:
                                 continue
                             credit_dte = prem_dte * 100 * per_dte_qty - per_dte_qty * SPREAD_OPTION * 100
@@ -2326,7 +2358,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                     'qty': per_dte_qty, 'entry_prem': prem_dte})
                             trades.append({'date': idx, 'type': 'OPEN_PUT',
                                            'pnl': 0.0, 'credit': credit_dte,
-                                           'K': K, 'qty': per_dte_qty, 'dte': dte_choice})
+                                           'K': K, 'qty': per_dte_qty, 'dte': dte_choice,
+                                           'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
+                                           'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
+                                           'fill_source': _aud['source']})
                         # GEN-11 C3 — buy the long-put FLOOR (1 per 2 short puts)
                         # at a lower strike = defined downside for the aggressive
                         # accumulation. Settles vs spot at expiry (pays if UNG dumps).
@@ -4948,6 +4983,8 @@ STRATEGIES['g14_gap_wheel_bwd']  = {**STRATEGIES['g11_router_safe'], 'gap_to_whe
 # TIER-3 real-chain pricing (real historical bid/ask) to settle the fidelity question.
 STRATEGIES['g14_gap_wheel_real'] = {**STRATEGIES['g11_router_safe'], 'gap_to_wheel': True,
                                     'real_chain_pricing': True}
+# INTRADAY-EXECUTION champion: real minute fills + microstructure timing (15:00 window, avoid Thu pre-print)
+STRATEGIES['champion_intraday'] = {**STRATEGIES['champion_kold15_ivrank_kbh'], 'intraday_exec': True, 'exec_window': 15, 'avoid_eia_print': True}
 # Tail-hedge exploration: gap-wheel + super-OTM long-put crash insurance.
 STRATEGIES['g15_gap_wheel_hedge']= {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True}
 STRATEGIES['g15_hedge_deep']     = {**STRATEGIES['g14_gap_wheel_real'], 'put_tail_hedge': True,
@@ -4967,7 +5004,7 @@ _KEEP_STRATEGIES = {
     'g11_router', 'g11_router_big', 'g11_router_safe',
     'g12_bwd_derisk', 'g12_bwd_derisk_deep', 'g12_bwd_derisk_d10', 'g12_bwd_on_router',
     'g13_wheel_only', 'g13_wheel_ddtrim', 'g13_wheel_bwd',
-    'g14_gap_wheel', 'g14_gap_wheel_bwd', 'g14_gap_wheel_real',
+    'g14_gap_wheel', 'g14_gap_wheel_bwd', 'g14_gap_wheel_real', 'champion_intraday',
     'g15_gap_wheel_hedge', 'g15_hedge_deep',
     'g16_assign', 'g16_assign_bwd',
     'g10_base', 'g10_book45', 'g10_book55', 'g10_book45_h6', 'g10_conv',
