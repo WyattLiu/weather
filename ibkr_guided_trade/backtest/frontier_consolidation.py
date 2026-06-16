@@ -22,17 +22,14 @@ CACHE = os.path.join(THIS, 'cache')
 RESULTS = os.path.join(THIS, 'results')
 TEST_START = '2024-01-02'   # sealed OOS window (matches honest_walkforward)
 
-# curated frontier set: label -> strategy key
+# curated frontier set: label -> strategy key (HONEST FILLS — real bid/ask, P(mid) model)
 FRONTIER = [
-    ('Champion (live, gen-8)', 'champion_kold15_ivrank_kbh'),
-    ('KOLD15+IVrank (gen-2)', 'champion_kold15_ivrank'),
-    ('Premium Harvest (SI)', 'premium_harvest_scale_invariant'),
-    ('Premium Harvest', 'premium_harvest'),
-    ('Target-25 Smooth', 'target_25_smooth'),
+    ('kold15_ivrank_kbh (LIVE, gen-8)', 'champion_kold15_ivrank_kbh'),
+    ('kold15_ivrank (gen-2)', 'champion_kold15_ivrank'),
     ('Router-safe (gen-11)', 'g11_router_safe'),
-    ('PutRatio-2x (gen-11 C3)', 'g11_putratio_big'),
-    ('ITM-put (gen-11 A)', 'g11_itmput_conv'),
-    ('Bwd-derisk on router (g12)', 'g12_bwd_on_router'),
+    ('PutRatio-2x (gen-11)', 'g11_putratio_big'),
+    ('ITM-put (gen-11)', 'g11_itmput_conv'),
+    ('Gap-Wheel (g14, un-promoted)', 'g14_gap_wheel_real'),
     ('Gen-10 book55 (rejected)', 'g10_book55'),
 ]
 
@@ -108,10 +105,10 @@ def main():
         for _, r in res.iterrows())
     fig.text(0.5, -0.02, leg, ha='center', va='top', fontsize=8.5,
              family='monospace', bbox=dict(boxstyle='round', fc='#f6f8fa', ec='#d0d7de'))
-    fig.suptitle('UNG Kernel Frontier — corrected engine (real fills, $0.07 spread, '
-                 'feature bugfix, de-duped costs)\n(★ red ring = live champion; '
-                 'tight cluster = kernels are near-equivalent; only rejected gen-10 sits apart)',
-                 fontsize=12, fontweight='bold')
+    fig.suptitle('UNG Kernel Frontier — HONEST FILLS (real bid/ask, P(mid|spread,DTE) model, '
+                 'put-assign bugfix)\n(★ red ring = live champion kold15_ivrank_kbh; OOS is the '
+                 'forward-relevant panel — thin edge ~Sharpe 0.75; full-sample inflated by 2021-22 spike)',
+                 fontsize=11, fontweight='bold')
     fig.tight_layout(rect=[0, 0.10, 1, 0.95])
     out = os.path.join(RESULTS, 'frontier.png')
     fig.savefig(out, bbox_inches='tight')

@@ -36,6 +36,11 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # WS = zero commission
 COMMISSION = 0.0
+# Fill realism: fraction-of-mid optimism for the spread-width/DTE fill model
+# (real_chain_price). 1.0 = the calibrated P(mid) model; >1 fills nearer mid
+# (more optimistic), <1 nearer the touch (more pessimistic). Honest middle ground
+# between always-mid (too good) and always-touch (too harsh).
+FILL_MID_OPTIMISM = 1.0
 SPREAD_OPTION = 0.07  # $0.07/share half-spread, calibrated to MEASURED UNG NBBO
 # (2026-06-12): near-term legs ~$0.04 wide (~$0.02 half), but the 45-60d legs the
 # kernel actually trades run ~$0.14-0.19 wide (~$0.07-0.09 half). Modal DTE ~45d →
@@ -688,13 +693,24 @@ def fill_factor(right, dte_days, otm_pct):
     return 0.92
 
 
+def _p_mid_fill(rel_spread, dte):
+    """Probability you get a MID fill (vs having to cross to the touch), as a
+    function of spread WIDTH and DTE. Tight spread → easy mid fill; wide spread →
+    you usually must cross. More DTE → more time to work the limit → nearer mid.
+    Neither extreme (always-mid = too optimistic, always-touch = too pessimistic)."""
+    base = 1.0 - min(1.0, rel_spread / 0.20)          # ~0% wide→1.0, ≥20% wide→0.0
+    dte_adj = 0.6 + 0.4 * min(1.0, (dte or 30) / 45.0)  # short DTE shaves patience
+    return max(0.0, min(1.0, base * dte_adj))
+
+
 _REAL_CHAIN = None
 def real_chain_price(date, K, dte, right, spot, side='sell'):
-    """REAL historical fill for this option (tier-3, ThetaData real bid/ask).
-    side='sell' (open short / sell to close) → you receive the BID.
-    side='buy'  (buy to close a short / buy a long) → you pay the ASK.
-    Returns None when off-grid so the caller falls back to the model estimate.
-    Includes ~$0 bids in illiquid regimes (you can't harvest premium that isn't bid)."""
+    """REAL historical fill (tier-3, ThetaData bid/ask) priced at the EXPECTED fill
+    between mid and the touch — modeled via P(mid fill | spread width, DTE):
+      sell → mid − (1−P)·half_spread   (you receive between mid and bid)
+      buy  → mid + (1−P)·half_spread   (you pay between mid and ask)
+    Tight/longer-DTE ≈ mid; wide/short-DTE ≈ touch. Returns None off-grid (model fallback).
+    Tunable via FILL_MID_OPTIMISM (1.0 = this model; >1 more mid, <1 more touch)."""
     global _REAL_CHAIN
     if _REAL_CHAIN is None:
         try:
@@ -708,7 +724,15 @@ def real_chain_price(date, K, dte, right, spot, side='sell'):
         b, a, m, real = _REAL_CHAIN.price(date, K, dte, right, spot_adj=spot)
         if not real:
             return None
-        return float(a) if side == 'buy' else float(b)
+        b, a = float(b), float(a)
+        if a <= b:                       # locked/crossed/one-sided → just use it
+            return a if side == 'buy' else b
+        mid = (a + b) / 2.0
+        half = (a - b) / 2.0
+        rel = (a - b) / mid if mid > 0 else 1.0
+        p_mid = min(1.0, _p_mid_fill(rel, dte) * FILL_MID_OPTIMISM)
+        give = (1.0 - p_mid) * half      # expected slippage from mid toward the touch
+        return mid + give if side == 'buy' else mid - give
     except Exception:
         return None
 

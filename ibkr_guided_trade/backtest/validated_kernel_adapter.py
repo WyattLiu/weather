@@ -62,8 +62,8 @@ KERNELS = {
         # 2.10 OOS was inflated by model-mid close pricing. Under real bid/ask the
         # forward (2024-26) edge is THIN — most prior return was 2021-22 spike + the
         # close-fidelity gap. Best of a mediocre lot; manage expectations accordingly.
-        'oos_ann': 7.3,    'oos_sharpe': 0.70, 'oos_mdd': -13.6,
-        'is_ann': 18.8,    'is_sharpe': 1.64,  'is_mdd': -12.0,
+        'oos_ann': 7.9,    'oos_sharpe': 0.75, 'oos_mdd': -13.4,
+        'is_ann': 19.6,    'is_sharpe': 1.70,  'is_mdd': -12.0,
         'why': 'Re-instated 2026-06-16 (honest best after the close-fidelity correction). '
                'Adds a KOLD 2x-inverse book hedge '
                '(frac 0.5) on the uncovered share book — passed all 4 rigor '
