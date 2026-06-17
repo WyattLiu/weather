@@ -47,7 +47,8 @@ def _compute_live():
             bal = _STATE_CACHE.get('balance') or {}
             cash = (bal.get('cash') or bal.get('total_cash')
                     or bal.get('net_liquidation') or 100000)
-        data = get_live_recommendation(pos, cash=cash, spot=spot)
+        data = get_live_recommendation(pos, cash=cash, spot=spot,
+                                       kernel_key='regime_wheel_boxx_live')  # fast live variant of the winner
         # EXECUTION ADVISOR: annotate each order with a manual-execution plan
         # (which minute to work it + limit ladder mid→touch). Operator runs these by hand.
         try:
@@ -1665,6 +1666,20 @@ async function drawSOT(){
     const oel = document.getElementById('sot-orders');
     if(d.error){ oel.innerHTML='<div class="rec-why">live error: '+d.error+'</div>'; return; }
     document.getElementById('sot-kernel').textContent = d.kernel_label || d.kernel || '';
+    // ── REGIME banner: the state driving today's posture (accumulate/neutral/distribute) ──
+    const rg = d.regime;
+    if (rg) {
+      const col = rg.state==='ACCUMULATE'?'#2e7d32':(rg.state==='DISTRIBUTE'?'#c62828':'#666');
+      let rel = document.getElementById('sot-regime');
+      if (!rel) { rel=document.createElement('div'); rel.id='sot-regime';
+                  const z0=document.getElementById('sot-z'); z0.parentNode.insertBefore(rel, z0); }
+      rel.innerHTML = '<div style="margin:6px 0 10px;padding:10px 14px;border-radius:6px;'+
+        'background:'+col+'14;border-left:4px solid '+col+'">'+
+        '<span style="font-weight:700;color:'+col+';font-size:1.05rem">REGIME: '+rg.state+'</span>'+
+        '<span style="margin-left:14px;color:var(--text-dim)">storage-surprise z '+rg.storage_surprise_z+
+        ' · strength '+rg.regime_strength+' · 60d price-dd '+rg.price_dd_60d+'%</span>'+
+        '<div style="margin-top:4px;font-size:.9rem">↳ '+rg.posture+'</div></div>';
+    }
     const z = d.z_models||{};
     document.getElementById('sot-z').innerHTML =
       sotCard('Z — valuation', z.z_valuation, z.regime, z.regime==='CHEAP'?'positive':z.regime==='RICH'?'warn':'neutral')+

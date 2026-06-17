@@ -770,11 +770,10 @@ def _is_tom(idx):
 
 
 def exec_fill(idx, K, dte, right, side, spot, p, model_price):
-    """Unified, AUDITABLE fill. Returns (price, audit) where audit always carries
-    exec_time, bid, ask, spread_pct, source. Priority: intraday (real minute path +
-    microstructure timing) → EOD real bid/ask → BS model. Every backtest trade can
-    thus be audited: WHEN it filled, the SPREAD then, and WHERE the price came from."""
-    eod_str = (idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]) + ' EOD'
+    """Unified, AUDITABLE fill. Returns (price, audit). We NEVER execute at EOD, so the
+    EOD-real fill model is RETIRED — priority is intraday (real minute path + microstructure
+    timing) → BS model (only as a gap fallback when a contract lacks minute data)."""
+    eod_str = (idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10])
     if p.get('intraday_exec'):
         try:
             from intraday_fill import execute_audit
@@ -791,11 +790,7 @@ def exec_fill(idx, K, dte, right, side, spot, p, model_price):
                 return a['price'], a
         except Exception:
             pass
-    if p.get('real_chain_pricing'):
-        rb = real_chain_price(idx, K, dte, right, spot, side=side)
-        if rb is not None:
-            return rb, {'price': round(rb, 4), 'exec_time': eod_str, 'bid': None,
-                        'ask': None, 'spread_pct': None, 'source': 'eod_real'}
+    # EOD-real fill RETIRED (we never execute EOD). Gap fallback = BS model only.
     return model_price, {'price': round(model_price, 4), 'exec_time': eod_str,
                          'bid': None, 'ask': None, 'spread_pct': None, 'source': 'model'}
 
@@ -5174,7 +5169,12 @@ STRATEGIES['regime_wheel_cont'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
 # WINNER: regime_wheel + BOXX cash-sweep (idle cash -> T-bill yield). OOS +11.3%/
 # Sharpe 1.20/-9% MDD. (regime-KOLD tested + dropped: inverse-ETF decay > decline capture.)
 STRATEGIES['regime_wheel_boxx'] = {**STRATEGIES['regime_wheel'],
-    'boxx': True, 'boxx_sweep_full': True, 'boxx_cash_buffer': 15000}
+    'boxx': True, 'boxx_sweep_full': True, 'boxx_cash_buffer': 15000,
+    'intraday_exec': True, 'exec_window': 15, 'avoid_eia_print': True}  # minute-fill by default (EOD-real retired)
+# FAST live-decision variant for the dashboard (model fills → today's orders in ~15s; the
+# execution advisor supplies the real minute pricing/ladder for the operator to act on).
+STRATEGIES['regime_wheel_boxx_live'] = {**STRATEGIES['regime_wheel_boxx'],
+    'intraday_exec': False, 'real_chain_pricing': False}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
@@ -5185,7 +5185,7 @@ STRATEGIES['regime_wheel_boxx_v4'] = {**STRATEGIES['regime_wheel_boxx_v3'],
     'crash_fallback': True, 'crash_dd': -0.18, 'crash_distribute_extra': 0.6}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',

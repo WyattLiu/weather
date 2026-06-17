@@ -174,9 +174,22 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     theta_after = _est_theta(final.get('short_puts', sp), final.get('short_calls', sc), spot)
 
     z = R.compute_historical_z(row)
+    # ── REGIME STATE (regime_wheel_boxx driver) — what regime we're in TODAY and the
+    #    posture it implies, so the operator knows accumulate vs neutral vs distribute.
+    _ssz = float(row.get('storage_surprise_z') or 0.0)
+    _rs = float(row.get('regime_strength') or 0.0)
+    _dd60 = float(row.get('ung_dd_60') or 0.0)
+    _state = 'ACCUMULATE' if _ssz < -0.5 else ('DISTRIBUTE' if _ssz > 0.5 else 'NEUTRAL')
+    _posture = {'ACCUMULATE': 'lean long — shares ~17% NAV, BOXX ~50%, full puts, far CCs',
+                'NEUTRAL': 'balanced — shares ~16%, BOXX ~48%, harvest ITM/OTM premium',
+                'DISTRIBUTE': 'defensive — shares ~12%, BOXX ~56%, sell ITM calls, sweep cash'}[_state]
+    regime = {'state': _state, 'storage_surprise_z': round(_ssz, 2),
+              'regime_strength': round(_rs, 2), 'price_dd_60d': round(_dd60 * 100, 1),
+              'posture': _posture}
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
         'spot': round(spot, 2), 'asof': str(df.index[-1].date()),
+        'regime': regime,
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
                   'after_per_month': round(theta_after * 30, 0),
