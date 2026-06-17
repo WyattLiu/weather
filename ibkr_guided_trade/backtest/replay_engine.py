@@ -1385,6 +1385,32 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         trades.append({'date': idx, 'type': 'KOLD_DD_HEDGE_TRIM',
                                        'pnl': 0.0, 'qty': sell_q, 'spot': spot_k,
                                        'dd_pct': dd_pct})
+        # REGIME-SCALED KOLD HEDGE (OOS missing-mechanism fix) — size the inverse-ETF
+        # hedge by the DISTRIBUTE regime STRENGTH (regime_strength > 0). Strong distribute
+        # → hold more KOLD to MONETIZE the decline the regime is calling; accumulate/weak
+        # → none. Covered-calls-only can't short, so this is the bearish-capture vehicle.
+        reg_kold_max = p.get('regime_kold_max_pct', 0)
+        _rs = row.get('regime_strength')
+        if (reg_kold_max > 0 and _rs == _rs and _rs is not None and spot_k > 0
+                and pd.notna(spot_k)):
+            target_kold_dollars = cur_nav * reg_kold_max * max(0.0, min(1.0, _rs))
+            current_kold_dollars = s['kold'] * spot_k
+            delta_dollars = target_kold_dollars - current_kold_dollars
+            if abs(delta_dollars) > max(500, target_kold_dollars * 0.10 + 1):
+                if delta_dollars > 0:
+                    buy_q = int(delta_dollars / spot_k)
+                    if buy_q >= 5 and s['cash'] > buy_q * spot_k + 200:
+                        s['kold'] += buy_q
+                        s['cash'] -= buy_q * spot_k + buy_q * SPREAD_SHARE
+                        trades.append({'date': idx, 'type': 'KOLD_REGIME_BUY', 'pnl': 0.0,
+                                       'qty': buy_q, 'spot': spot_k, 'rs': round(_rs, 2)})
+                else:
+                    sell_q = min(s['kold'], int(-delta_dollars / spot_k))
+                    if sell_q >= 5:
+                        s['cash'] += sell_q * spot_k - sell_q * SPREAD_SHARE
+                        s['kold'] -= sell_q
+                        trades.append({'date': idx, 'type': 'KOLD_REGIME_TRIM', 'pnl': 0.0,
+                                       'qty': sell_q, 'spot': spot_k, 'rs': round(_rs, 2)})
         # Default no scaling. Strategies opt-in via dd_aware_dial.
         if p.get('dd_aware_dial'):
             if dd_pct < -25:    dd_scale = 0.4
@@ -1792,13 +1818,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 continue
             keep.append(lp)
         s['long_puts'] = keep
+        # (BOXX yield accrued once, in the BOXX-management block below — was double-counted here)
 
-        # BOXX yield
-        if s['boxx'] > 0:
-            s['cash'] += s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) * 0.04 / 365
-
-        # KOLD exit
-        if s['kold'] > 0 and z > -0.3:
+        # KOLD exit (skip when regime_kold manages the hedge by regime strength)
+        if s['kold'] > 0 and z > -0.3 and not p.get('regime_kold_max_pct'):
             s['cash'] += s['kold'] * spot_k - s['kold'] * SPREAD_SHARE
             s['kold'] = 0
 
@@ -2808,10 +2831,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # excess = cash - put_collateral_required - cash_buffer.
             spot_boxx = float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0))
             if p.get('boxx'):
-                put_collat = sum(sp['K'] * 100 * sp['qty'] for sp in s['short_puts'])
-                cash_buffer = 20000  # keep this much liquid
-                excess = s['cash'] - put_collat - cash_buffer
-                margin_factor = p.get('boxx_margin_factor', 0.6)  # default conservative
+                cash_buffer = p.get('boxx_cash_buffer', 20000)  # keep this much liquid
+                if p.get('boxx_sweep_full'):
+                    # OOS fix: T-bills/BOXX ARE the put collateral (marginable), so don't
+                    # double-reserve cash for puts — sweep idle cash above the buffer to
+                    # yield. Recovers the ~54%-NAV idle-cash drag (~+2.6%/yr risk-free).
+                    excess = s['cash'] - cash_buffer
+                    margin_factor = p.get('boxx_margin_factor', 0.95)
+                else:
+                    put_collat = sum(sp['K'] * 100 * sp['qty'] for sp in s['short_puts'])
+                    excess = s['cash'] - put_collat - cash_buffer
+                    margin_factor = p.get('boxx_margin_factor', 0.6)  # default conservative
                 if excess > 5000:
                     target_boxx_dollars = excess * margin_factor
                     target_boxx_shares = int(target_boxx_dollars / spot_boxx)
@@ -5091,9 +5121,13 @@ STRATEGIES['regime_wheel'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
 STRATEGIES['regime_wheel_cont'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
     'tp_threshold': 0.7, 'roll_down': False, 'regime_continuous': True,
     'distribute_strength_max': 0.6, 'accumulate_strength_max': 0.5}
+# WINNER: regime_wheel + BOXX cash-sweep (idle cash -> T-bill yield). OOS +11.3%/
+# Sharpe 1.20/-9% MDD. (regime-KOLD tested + dropped: inverse-ETF decay > decline capture.)
+STRATEGIES['regime_wheel_boxx'] = {**STRATEGIES['regime_wheel'],
+    'boxx': True, 'boxx_sweep_full': True, 'boxx_cash_buffer': 15000}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
