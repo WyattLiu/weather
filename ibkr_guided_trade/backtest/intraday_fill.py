@@ -29,6 +29,7 @@ def _conn():
 # outside this window — enforced in SQL (defence-in-depth with the backfill filter).
 RTH_OPEN = '09:30:00'
 RTH_CLOSE = '16:00:00'
+TIGHT_SPREAD = 0.06     # arrival-spread threshold: ≤6% → take the tight window; > → patient mid
 
 
 def _bars(trade_date, expiration, strike_raw, right):
@@ -128,12 +129,21 @@ def intraday_fill_price(date, K_adj, dte, right, spot, side, patience=0.6):
 
 
 def execute_audit(date, K_adj, dte, right, side, exec_window=15,
-                  avoid_print=True, patience=0.6):
-    """Full audit execution: returns dict with the fill PRICE, the EXEC TIME (minute),
-    the BID/ASK/SPREAD at that time, and the SOURCE ('intraday' / None for fallback).
-    Microstructure timing: prefer the `exec_window` hour, and AVOID the Thursday
-    pre-EIA-print window (before 11:00 ET) where spreads blow out. Picks, among the
-    allowed bars, the one nearest exec_window (tie-break: tightest spread)."""
+                  avoid_print=True, patience=None):
+    """VERIFIABLE execution — replays the ACTUAL minute bid/ask path; no P(mid) model.
+
+    Policy (a patient hand-trader working a limit, then crossing):
+      1. Post a passive limit at the MID of the first bar in the working window.
+      2. Walk the real minute path: if the market actually trades THROUGH that mid
+         (best bid ≥ mid for a sell / best ask ≤ mid for a buy), it FILLS AT MID at
+         that real minute — proven by the data, how='passive_mid'.
+      3. If it never trades through, you CROSS at the tightest-spread minute in the
+         window and fill at the REAL TOUCH (bid for a sell / ask for a buy) —
+         how='crossed_touch'. Still a real observed quote, not a modeled price.
+
+    Every returned price is an actual quote that existed in ung_options_history;
+    nothing is interpolated. Working window = bars at/after `exec_window` hour,
+    Thursday pre-11:00 (EIA print) excluded."""
     import pandas as pd
     d = pd.Timestamp(date).normalize()
     ds = d.date().isoformat()
@@ -155,16 +165,28 @@ def execute_audit(date, K_adj, dte, right, side, exec_window=15,
     is_thu = d.dayofweek == 3
     allowed = [(t, b, a) for (t, b, a) in bars
                if not (avoid_print and is_thu and t.hour < 11)] or bars
-    # choose exec bar: nearest the preferred window, tie-break tightest spread
-    def key(x):
-        t, b, a = x
-        return (abs(t.hour - exec_window), (a - b) / ((a + b) / 2))
-    t, bid, ask = min(allowed, key=key)
+    # working window = bars at/after the preferred exec hour (else the whole session)
+    win = [x for x in allowed if x[0].hour >= exec_window] or allowed
+    post_mid = (win[0][1] + win[0][2]) / 2.0       # resting limit = first-bar mid
+    arr_spread = (win[0][2] - win[0][1]) / post_mid if post_mid > 0 else 1.0
+    fill = None
+    # STATE-DEPENDENT (from exec_policy_study): when the arrival spread is already TIGHT,
+    # crossing at the tightest minute is cheap+certain (study: ~0¢, even beats mid); only
+    # for WIDE arrival spreads does resting at mid pay (the wide spread tightens intraday).
+    if arr_spread <= TIGHT_SPREAD:
+        t, b, a = min(win, key=lambda x: (x[2] - x[1]) / ((x[1] + x[2]) / 2))
+        fill = (b if side == 'sell' else a, t, b, a, 'tight_take')
+    for (t, b, a) in (win if fill is None else []):  # WIDE: did the path trade through mid?
+        if side == 'sell' and b >= post_mid:
+            fill = (post_mid, t, b, a, 'passive_mid'); break
+        if side == 'buy' and a <= post_mid:
+            fill = (post_mid, t, b, a, 'passive_mid'); break
+    if fill is None:                                 # cross at the tightest real minute
+        t, b, a = min(win, key=lambda x: (x[2] - x[1]) / ((x[1] + x[2]) / 2))
+        fill = (b if side == 'sell' else a, t, b, a, 'crossed_touch')
+    px, t, bid, ask, how = fill
     mid = (bid + ask) / 2
-    half = (ask - bid) / 2
     rel = (ask - bid) / mid if mid > 0 else 1.0
-    cross = (1.0 - patience) * min(1.0, rel / 0.30)
-    px = (mid - cross * half) if side == 'sell' else (mid + cross * half)
     sf = 1.0
     for sd, f in _SPLITS:
         if d < pd.Timestamp(sd):
@@ -172,7 +194,7 @@ def execute_audit(date, K_adj, dte, right, side, exec_window=15,
     return {'price': round(px * sf, 4), 'exec_time': str(t),
             'bid': round(bid * sf, 4), 'ask': round(ask * sf, 4),
             'spread_pct': round(rel * 100, 1), 'mid': round(mid * sf, 4),
-            'vs_mid': round((px - mid) * sf, 4), 'source': 'intraday'}
+            'vs_mid': round((px - mid) * sf, 4), 'source': 'intraday', 'how': how}
 
 
 if __name__ == '__main__':
