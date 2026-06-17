@@ -75,6 +75,10 @@ def _to_engine_positions(positions):
     sp, sc, lp, lc = [], [], [], []
     today = pd.Timestamp.today().normalize()
     for p in positions or []:
+        # UNG ONLY — never pull DBA/other-underlying options into the UNG engine (they
+        # contaminate sizing/theta/TP/roll). Default to UNG when symbol absent (demo books).
+        if 'UNG' not in str(p.get('symbol') or 'UNG').upper():
+            continue
         try:
             qty = int(p.get('qty') or p.get('quantity') or 0)
             K = float(p.get('strike') or 0)
