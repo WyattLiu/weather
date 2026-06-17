@@ -160,6 +160,14 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         _exp = o.get('expiry')
         expiry = (_exp if (isinstance(_exp, str) and _exp)
                   else (_opt_expiry(dte) if (right in ('PUT', 'CALL') and dte) else None))
+        # DTE must match the EXPIRY DATE vs TODAY (the sim clock differs from real today,
+        # which made exp/DTE inconsistent, e.g. '2026-07-02 (6d)' on 2026-06-17). Recompute.
+        if expiry:
+            try:
+                dte = max(0, (pd.Timestamp(expiry).normalize()
+                              - pd.Timestamp.today().normalize()).days)
+            except Exception:
+                pass
         _, why = JUSTIFY[ty]
         # Build a fully-specified order line: qty × strike right, expiry, DTE.
         if ty in ('PUT_TP', 'CALL_TP') and K:
@@ -229,7 +237,15 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
               'posture': _posture}
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
-        'spot': round(spot, 2), 'asof': str(df.index[-1].date()),
+        'spot': round(spot, 2),
+        # ── TWO-CLOCK BRIDGE (elegant common ground) ──────────────────────────────
+        # as_of  = data/sim time → drives SIGNALS & valuation (regime/z/IV/storage).
+        # today  = real-world time → drives SCHEDULING & decay (DTE/expiry/exec/theta).
+        # Surfaced explicitly; staleness flagged. In a pure backtest as_of==today.
+        'asof': str(df.index[-1].date()),
+        'today': str(pd.Timestamp.today().normalize().date()),
+        'data_stale_days': int(max(0, (pd.Timestamp.today().normalize()
+                                       - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),

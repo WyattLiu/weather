@@ -1696,7 +1696,10 @@ async function drawSOT(){
       sotCard('Theta now / day', '$'+fmt(t.now_per_day,0), 'current book','')+
       sotCard('Theta after orders / day', '$'+fmt(t.after_per_day,0), 'post today','positive')+
       sotCard('Theta after / month', '$'+fmt(t.after_per_month,0), 'extrinsic only · gross of assign','positive')+
-      sotCard('As of', d.asof, 'spot $'+fmt(d.spot,2),'');
+      sotCard('Signals as of', d.asof,
+              (d.data_stale_days>0 ? ('⚠ '+d.data_stale_days+'d stale · today '+d.today) : ('today '+(d.today||''))),
+              d.data_stale_days>1?'warn':'')+
+      sotCard('Spot', '$'+fmt(d.spot,2), 'DTE/expiry use real today','');
     const recs = d.recommendations||[];
     oel.innerHTML = recs.length ? recs.map(o => {
       const ep = o.exec_plan;
