@@ -29,10 +29,45 @@ def _conn():
 
 
 def _p_mid_fill(rel_spread, dte):
-    """Engine-consistent probability a patient limit fills at/near mid."""
+    """Fallback formula (used only when the empirical bucket is unseen)."""
     rel = rel_spread / 100.0 if rel_spread > 1 else rel_spread
     return max(0.0, min(1.0, (1 - min(1.0, rel / 0.20)) *
                         (0.6 + 0.4 * min(1.0, (dte or 30) / 45.0))))
+
+
+_CALIB = None
+
+
+def _load_calib():
+    """Empirical mid-fill calibration (spread-pennies × OI), fit from the real minute
+    path — see fill_quality.py / cache/fill_quality_calibration.json."""
+    global _CALIB
+    if _CALIB is None:
+        try:
+            _CALIB = json.load(open(os.path.join(CACHE, 'fill_quality_calibration.json')))
+        except Exception:
+            _CALIB = {}
+    return _CALIB
+
+
+def _bucket(buckets, v):
+    for lo, hi in buckets:
+        if lo <= v < hi:
+            return f"{lo}-{'+' if hi > 1e8 else int(hi)}"
+    return None
+
+
+def p_mid_empirical(spread_cents, oi):
+    """Data-calibrated P(mid-fill) from spread-in-pennies × OI. Returns (p, source, n);
+    p is None if the bucket was never observed (caller falls back to the formula)."""
+    cal = _load_calib()
+    if cal and cal.get('grid'):
+        sb = _bucket([tuple(x) for x in cal['spread_buckets_cents']], spread_cents)
+        ob = _bucket([tuple(x) for x in cal['oi_buckets']], oi or 0)
+        g = cal['grid'].get(f"{sb}|{ob}")
+        if g and g.get('p_mid') is not None and g.get('n', 0) >= 30:
+            return float(g['p_mid']), 'empirical', int(g['n'])
+    return None, None, None
 
 
 def load_grid(refresh=False):
@@ -159,15 +194,28 @@ def latest_spread(K_adj, dte, right, date=None, expiry=None):
             sf = f
     bid, ask = bid * sf, ask * sf
     mid = (bid + ask) / 2
+    # daily OI for this exact contract (raw strike) — drives the empirical fill model
+    cur.execute("""SELECT open_interest FROM ung_options_oi
+                   WHERE trade_date=%s AND expiration=%s AND ABS(strike-%s)<0.001
+                     AND option_right=%s ORDER BY trade_date DESC LIMIT 1""",
+                (last, exp.isoformat(), round(K_raw, 1), right))
+    _oi = cur.fetchone()
     return {'bid': round(bid, 3), 'ask': round(ask, 3), 'mid': round(mid, 3),
-            'spread_pct': round((ask - bid) / mid * 100, 1), 'expiry': exp.isoformat()}
+            'spread_pct': round((ask - bid) / mid * 100, 1),
+            'spread_cents': round((ask - bid) * 100, 1),
+            'oi': int(_oi[0]) if _oi and _oi[0] is not None else None,
+            'expiry': exp.isoformat()}
 
 
-def build_ladder(mid, bid, ask, side, dte, spread_pct, window=30):
+def build_ladder(mid, bid, ask, side, dte, spread_pct, oi=None, window=30):
     """Limit-price ladder mid → touch, timed across `window` minutes. Rung count and
-    aggressiveness scale with spread width; dwell-at-mid scales with P(mid)."""
+    aggressiveness scale with spread width; dwell-at-mid scales with the EMPIRICAL
+    P(mid-fill) (spread-pennies × OI, fit from the real minute path)."""
     half = (ask - bid) / 2.0
-    p = _p_mid_fill(spread_pct, dte)
+    cents = (ask - bid) * 100.0
+    p, p_src, p_n = p_mid_empirical(cents, oi)
+    if p is None:                              # unseen bucket → fallback formula
+        p, p_src, p_n = _p_mid_fill(spread_pct, dte), 'formula', None
     if spread_pct < 10:
         fracs = [0.0, 0.34, 0.67]            # tight: insist near mid
     elif spread_pct < 20:
@@ -187,8 +235,9 @@ def build_ladder(mid, bid, ask, side, dte, spread_pct, window=30):
         rungs.append({'t_plus_min': m, 'limit': px, 'rung': lbl})
     # expected fill ≈ engine give: mid minus (1-p)*half on a sell (plus on a buy)
     exp_fill = round(mid + sgn * (1 - p) * 0.5 * half, 3)
-    return {'rungs': rungs, 'p_mid': round(p, 2), 'expected_fill': exp_fill,
-            'work_window_min': window}
+    return {'rungs': rungs, 'p_mid': round(p, 2), 'p_mid_source': p_src, 'p_mid_n': p_n,
+            'spread_cents': round(cents, 1), 'oi': oi,
+            'expected_fill': exp_fill, 'work_window_min': window}
 
 
 def execution_plan(K, dte, right, side, spot=None, date=None, grid=None, expiry=None):
@@ -214,7 +263,8 @@ def execution_plan(K, dte, right, side, spot=None, date=None, grid=None, expiry=
             'caveats': caveats}
     if q:
         plan['live_quote'] = q
-        lad = build_ladder(q['mid'], q['bid'], q['ask'], side, dte, q['spread_pct'])
+        lad = build_ladder(q['mid'], q['bid'], q['ask'], side, dte, q['spread_pct'],
+                           oi=q.get('oi'))
         # anchor ladder to real clock times starting at the tightest minute,
         # clamped so the full work window completes by the 16:00 close
         start = win['tightest_minute']
@@ -234,7 +284,9 @@ def execution_plan(K, dte, right, side, spot=None, date=None, grid=None, expiry=
         lines = [
             f"{act}  UNG ${K:.2f} {rname}  exp {q['expiry']} ({dte}d)",
             f"Live: bid ${q['bid']:.2f} / ask ${q['ask']:.2f} / mid ${q['mid']:.2f}"
-            f"  (spread {q['spread_pct']}%, P(mid)={lad['p_mid']})",
+            f"  (spread {q['spread_pct']}% / {lad['spread_cents']:.0f}¢, "
+            f"OI {q.get('oi') if q.get('oi') is not None else '?'}, "
+            f"P(mid)={lad['p_mid']} {lad['p_mid_source']})",
             f"Window: work near {start} ET (~{win['tightest_minute_spread']}% spread). "
             f"Avoid 09:30 open & Thu pre-11:00.",
             "Ladder (patient → cross):"]
