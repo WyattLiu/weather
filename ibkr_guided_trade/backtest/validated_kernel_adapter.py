@@ -52,6 +52,16 @@ from replay_engine import (
 # Each entry: (strategy_name, OOS train/test metrics, why-to-use blurb).
 # OOS metrics from backtest/honest_walkforward.py with sealed test data
 # (2024-01 → 2026-06) + IBKR cost model + leak-free z.
+# ════════════════════════════════════════════════════════════════════════════
+# ⚠ PRE-MINUTE NUMBERS OBSOLETE (cutover 2026-06-16)
+# Every oos_*/is_* below was computed under optimistic/EOD fills. They are
+# SUPERSEDED. The only valid basis is real-fill, minute-traded, audit-verifiable
+# execution (intraday_exec). A kernel is promotable ONLY once re-validated under
+# minute fills — see results/minute_frontier.csv and [[project_intraday_execution_audit]].
+# Until a kernel carries 'fill_basis':'minute' it is NOT verified.
+# The Sharpes 2.1–2.4 here are pre-minute artifacts; treat as obsolete.
+PREMINUTE_NUMBERS_OBSOLETE = True
+# ════════════════════════════════════════════════════════════════════════════
 KERNELS = {
     'kold15_ivrank_kbh': {
         'strategy': 'champion_kold15_ivrank_kbh',
