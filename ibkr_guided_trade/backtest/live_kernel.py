@@ -157,7 +157,9 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                else (int(params.get('open_dte', 30)) if right in ('PUT', 'CALL') else None))
         credit = float(o['credit']) if ('credit' in o and o['credit'] == o['credit']) else 0.0
         pnl = float(o['pnl']) if ('pnl' in o and o['pnl'] == o['pnl']) else 0.0
-        expiry = o.get('expiry') or (_opt_expiry(dte) if (right in ('PUT', 'CALL') and dte) else None)
+        _exp = o.get('expiry')
+        expiry = (_exp if (isinstance(_exp, str) and _exp)
+                  else (_opt_expiry(dte) if (right in ('PUT', 'CALL') and dte) else None))
         _, why = JUSTIFY[ty]
         # Build a fully-specified order line: qty × strike right, expiry, DTE.
         if ty in ('PUT_TP', 'CALL_TP') and K:

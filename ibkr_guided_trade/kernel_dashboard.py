@@ -1734,10 +1734,12 @@ setInterval(drawSOT, 60000);
 
 // ── SCRATCH NOISE PANELS — keep only the genuinely useful ones ──
 (function scrubNoise(){
-  const HIDE = ['Executor Brief','Directly Usable','Beam','Expiration Timeline',
-    'Theta Smoothness','Expire &amp; Reopen','Expire & Reopen','What-If','P&L Profile',
-    'P&amp;L Profile','Delta Exposure','Daily Theta by Expiry','Theta Decay Waterfall',
-    'Rolling Calendar','Portfolio Greeks','Per-position','Next 45 days'];
+  // Hide only the genuinely-noisy / stale-kernel panels. KEEP the execution-relevant
+  // DETAIL: Per-position action, Portfolio Greeks, Delta Exposure, Theta-by-Expiry,
+  // Theta Waterfall, P&L Profile, Expiration Timeline, Rolling Calendar, UNG Position Detail.
+  const HIDE = ['Executor Brief','Directly Usable','Beam','Deep Beam',
+    'What-If','Expire &amp; Reopen','Expire & Reopen','Theta Smoothness',
+    'champion_target_25_dd_trim'];  // stale backtest curve (old kernel)
   document.querySelectorAll('.section').forEach(sec=>{
     const h=sec.querySelector('h2'); if(!h) return;
     if(HIDE.some(k=>h.textContent.includes(k.replace('&amp;','&')))) sec.style.display='none';
