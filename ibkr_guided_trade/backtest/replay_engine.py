@@ -1126,6 +1126,31 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 mult = min(mult, dd_cap_15)
             elif dd_pct < -10:
                 mult = min(mult, dd_cap_10)
+            # SEASONAL REGIME (user design): NG bottoms in mild SHOULDER season
+            # (injection) and firms into PEAK-demand season. ACCUMULATE in shoulder —
+            # but ONLY when not a falling knife (never build into a confirmed decline);
+            # DUMP into the peak ('soon enough'). Tilts the valuation share-target curve.
+            if p.get('seasonal_regime'):
+                _m = idx.month
+                if _m in p.get('accumulate_months', (3, 4, 5, 9)):
+                    mult *= (p.get('accumulate_boost', 1.4) if not falling_knife(row)
+                             else p.get('knife_accum_cut', 0.7))
+                elif _m in p.get('distribute_months', (11, 12, 1, 6, 7)):
+                    mult *= p.get('distribute_cut', 0.45)        # dump into the peak season
+            # STATE REGIME (user design, drift-aware): classify ACCUMULATE / NEUTRAL /
+            # DISTRIBUTE from WHAT ACTUALLY HAPPENED — storage_surprise_z (storage vs its
+            # SEASONAL expectation, so it self-adjusts to each year's drift) + momentum.
+            # Tight supply (bullish surprise) & not crashing → accumulate; oversupply
+            # (bearish surprise) or momentum breakdown → DUMP soon. No fixed calendar.
+            if p.get('state_regime'):
+                _ssz = row.get('storage_surprise_z')
+                _surge = row.get('ung_surge_z')
+                _surge = _surge if (_surge == _surge and _surge is not None) else 0.0
+                if _ssz == _ssz and _ssz is not None:
+                    if _ssz < p.get('accumulate_ssz', -0.5) and not falling_knife(row) and _surge > -1.0:
+                        mult *= p.get('accumulate_boost', 1.5)        # tight + stable → build
+                    elif _ssz > p.get('distribute_ssz', 0.5) or _surge < p.get('distribute_surge', -1.2):
+                        mult *= p.get('distribute_cut', 0.4)          # loose / rolling over → dump
             target = int(base_shares * mult)
             target = (target // 100) * 100
             current = s['shares']
@@ -5027,9 +5052,26 @@ STRATEGIES['accum_wheel'] = {**_psi,
 }
 STRATEGIES['accum_wheel_tp'] = {**STRATEGIES['accum_wheel'], 'tp_50': True,
                                 'tp_threshold': 0.5}  # variant: keep light TP for comparison
+# REGIME SWITCH (user design): keep the champion's premium-harvest survival engine, but
+# SEASONALLY tilt the valuation share-target — ACCUMULATE in shoulder (gated on not-falling-
+# knife), DUMP into peak-demand season. Honors 'accumulate shoulder, dump during peak'
+# without abandoning what survives UNG's secular grind.
+STRATEGIES['seasonal_wheel'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
+    'seasonal_regime': True,
+    'accumulate_months': (3, 4, 5, 9), 'distribute_months': (11, 12, 1, 6, 7),
+    'accumulate_boost': 1.5, 'knife_accum_cut': 0.6, 'distribute_cut': 0.4}
+STRATEGIES['seasonal_wheel_lowchurn'] = {**STRATEGIES['seasonal_wheel'],
+    'tp_threshold': 0.7, 'roll_down': False}   # lighter churn variant
+# STATE-REGIME WHEEL (winner) — drift-aware accumulate/neutral/distribute from
+# storage_surprise_z (storage vs SEASONAL norm, weekly) + momentum, on the lowchurn
+# (let-assign + lighter-TP) base. OOS Sharpe 0.21→1.03, MDD -17→-11 vs champion.
+STRATEGIES['regime_wheel'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
+    'tp_threshold': 0.7, 'roll_down': False,
+    'state_regime': True, 'accumulate_ssz': -0.5, 'distribute_ssz': 0.5,
+    'accumulate_boost': 1.5, 'distribute_cut': 0.4, 'distribute_surge': -1.2}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
