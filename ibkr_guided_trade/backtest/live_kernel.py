@@ -83,6 +83,7 @@ def _to_engine_positions(positions):
             dte = max(1, (pd.Timestamp(exp).normalize() - today).days) if exp else 30
             entry = today - pd.Timedelta(days=10)
             rec = {'entry': entry, 'K': K, 'dte': dte, 'qty': abs(qty),
+                   'expiry': (str(pd.Timestamp(exp).date()) if exp else None),
                    'entry_prem': float(p.get('average_price') or p.get('avg_price') or 0.3)}
         except Exception:
             continue
@@ -156,10 +157,15 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                else (int(params.get('open_dte', 30)) if right in ('PUT', 'CALL') else None))
         credit = float(o['credit']) if ('credit' in o and o['credit'] == o['credit']) else 0.0
         pnl = float(o['pnl']) if ('pnl' in o and o['pnl'] == o['pnl']) else 0.0
-        expiry = _opt_expiry(dte) if (right in ('PUT', 'CALL') and dte) else None
+        expiry = o.get('expiry') or (_opt_expiry(dte) if (right in ('PUT', 'CALL') and dte) else None)
         _, why = JUSTIFY[ty]
         # Build a fully-specified order line: qty × strike right, expiry, DTE.
-        if right in ('PUT', 'CALL') and K:
+        if ty in ('PUT_TP', 'CALL_TP') and K:
+            d = f' exp {expiry} ({dte}d)' if (expiry or dte) else ''
+            bb = f' @ ~${o["buyback"]:.2f}' if ('buyback' in o and o['buyback'] == o['buyback']) else ''
+            action = (f"BUY-TO-CLOSE {qty or ''}× UNG ${K:.2f} {right}{d}{bb} "
+                      f"— take profit +${pnl:,.0f}").strip()
+        elif right in ('PUT', 'CALL') and K:
             d = f' exp {expiry} ({dte}d)' if expiry else ''
             action = f"{side} {qty or ''}× UNG ${K:.2f} {right}{d}".strip()
         elif ty in ('PUT_TP', 'CALL_TP'):

@@ -1544,6 +1544,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl,
+                                   'K': sp['K'], 'qty': sp['qty'],
+                                   'dte': int(round(T_left * 365)),
+                                   'expiry': sp.get('expiry'), 'buyback': round(cv, 2),
                                    'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
                                    'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
                                    'fill_source': _aud['source']})
@@ -1713,6 +1716,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'CALL_TP', 'pnl': pnl,
                                    'K': sc['K'], 'qty': sc['qty'],
+                                   'dte': int(round(T_left * 365)),
+                                   'expiry': sc.get('expiry'), 'buyback': round(cv, 2),
                                    'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
                                    'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
                                    'fill_source': _aud['source']})
