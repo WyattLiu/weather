@@ -251,6 +251,18 @@ def precompute_factor_z(df):
     # PRICE-CRASH signal (drawdown from the 60d high) — drives the crash-fallback meta-regime
     # that catches PRICE crashes the fundamental storage signal misses (the 2022 blind spot).
     df['ung_dd_60'] = (df['UNG'] / df['UNG'].rolling(60, min_periods=20).max() - 1.0).fillna(0.0)
+    # NOAA DEGREE-DAY anomaly (persisted: cache/noaa_degree_days_daily.csv) — daily
+    # gas-weighted HDD+CDD vs day-of-year seasonal normal, z-scored. Orthogonal to storage
+    # and LEADS the storage print ~1wk. Used to nowcast the storage regime earlier.
+    try:
+        _dd = pd.read_csv(os.path.join(CACHE_DIR, 'noaa_degree_days_daily.csv'),
+                          index_col=0, parse_dates=True).iloc[:, 0]
+        _dd = _dd[~_dd.index.duplicated()].reindex(df.index, method='ffill')
+        _ddn = _dd - _dd.groupby(_dd.index.dayofyear).transform('mean')
+        df['dd_anom_z'] = ((_ddn - _ddn.rolling(252, min_periods=30).mean())
+                           / (_ddn.rolling(252, min_periods=30).std() + 1e-9)).fillna(0.0)
+    except Exception:
+        df['dd_anom_z'] = 0.0
     return df
 
 
@@ -1161,6 +1173,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _ssz = row.get('storage_surprise_z')
                 _surge = row.get('ung_surge_z')
                 _surge = _surge if (_surge == _surge and _surge is not None) else 0.0
+                # NOAA DEGREE-DAY NOWCAST: the DD anomaly leads the storage print ~1wk
+                # (high demand → tighter storage). dd_w<0 = nowcast (accumulate earlier on a
+                # tightening); dd_w>0 = contrarian (fade demand spikes). Walk-forward decides.
+                _ddw = p.get('dd_w', 0.0)
+                if _ddw and _ssz == _ssz and _ssz is not None:
+                    _ddz = row.get('dd_anom_z')
+                    if _ddz == _ddz and _ddz is not None:
+                        _ssz = _ssz + _ddw * _ddz
                 # FIX 1 — confidence gate: don't ACCUMULATE when the storage signal is
                 # noisy (ssz_vol high → regime unreliable; walk-forward: corr -0.83).
                 _noisy = False
