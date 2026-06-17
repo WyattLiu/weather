@@ -2905,9 +2905,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     s['boxx'] -= needed
                     s['cash'] += needed * spot_boxx - needed * SPREAD_SHARE
 
-            # BOXX yield (use realized 4.74% from data, daily accrual)
-            if s['boxx'] > 0:
-                s['cash'] += s['boxx'] * spot_boxx * 0.0474 / 365
+            # BOXX return comes ENTIRELY from PRICE appreciation (box-spread ETF, no
+            # distributions — the master_dataset BOXX series appreciates ~4.6%/yr and is
+            # marked to market in NAV). The old synthetic 4.74% cash yield here DOUBLE-COUNTED
+            # it (~+2.4%/yr fake on a 50%-BOXX book). Removed 2026-06-17 — price MTM is the return.
 
         # Track weekly premium for income-mode awareness (every Monday-ish)
         if i % 7 == 0 and i > 0:
