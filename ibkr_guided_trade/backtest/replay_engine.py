@@ -2922,10 +2922,17 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 recent_premium.pop(0)
         # NAV uses real BOXX price now
         nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + s['kold'] * spot_k
+        def _book(_legs):   # real strike→contracts tally (no reconstruction leak)
+            _b = {}
+            for _x in _legs:
+                _k = round(float(_x.get('K', 0)), 1)
+                _b[_k] = _b.get(_k, 0) + int(_x.get('qty', 0))
+            return _b
         history.append({
             'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
             'cash': s['cash'], 'shares': s['shares'], 'boxx': s['boxx'], 'kold': s['kold'],
             'nav': nav, 'short_puts': len(s['short_puts']), 'short_calls': len(s['short_calls']),
+            'put_book': _book(s['short_puts']), 'call_book': _book(s['short_calls']),
         })
 
     if live_decision and seed_state is not None:

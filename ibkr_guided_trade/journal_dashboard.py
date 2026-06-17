@@ -72,22 +72,23 @@ def build():
     spk = df['KOLD'].reindex(h.index, method='ffill').fillna(0)
     ssz = df['storage_surprise_z'].reindex(h.index, method='ffill')
     rs = df['regime_strength'].reindex(h.index, method='ffill')
-    sp, sc, days, prev = defaultdict(int), defaultdict(int), [], None
-    equity = []
+    days, prev, equity = [], None, []
     for dt, hr in h.iterrows():
         td = t[t['d'] == dt]
         trades, signals = [], []
         for _, r in td.iterrows():
             ty = r['type']; K = r.get('K'); q = abs(int(r['qty'])) if ('qty' in r and r['qty'] == r['qty']) else 0
-            if ty in ACTIONS:
-                _apply(sp, sc, ty, K, q, r.get('from_K'), r.get('to_K'))
             ks = (f"{q}×${float(K):.1f}" if (K == K and K) else '')
             rec = {'type': ty, 'label': ks, 'why': WHY.get(ty, ty),
                    'credit': round(float(r['credit']), 0) if ('credit' in r and r['credit'] == r['credit']) else 0,
                    'pnl': round(float(r['pnl']), 0) if ('pnl' in r and r['pnl'] == r['pnl']) else 0}
             (trades if ty in ACTIONS else signals).append(rec)
+        # REAL book from the engine (no reconstruction leak)
+        pbk = {round(float(k), 1): int(v) for k, v in (hr.get('put_book') or {}).items() if v}
+        cbk = {round(float(k), 1): int(v) for k, v in (hr.get('call_book') or {}).items() if v}
+        sp = {k: v for k, v in pbk.items()}; sc = {k: v for k, v in cbk.items()}
         sh = int(hr['shares']); ncall = sum(sc.values()); nput = sum(sp.values())
-        topK = max(sp.items(), key=lambda x: x[1]) if any(sp.values()) else (None, 0)
+        topK = max(sp.items(), key=lambda x: x[1]) if sp else (None, 0)
         reg = 'ACC' if ssz.get(dt, 0) < -0.5 else 'DIST' if ssz.get(dt, 0) > 0.5 else 'NEU'
         nav = float(hr['nav']); dnav = (nav - prev) if prev else 0.0; prev = nav
         equity.append([str(dt.date()), round(nav, 0), round(hr['boxx'] * bx.get(dt, 117), 0),
