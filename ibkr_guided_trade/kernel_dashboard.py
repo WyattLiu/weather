@@ -1678,7 +1678,12 @@ async function drawSOT(){
         '<span style="font-weight:700;color:'+col+';font-size:1.05rem">REGIME: '+rg.state+'</span>'+
         '<span style="margin-left:14px;color:var(--text-dim)">storage-surprise z '+rg.storage_surprise_z+
         ' · strength '+rg.regime_strength+' · 60d price-dd '+rg.price_dd_60d+'%</span>'+
-        '<div style="margin-top:4px;font-size:.9rem">↳ '+rg.posture+'</div></div>';
+        '<div style="margin-top:4px;font-size:.9rem">↳ '+rg.posture+'</div>'+
+        ((d.coverage)?('<div style="margin-top:4px;font-size:.85rem;font-weight:600;color:'+
+          (d.coverage.covered?'#2e7d32':'#c62828')+'">🛡 COVERED-CALLS-ONLY: '+
+          d.coverage.existing_short_calls+' short calls vs '+d.coverage.coverable_calls+
+          ' coverable ('+d.coverage.shares+' shares) — '+
+          (d.coverage.covered?'covered ✓':'OVER-WRITTEN ⚠')+'</div>'):'')+'</div>';
     }
     const z = d.z_models||{};
     document.getElementById('sot-z').innerHTML =

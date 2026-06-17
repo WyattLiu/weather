@@ -167,6 +167,30 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                      'why': (why.format(credit=credit, pnl=pnl) if '{' in why else why),
                      'type': ty})
 
+    # ── HARD COVERAGE CAP (covered-calls-only safety, [[feedback_covered_calls_only]]) ──
+    # NEVER suggest selling more calls than the share book covers. Existing short calls +
+    # any newly-suggested call sales must be ≤ shares//100. Cap/drop offending recs at the
+    # output boundary, regardless of engine path. This guarantees the book stays covered.
+    _existing_calls = sum(int(abs(c.get('qty') or 0)) for c in sc)   # sc = seeded short calls
+    _cap = shares // 100 - _existing_calls
+    _capped = []
+    for r in recs:
+        if (r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL')
+                and r.get('qty')):
+            allow = max(0, min(int(r['qty']), _cap))
+            _cap -= allow
+            if allow <= 0:
+                r['_dropped_uncovered'] = True
+                continue
+            if allow < r['qty']:
+                r['qty'] = allow
+                r['action'] = r['action'].replace(str(int(r.get('qty', 0))), str(allow), 1)
+                r['why'] = (r.get('why', '') + ' [capped to stay covered]')
+        _capped.append(r)
+    recs = _capped
+    coverage = {'shares': int(shares), 'coverable_calls': int(shares // 100),
+                'existing_short_calls': int(_existing_calls),
+                'covered': _existing_calls <= shares // 100}
     # EXTRINSIC-only theta, BEFORE (your current book) vs AFTER today's orders
     # (the engine's actual post-decision book). Gross of assignment.
     final = getattr(R, '_LIVE_FINAL', {}) or {}
@@ -189,7 +213,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
         'spot': round(spot, 2), 'asof': str(df.index[-1].date()),
-        'regime': regime,
+        'regime': regime, 'coverage': coverage,
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
                   'after_per_month': round(theta_after * 30, 0),

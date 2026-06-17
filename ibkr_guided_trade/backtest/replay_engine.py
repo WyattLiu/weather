@@ -5170,7 +5170,7 @@ STRATEGIES['regime_wheel_cont'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
 # Sharpe 1.20/-9% MDD. (regime-KOLD tested + dropped: inverse-ETF decay > decline capture.)
 STRATEGIES['regime_wheel_boxx'] = {**STRATEGIES['regime_wheel'],
     'boxx': True, 'boxx_sweep_full': True, 'boxx_cash_buffer': 15000,
-    'intraday_exec': True, 'exec_window': 15, 'avoid_eia_print': True}  # minute-fill by default (EOD-real retired)
+    'intraday_exec': True, 'exec_window': 15, 'avoid_eia_print': True, 'tail_hedge_floor': 0}  # minute-fill by default (EOD-real retired)
 # FAST live-decision variant for the dashboard (model fills → today's orders in ~15s; the
 # execution advisor supplies the real minute pricing/ladder for the operator to act on).
 STRATEGIES['regime_wheel_boxx_live'] = {**STRATEGIES['regime_wheel_boxx'],
