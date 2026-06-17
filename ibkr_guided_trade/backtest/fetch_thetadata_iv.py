@@ -2,7 +2,10 @@
 
 CRITICAL CAVEAT (discovered 2026-06-03):
 ThetaData returns UNADJUSTED prices and UNADJUSTED strikes. UNG has had
-multiple reverse splits (Feb 2017, Apr 2022, Apr 2024 — all 1-for-4).
+multiple reverse splits — the authoritative calendar is UNG_SPLITS below:
+2011-03-09 (1:2), 2012-02-22, 2018-01-05, 2024-01-24 (all 1:4). The ONLY one
+inside the 2021-2026 backtest window is 2024-01-24 (verified empirically: raw
+spot $5.03 / strikes 4-6 on 2024-01-23 → $20.10 / strikes 15.5-25 on 2024-01-25).
 So adjusted spot $21.76 on 2024-01-03 corresponds to UNADJUSTED ~$5.44.
 A strike "$22" query returns DEEP ITM contracts (put bid $16.50 because
 true market strike was 22 vs $5.44 spot).
