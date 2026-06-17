@@ -126,8 +126,17 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     spot = float(spot if spot else row['UNG'])
 
     sp, sc, lp, lc = _to_engine_positions(positions)
-    shares = sum(int(p.get('qty') or 0) for p in (positions or [])
-                 if (p.get('option_type') or p.get('right') or '') in ('', 'SHARES', 'STOCK'))
+    # UNG share count — read BOTH 'qty' and 'quantity' (the live feed normalizes shares as
+    # 'quantity'; reading only 'qty' silently zeroed shares → false 'naked' coverage). UNG
+    # only (exclude BOXX/KOLD/option legs), so the covered-call cap is computed correctly.
+    def _is_ung_shares(p):
+        if p.get('is_option'):
+            return False
+        if (p.get('option_type') or p.get('right') or '') not in ('', 'SHARES', 'STOCK'):
+            return False
+        return 'UNG' in str(p.get('symbol') or 'UNG').upper()
+    shares = sum(int(p.get('qty') or p.get('quantity') or 0)
+                 for p in (positions or []) if _is_ung_shares(p))
     seed = {'cash': float(cash), 'shares': int(shares), 'short_puts': sp,
             'short_calls': sc, 'long_puts': lp, 'long_calls': lc}
 
