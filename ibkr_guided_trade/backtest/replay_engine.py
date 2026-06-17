@@ -245,6 +245,12 @@ def precompute_factor_z(df):
     _surge = df['ung_surge_z'] if 'ung_surge_z' in df.columns else 0.0 * df['UNG']
     _ev = np.tanh(0.9 * _ssz.fillna(0.0) - 0.3 * _surge.fillna(0.0).clip(upper=0.0))
     df['regime_strength'] = _ev.ewm(alpha=0.2, adjust=False).mean()
+    # SIGNAL-NOISE (walk-forward early-alpha finding: ssz_vol corr -0.83 with edge) —
+    # rolling std of the storage-surprise signal; high = the regime is unreliable → gate it.
+    df['ssz_vol'] = _ssz.fillna(0.0).rolling(63, min_periods=10).std().fillna(0.0)
+    # PRICE-CRASH signal (drawdown from the 60d high) — drives the crash-fallback meta-regime
+    # that catches PRICE crashes the fundamental storage signal misses (the 2022 blind spot).
+    df['ung_dd_60'] = (df['UNG'] / df['UNG'].rolling(60, min_periods=20).max() - 1.0).fillna(0.0)
     return df
 
 
@@ -1155,11 +1161,29 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _ssz = row.get('storage_surprise_z')
                 _surge = row.get('ung_surge_z')
                 _surge = _surge if (_surge == _surge and _surge is not None) else 0.0
+                # FIX 1 — confidence gate: don't ACCUMULATE when the storage signal is
+                # noisy (ssz_vol high → regime unreliable; walk-forward: corr -0.83).
+                _noisy = False
+                if p.get('regime_confidence_gate'):
+                    _sv = row.get('ssz_vol')
+                    _noisy = (_sv == _sv and _sv is not None and _sv > p.get('ssz_vol_gate', 1.2))
+                # FIX 2 — price-breakdown distribute trigger: a confirmed DOWNTREND forces
+                # distribute even if storage is neutral (catches the 2022-style price crash
+                # the fundamental signal misses → the -56pp walk-forward window).
+                _breakdown = bool(p.get('regime_downtrend_distribute') and row.get('ung_downtrend'))
+                # CRASH FALLBACK: a deep PRICE crash (drawdown from 60d high) forces DISTRIBUTE
+                # regardless of the fundamental — the 2022 blind spot where storage was neutral.
+                _dd60 = row.get('ung_dd_60')
+                _crash = bool(p.get('crash_fallback') and _dd60 == _dd60 and _dd60 is not None
+                              and _dd60 < p.get('crash_dd', -0.18))
                 if _ssz == _ssz and _ssz is not None:
-                    if _ssz < p.get('accumulate_ssz', -0.5) and not falling_knife(row) and _surge > -1.0:
+                    if (_ssz < p.get('accumulate_ssz', -0.5) and not falling_knife(row)
+                            and _surge > -1.0 and not _noisy and not _breakdown and not _crash):
                         mult *= p.get('accumulate_boost', 1.5)        # tight + stable → build
-                    elif _ssz > p.get('distribute_ssz', 0.5) or _surge < p.get('distribute_surge', -1.2):
-                        mult *= p.get('distribute_cut', 0.4)          # loose / rolling over → dump
+                    elif (_ssz > p.get('distribute_ssz', 0.5)
+                          or _surge < p.get('distribute_surge', -1.2) or _breakdown or _crash):
+                        mult *= p.get('distribute_cut', 0.4) * (p.get('crash_distribute_extra', 0.6)
+                                                                if _crash else 1.0)  # dump harder in a crash
             # CONTINUOUS REGIME STRENGTH (quantified): scale the tilt by |s| — strong
             # regime → full tilt, WEAK/uncertain → ~neutral (don't churn on noise).
             if p.get('regime_continuous'):
@@ -1518,7 +1542,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # recover); in downtrend, rolling is protective.
             min_roll_dte = p.get('min_roll_dte', 5)  # default = old behavior
             dte_left = T_left * 365
-            roll_eligible = (p.get('roll_down') and spot_u < sp['K'] * 0.98
+            # CRASH FALLBACK: in a deep price crash, re-enable roll-down protection even if
+            # the kernel lets puts assign normally (don't take assignment into a falling knife).
+            _dd60r = row.get('ung_dd_60')
+            _crash_roll = bool(p.get('crash_fallback') and _dd60r == _dd60r and _dd60r is not None
+                               and _dd60r < p.get('crash_dd', -0.18))
+            roll_eligible = ((p.get('roll_down') or _crash_roll) and spot_u < sp['K'] * 0.98
                              and dte_left > min_roll_dte)
             # Trend-aware skip — only if flag enabled
             if roll_eligible and p.get('trend_aware_roll'):
@@ -5125,9 +5154,17 @@ STRATEGIES['regime_wheel_cont'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
 # Sharpe 1.20/-9% MDD. (regime-KOLD tested + dropped: inverse-ETF decay > decline capture.)
 STRATEGIES['regime_wheel_boxx'] = {**STRATEGIES['regime_wheel'],
     'boxx': True, 'boxx_sweep_full': True, 'boxx_cash_buffer': 15000}
+# v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
+# distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
+STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
+    'regime_confidence_gate': True, 'ssz_vol_gate': 1.2, 'regime_downtrend_distribute': True}
+# v4: + CRASH FALLBACK — deep price drawdown forces distribute + re-enables roll-down
+# protection (champion-mode in crashes). Targets the 2022 -56pp blind spot directly.
+STRATEGIES['regime_wheel_boxx_v4'] = {**STRATEGIES['regime_wheel_boxx_v3'],
+    'crash_fallback': True, 'crash_dd': -0.18, 'crash_distribute_extra': 0.6}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',

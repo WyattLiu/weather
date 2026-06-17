@@ -40,8 +40,9 @@ def main():
         s, e = dates[i], dates[i+WIN]
         sl = slice(s, e)
         ch = run(df, 'champion_kold15_ivrank_kbh', sl)
-        rw = run(df, 'regime_wheel_boxx', sl)
-        if not ch or not rw:
+        rw = run(df, 'regime_wheel_boxx_v3', sl)
+        rw0 = run(df, 'regime_wheel_boxx', sl)
+        if not ch or not rw or not rw0:
             i += STEP; continue
         seg = df.loc[sl]
         rows.append({
@@ -50,6 +51,7 @@ def main():
             'champ_ann': ch[0], 'champ_sh': ch[1], 'champ_mdd': ch[2],
             'boxx_ann': rw[0], 'boxx_sh': rw[1], 'boxx_mdd': rw[2],
             'd_ann': rw[0]-ch[0], 'd_sh': rw[1]-ch[1], 'd_mdd': rw[2]-ch[2],
+            'v3_vs_boxx_ann': rw[0]-rw0[0], 'boxx0_ann': rw0[0],
             'avg_regime': seg['regime_strength'].mean(),
             'ssz_vol': seg['storage_surprise_z'].std(),
             'avg_ivr': seg['iv_rank'].mean() if 'iv_rank' in seg else np.nan,
