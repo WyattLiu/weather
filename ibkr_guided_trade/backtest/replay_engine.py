@@ -756,6 +756,11 @@ def exec_fill(idx, K, dte, right, side, spot, p, model_price):
                               avoid_print=p.get('avoid_eia_print', True),
                               patience=p.get('exec_patience', 0.6))
             if a:
+                # fold the verifiable fill mode into source: intraday:passive_mid
+                # (market traded through your resting mid) vs intraday:crossed_touch
+                # (you crossed at the real touch). Lets every trade record HOW it filled.
+                if a.get('how'):
+                    a['source'] = f"intraday:{a['how']}"
                 return a['price'], a
         except Exception:
             pass
@@ -1402,7 +1407,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # [[feedback_fast_tp_in_high_vol]]: TP=70% in high vol, 50% mid,
             # 30% low (when premium is too meager for fast capture).
             tp_thresh = None
-            if p.get('tp_50'):
+            if p.get('tp_50') and not p.get('ablate_put_tp'):
                 tp_thresh = p.get('tp_threshold', 0.5)
                 if p.get('tp_dynamic'):
                     rv30 = float(row.get('rv_30') or 0.5)
@@ -1575,7 +1580,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                'pnl': pnl, 'dte_left': dte_left_c, 'K': sc['K']})
                 continue
             tp_thresh = None
-            if p.get('tp_50'):
+            if p.get('tp_50') and not p.get('ablate_call_tp'):
                 tp_thresh = p.get('tp_threshold', 0.5)
                 if p.get('tp_dynamic'):
                     rv30 = float(row.get('rv_30') or 0.5)
@@ -5005,7 +5010,26 @@ STRATEGIES['g16_assign']         = {**STRATEGIES['g14_gap_wheel_real'], 'roll_do
 STRATEGIES['g16_assign_bwd']     = {**STRATEGIES['g14_gap_wheel_real'], 'roll_down': False,
                                     'backwardation_derisk': True}
 
+# ── USER'S ACCUMULATE / DISTRIBUTE WHEEL (2026-06-17) ──────────────────────────
+# The classical wheel the user actually designed (vs the champion's premium-scalping
+# churn): STEADY-LADDER valuation accumulation (smooth z-target), FULL short puts that
+# are LET ASSIGN low (no roll-away), CONTROLLED valuation-scaled CC that lets it run when
+# cheap and invites call-away at the top, and MINIMAL churn — no TP scalping, no elevator,
+# no upside-capping ITM-CC-when-cheap. Low turnover → fill-robust under honest minute fills.
+STRATEGIES['accum_wheel'] = {**_psi,
+    'smooth_z_target': True, 'z_target_cadence_days': 5,
+    'z_target_mults': {'extreme_cheap': 1.6, 'cheap': 1.3, 'neutral': 1.0,
+                       'rich': 0.6, 'extreme_rich': 0.3},
+    'otm_put': 0.05, 'roll_down': False, 'cut_and_rebuild_puts': False,
+    'tp_50': False, 'elevator_close': False,
+    'aggressive_itm_cc_z': -99.0, 'itm_cc_pct': 0.0,   # no ITM-CC-when-cheap (let it run)
+    'otm_call': 0.07, 'iv_rank_z_scale': True,
+}
+STRATEGIES['accum_wheel_tp'] = {**STRATEGIES['accum_wheel'], 'tp_50': True,
+                                'tp_threshold': 0.5}  # variant: keep light TP for comparison
+
 _KEEP_STRATEGIES = {
+    'accum_wheel', 'accum_wheel_tp',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
