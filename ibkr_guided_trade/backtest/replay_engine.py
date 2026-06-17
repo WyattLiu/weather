@@ -236,6 +236,15 @@ def precompute_factor_z(df):
             df[_c] = df[_c].fillna(0.0)
     if 'rv_30' in df.columns:
         df['rv_30'] = df['rv_30'].fillna(0.5)
+    # QUANTIFIED REGIME STRENGTH s∈[-1,+1] — causal sticky Markov FILTER (not a fitted
+    # HMM: avoids spurious regimes on a short sample; the persistence justified by the
+    # 0.94-0.97 stay-probs measured via statsmodels MarkovRegression on storage_surprise_z).
+    # sign = direction (+distribute / -accumulate), magnitude = STRENGTH (strong vs weak).
+    # s_t = 0.8·s_{t-1} + 0.2·tanh(0.9·ssz − 0.3·min(0,surge))  ≡ EWMA(alpha=0.2).
+    _ssz = df['storage_surprise_z'] if 'storage_surprise_z' in df.columns else 0.0 * df['UNG']
+    _surge = df['ung_surge_z'] if 'ung_surge_z' in df.columns else 0.0 * df['UNG']
+    _ev = np.tanh(0.9 * _ssz.fillna(0.0) - 0.3 * _surge.fillna(0.0).clip(upper=0.0))
+    df['regime_strength'] = _ev.ewm(alpha=0.2, adjust=False).mean()
     return df
 
 
@@ -1151,6 +1160,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         mult *= p.get('accumulate_boost', 1.5)        # tight + stable → build
                     elif _ssz > p.get('distribute_ssz', 0.5) or _surge < p.get('distribute_surge', -1.2):
                         mult *= p.get('distribute_cut', 0.4)          # loose / rolling over → dump
+            # CONTINUOUS REGIME STRENGTH (quantified): scale the tilt by |s| — strong
+            # regime → full tilt, WEAK/uncertain → ~neutral (don't churn on noise).
+            if p.get('regime_continuous'):
+                rs = row.get('regime_strength')
+                if rs == rs and rs is not None:
+                    if rs > 0:                                        # distribute strength
+                        mult *= 1.0 - min(1.0, rs) * p.get('distribute_strength_max', 0.6)
+                    elif not falling_knife(row):                      # accumulate strength (gated)
+                        mult *= 1.0 + min(1.0, -rs) * p.get('accumulate_strength_max', 0.5)
             target = int(base_shares * mult)
             target = (target // 100) * 100
             current = s['shares']
@@ -5069,9 +5087,13 @@ STRATEGIES['regime_wheel'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
     'tp_threshold': 0.7, 'roll_down': False,
     'state_regime': True, 'accumulate_ssz': -0.5, 'distribute_ssz': 0.5,
     'accumulate_boost': 1.5, 'distribute_cut': 0.4, 'distribute_surge': -1.2}
+# CONTINUOUS regime strength (quantified, Markov-filter): scale tilt by |s|.
+STRATEGIES['regime_wheel_cont'] = {**STRATEGIES['champion_kold15_ivrank_kbh'],
+    'tp_threshold': 0.7, 'roll_down': False, 'regime_continuous': True,
+    'distribute_strength_max': 0.6, 'accumulate_strength_max': 0.5}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
