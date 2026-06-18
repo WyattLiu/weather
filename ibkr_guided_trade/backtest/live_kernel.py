@@ -422,6 +422,83 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     regime = {'state': _state, 'storage_surprise_z': round(_ssz, 2),
               'regime_strength': round(_rs, 2), 'price_dd_60d': round(_dd60 * 100, 1),
               'posture': _posture}
+
+    # ── DELTA COMPASS — net delta vs the engine's NAV-scaled, regime-cut target, plus
+    #    WHY the delta-hedge is dormant or active. Mirrors the engine's hedge gate exactly
+    #    (replay_engine delta_hedge block) so the operator sees the glide-to-target logic. ──
+    nav = float(cash) + sum(float(p.get('market_value') or 0) for p in (positions or []))
+    if nav <= 0:                                   # demo books w/o market_value
+        nav = float(cash) + shares * spot
+    _rsc = max(0.0, min(1.0, _rs))
+    _base = params.get('delta_target_nav', 0.5) * nav / max(spot, 0.5)
+    _dtarget = _base * (1.0 - params.get('delta_bearish_cut', 0.9) * _rsc)
+    _dband = 0.15 * abs(_base) + params.get('delta_band_abs', 0.0)
+    _rsmin = params.get('delta_hedge_rs_min', 0.25)
+    _ndelta = greeks['now']['delta']
+    _over = _ndelta > _dtarget + _dband
+    _bear = _rs > _rsmin
+    _active = bool(_over and _bear and params.get('delta_hedge'))
+    if _active:
+        _dstatus = (f"HEDGE ACTIVE — net Δ {_ndelta:,.0f} is over target {_dtarget:,.0f} in a "
+                    f"bearish regime; engine buys long puts to glide Δ down (incrementally, ≤"
+                    f"{params.get('delta_hedge_max',15)}/step).")
+    elif not _bear:
+        _dstatus = (f"hedge dormant — regime not bearish enough (strength {_rs:.2f} ≤ {_rsmin}). "
+                    f"Net Δ {_ndelta:,.0f} vs target {_dtarget:,.0f}; book rides.")
+    else:
+        _dstatus = (f"hedge dormant — net Δ {_ndelta:,.0f} is at/below target {_dtarget:,.0f} "
+                    f"(±{_dband:,.0f} band); no trim needed.")
+    delta_compass = {
+        'net_delta': round(_ndelta, 0), 'target': round(_dtarget, 0), 'band': round(_dband, 0),
+        'gap': round(_ndelta - _dtarget, 0), 'nav': round(nav, 0),
+        'regime_strength': round(_rs, 2), 'rs_min': _rsmin, 'hedge_active': _active,
+        'glide': 'incremental (closes the gap, capped/step — never rebuilds from cash)',
+        'status': _dstatus,
+    }
+
+    # ── PER-STRIKE CONCENTRATION — short-option clusters by strike×expiry vs the gamma-cap
+    #    (max_short_per_strike). The cap is FORWARD-ONLY (grandfathers existing legs), so a
+    #    legacy cluster like 23×$11 puts persists — surface it with a de-risk suggestion. ──
+    from collections import defaultdict
+    _cap = params.get('max_short_per_strike')
+    _byse = defaultdict(int)          # (right,strike,expiry) -> contracts
+    _bys = defaultdict(lambda: {'contracts': 0, 'expiries': set()})  # (right,strike) aggregate
+    for p in positions or []:
+        if 'UNG' not in str(p.get('symbol') or 'UNG').upper():
+            continue
+        q = int(p.get('qty') or p.get('quantity') or 0)
+        if q >= 0:                    # shorts only
+            continue
+        rt = (p.get('option_type') or p.get('right') or '').upper()[:1]
+        K = float(p.get('strike') or 0)
+        if rt not in ('P', 'C') or not K:
+            continue
+        n = abs(q)
+        exp = str(p.get('expiry') or p.get('expiration') or '')
+        _byse[(rt, K, exp)] += n
+        _bys[(rt, K)]['contracts'] += n
+        _bys[(rt, K)]['expiries'].add(exp)
+    concentration = []
+    for (rt, K), agg in _bys.items():
+        contracts = agg['contracts']
+        max_single = max((_byse[(rt, K, e)] for e in agg['expiries']), default=0)
+        over_cap = bool(_cap and max_single > _cap)
+        rtname = 'PUT' if rt == 'P' else 'CALL'
+        sugg = ''
+        if over_cap or contracts >= 15:
+            if rt == 'P':
+                sugg = (f"de-risk: roll a few of the ${K:.2f} puts down a strike, or buy 2–3 long "
+                        f"${K:.2f} puts to cap that strike's gamma (forms a bear-put spread).")
+            else:
+                sugg = (f"de-risk: roll a few of the ${K:.2f} calls up, or buy 2–3 long ${K:.2f} "
+                        f"calls to cap that strike's gamma.")
+        concentration.append({
+            'right': rtname, 'strike': K, 'contracts': contracts,
+            'assignment_shares': contracts * 100, 'expiries': sorted(agg['expiries']),
+            'max_single_expiry': max_single, 'cap': _cap, 'over_cap': over_cap,
+            'suggestion': sugg})
+    concentration.sort(key=lambda c: (-c['contracts'], c['strike']))
+
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
         'spot': round(spot, 2),
@@ -435,6 +512,8 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                                        - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
         'greeks': greeks,
+        'delta_compass': delta_compass,
+        'concentration': concentration,
         'settlement': _settlement_watch(positions, spot),
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),

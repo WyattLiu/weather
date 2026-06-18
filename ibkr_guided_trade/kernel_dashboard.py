@@ -633,6 +633,8 @@ td.neutral { color: var(--blue); }
     <div id="sot-theta" class="summary-row" style="margin-bottom:8px"></div>
     <h3 style="margin:14px 0 6px">📐 Book greeks — current → post-order <span class="sub" style="font-weight:400">(what-if from fitted vol surface, never a fill · incl 3rd-order speed/color)</span></h3>
     <div id="sot-greeks"></div>
+    <div id="sot-compass"></div>
+    <div id="sot-concentration"></div>
     <div id="sot-settlement"></div>
     <h3 style="margin:14px 0 6px">Orders for today</h3>
     <div id="sot-orders"></div>
@@ -1741,6 +1743,52 @@ async function drawSOT(){
         card('charm ∂Δ/∂t', n.charm, a.charm, true, x=>fmt(x,3), 'Δ drift per day (re-hedge)')+
         card('speed ∂Γ/∂S ⁳', n.speed, a.speed, true, x=>fmt(x,1), '3rd-order · pin-risk acceleration')+
         card('color ∂Γ/∂t ⁳', n.color, a.color, true, x=>fmt(x,2), '3rd-order · front-week Γ blow-up rate');
+    }
+    // ── DELTA COMPASS: net delta vs the engine's NAV-scaled, regime-cut target + WHY the
+    //    hedge is dormant/active. Shows the glide-to-target logic (incremental, not rebuild). ──
+    const cel = document.getElementById('sot-compass');
+    const dc = d.delta_compass;
+    if (cel && dc) {
+      const lo = Math.min(0, dc.net_delta, dc.target), hi = Math.max(dc.net_delta, dc.target, dc.target+dc.band);
+      const span = (hi-lo)||1, pct = x => (100*(x-lo)/span).toFixed(1)+'%';
+      const col = dc.hedge_active ? '#c62828' : '#2e7d32';
+      cel.innerHTML =
+        '<h3 style="margin:14px 0 6px">🧭 Delta compass — net Δ vs target '+
+        '<span class="sub" style="font-weight:400">(target = '+dc.glide+')</span></h3>'+
+        // a little track: target band (grey) with net-Δ marker and target marker
+        '<div style="position:relative;height:26px;margin:6px 0 4px;background:var(--bg-alt,rgba(128,128,128,.12));border-radius:4px">'+
+          '<div style="position:absolute;left:'+pct(dc.target-dc.band)+';width:'+(100*2*dc.band/span).toFixed(1)+'%;top:0;bottom:0;background:rgba(46,125,50,.18);border-radius:4px" title="no-churn band"></div>'+
+          '<div style="position:absolute;left:'+pct(dc.target)+';top:-2px;bottom:-2px;width:2px;background:#888" title="target"></div>'+
+          '<div style="position:absolute;left:'+pct(dc.net_delta)+';top:-4px;bottom:-4px;width:3px;background:'+col+'" title="net delta"></div>'+
+        '</div>'+
+        '<div style="font-size:.86rem">net Δ <b style="color:'+col+'">'+fmt(dc.net_delta,0)+'</b> '+
+          ' · target <b>'+fmt(dc.target,0)+'</b> (±'+fmt(dc.band,0)+') · gap '+fmt(dc.gap,0)+
+          ' · regime strength '+dc.regime_strength+' vs '+dc.rs_min+
+          ' · <b style="color:'+col+'">'+(dc.hedge_active?'HEDGE ACTIVE':'hedge dormant')+'</b></div>'+
+        '<div style="font-size:.82rem;color:var(--text-dim);border-left:2px solid '+col+';padding-left:10px;margin-top:4px">↳ '+dc.status+'</div>';
+    }
+    // ── PER-STRIKE CONCENTRATION: short clusters vs the gamma-cap (forward-only, so legacy
+    //    clusters persist). Flag over-cap strikes with an incremental de-risk suggestion. ──
+    const xel = document.getElementById('sot-concentration');
+    const conc = d.concentration || [];
+    if (xel) {
+      const flagged = conc.filter(c => c.over_cap);
+      if (!conc.length) { xel.innerHTML=''; }
+      else {
+        const rows = conc.map(c => {
+          const col = c.over_cap ? '#e08a00' : 'var(--text-dim)';
+          return '<tr style="border-bottom:1px solid rgba(128,128,128,.12)">'+
+            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+col+'">'+(c.over_cap?'⚠ ':'')+c.contracts+'× $'+c.strike.toFixed(2)+' '+c.right+'</td>'+
+            '<td style="padding:3px 12px 3px 0">'+fmt(c.assignment_shares,0)+' sh</td>'+
+            '<td style="padding:3px 12px 3px 0;color:'+col+'">'+c.max_single_expiry+'/exp vs cap '+(c.cap||'–')+'</td>'+
+            '<td style="padding:3px 0;color:var(--text-dim);font-size:.82rem">'+(c.suggestion||'within cap — fine')+'</td></tr>';
+        }).join('');
+        xel.innerHTML =
+          '<h3 style="margin:14px 0 6px">🎯 Per-strike concentration'+
+          (flagged.length?(' <span style="color:#e08a00;font-size:.8rem">· '+flagged.length+' strike(s) over the gamma-cap (grandfathered — engine won\'t add more, won\'t unwind)</span>'):'')+'</h3>'+
+          '<table style="border-collapse:collapse;font-size:.9rem"><thead><tr style="color:var(--text-dim);font-size:.76rem;text-transform:uppercase">'+
+          '<th style="text-align:left;padding-right:12px">cluster</th><th style="text-align:left">exposure</th><th style="text-align:left">vs cap</th><th style="text-align:left">de-risk</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      }
     }
     // ── SETTLEMENT WATCH: expiring options are ACTIONS too (await-worthless / assign /
     //    called-away / pin). They move shares/cash/coverage — surface them for execution. ──
