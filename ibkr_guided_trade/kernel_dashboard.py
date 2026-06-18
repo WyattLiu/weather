@@ -1753,22 +1753,26 @@ async function drawSOT(){
       const kold = dc.kold_delta || 0;
       const lo = Math.min(0, gate, dc.net_delta, dc.target), hi = Math.max(gate, dc.net_delta, dc.target, dc.target+dc.band);
       const span = (hi-lo)||1, pct = x => (100*(x-lo)/span).toFixed(1)+'%';
+      const ceil = dc.trim_ceiling!=null ? dc.trim_ceiling : dc.target;
       const col = dc.hedge_active ? '#c62828' : '#2e7d32';
       cel.innerHTML =
-        '<h3 style="margin:14px 0 6px">🧭 Delta compass — net Δ vs target '+
-        '<span class="sub" style="font-weight:400">(target = '+dc.glide+')</span></h3>'+
-        // track: target band (green), target tick, GATE-Δ marker (what fires the hedge),
-        // and a hollow marker for the TRUE total Δ incl KOLD.
+        '<h3 style="margin:14px 0 6px">🧭 Delta compass — net Δ vs <b>trim ceiling</b> '+
+        '<span class="sub" style="font-weight:400">('+dc.glide+')</span></h3>'+
+        // track: band just below the ceiling, ceiling tick, GATE-Δ marker (what fires the
+        // hedge), dashed marker for the TRUE total Δ incl KOLD. Region BELOW the ceiling is
+        // the safe 'no trim' zone (green); the hedge only fires to the RIGHT of the ceiling.
         '<div style="position:relative;height:26px;margin:6px 0 4px;background:var(--bg-alt,rgba(128,128,128,.12));border-radius:4px">'+
-          '<div style="position:absolute;left:'+pct(dc.target-dc.band)+';width:'+(100*2*dc.band/span).toFixed(1)+'%;top:0;bottom:0;background:rgba(46,125,50,.18);border-radius:4px" title="no-churn band"></div>'+
-          '<div style="position:absolute;left:'+pct(dc.target)+';top:-2px;bottom:-2px;width:2px;background:#888" title="target"></div>'+
+          '<div style="position:absolute;left:0;width:'+pct(ceil)+';top:0;bottom:0;background:rgba(46,125,50,.12);border-radius:4px 0 0 4px" title="below ceiling — no trim (safe)"></div>'+
+          '<div style="position:absolute;left:'+pct(ceil)+';top:-2px;bottom:-2px;width:2px;background:#e08a00" title="trim ceiling (trim only if ABOVE, in a bear regime)"></div>'+
           '<div style="position:absolute;left:'+pct(gate)+';top:-4px;bottom:-4px;width:3px;background:'+col+'" title="options+shares Δ (engine gate)"></div>'+
           (Math.abs(kold)>=1?'<div style="position:absolute;left:'+pct(dc.net_delta)+';top:1px;bottom:1px;width:0;border-left:2px dashed #58a6ff" title="true net Δ incl KOLD"></div>':'')+
         '</div>'+
         '<div style="font-size:.86rem">options+shares Δ <b style="color:'+col+'">'+fmt(gate,0)+'</b> '+
-          ' · target <b>'+fmt(dc.target,0)+'</b> (±'+fmt(dc.band,0)+') · gap '+fmt(dc.gap,0)+
+          ' · trim ceiling <b style="color:#e08a00">'+fmt(ceil,0)+'</b> · '+
+          (dc.headroom!=null?('<b style="color:#2e7d32">'+fmt(dc.headroom,0)+' headroom below</b>'):'gap '+fmt(dc.gap,0))+
           ' · regime '+dc.regime_strength+' vs '+dc.rs_min+
-          ' · <b style="color:'+col+'">'+(dc.hedge_active?'HEDGE ACTIVE':'hedge dormant')+'</b></div>'+
+          ' · <b style="color:'+col+'">'+(dc.hedge_active?'HEDGE ACTIVE (trimming)':'hedge dormant')+'</b></div>'+
+          (dc.share_pct_nav!=null?('<div style="font-size:.82rem;color:var(--text-dim);margin-top:1px">exposure set by the share target — shares ≈ '+dc.share_pct_nav+'% NAV (regime posture); the ceiling is a one-sided risk cap, not a goal to reach</div>'):'')+
           (Math.abs(kold)>=1?('<div style="font-size:.84rem;margin-top:2px">true net Δ <b style="color:#58a6ff">'+fmt(dc.net_delta,0)+
             '</b> = '+fmt(gate,0)+' options+shares '+(kold<0?'−':'+')+' '+fmt(Math.abs(kold),0)+' KOLD hedge '+
             '<span class="sub">(inverse-ETF, now counted — was a blind spot)</span></div>'):'')+

@@ -466,26 +466,40 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     _over = _gate_delta > _dtarget + _dband                   # gate mirrors the engine (no KOLD)
     _bear = _rs > _rsmin
     _active = bool(_over and _bear and params.get('delta_hedge'))
-    _koldnote = (f" (incl {_kdelta:,.0f} from KOLD; engine gates on the {_gate_delta:,.0f} "
+    _koldnote = (f" (incl {_kdelta:,.0f} from KOLD; the gate uses the {_gate_delta:,.0f} "
                  f"options+shares Δ)") if abs(_kdelta) >= 1 else ""
+    _headroom = _dtarget - _gate_delta                  # distance below the trim ceiling
+    _shpct = (shares * spot / nav * 100) if nav else 0  # share exposure vs the regime posture
+    # The delta-hedge is a ONE-SIDED TRIM CEILING, not a target the engine steers toward. The
+    # book's directional exposure is set by the SHARE TARGET (~regime posture, here shares
+    # ~16% NAV) + the natural net of short put/call deltas; the hedge only TRIMS delta back
+    # under the ceiling when you've run too long AND the regime is bearish. Below the ceiling
+    # it does nothing — which is why today's orders (premium take-profits) don't chase it.
     if _active:
-        _dstatus = (f"HEDGE ACTIVE — options+shares Δ {_gate_delta:,.0f} is over target {_dtarget:,.0f} "
-                    f"in a bearish regime; engine buys long puts to glide Δ down (incrementally, ≤"
-                    f"{params.get('delta_hedge_max',15)}/step).{_koldnote}")
+        _dstatus = (f"HEDGE ACTIVE — options+shares Δ {_gate_delta:,.0f} ran ABOVE the trim ceiling "
+                    f"{_dtarget:,.0f} in a bearish regime; engine buys long puts to glide Δ back under "
+                    f"(incrementally, ≤{params.get('delta_hedge_max',15)}/step).{_koldnote}")
     elif not _bear:
-        _dstatus = (f"hedge dormant — regime not bearish enough (strength {_rs:.2f} ≤ {_rsmin}). "
-                    f"True net Δ {_ndelta:,.0f} vs target {_dtarget:,.0f}; book rides.{_koldnote}")
+        _dstatus = (f"hedge dormant (correct) — the Δ-hedge is a ONE-SIDED trim ceiling, not a target. "
+                    f"You're {abs(_headroom):,.0f} BELOW the ceiling {_dtarget:,.0f} with "
+                    f"{_headroom:,.0f} headroom, and the regime isn't bearish (strength {_rs:.2f} ≤ "
+                    f"{_rsmin}) — nothing to trim. Your exposure is set by the share target "
+                    f"(shares {_shpct:.0f}% NAV ≈ posture); orders today are premium take-profits, "
+                    f"not Δ-steering.{_koldnote}")
     else:
-        _dstatus = (f"hedge dormant — options+shares Δ {_gate_delta:,.0f} is at/below target "
-                    f"{_dtarget:,.0f} (±{_dband:,.0f} band); no trim needed.{_koldnote}")
+        _dstatus = (f"hedge dormant — options+shares Δ {_gate_delta:,.0f} is {abs(_headroom):,.0f} below "
+                    f"the trim ceiling {_dtarget:,.0f}; no trim needed. Exposure is set by the share "
+                    f"target (shares {_shpct:.0f}% NAV), not by chasing this ceiling.{_koldnote}")
     delta_compass = {
         'net_delta': round(_ndelta, 0),                 # TRUE total (incl KOLD)
         'gate_delta': round(_gate_delta, 0),            # options+shares only (engine gate basis)
         'kold_delta': round(_kdelta, 0),
-        'target': round(_dtarget, 0), 'band': round(_dband, 0),
+        'trim_ceiling': round(_dtarget, 0), 'target': round(_dtarget, 0),  # 'target' kept for back-compat
+        'band': round(_dband, 0), 'headroom': round(_headroom, 0),
         'gap': round(_gate_delta - _dtarget, 0), 'nav': round(nav, 0),
+        'share_pct_nav': round(_shpct, 1), 'one_sided': True,
         'regime_strength': round(_rs, 2), 'rs_min': _rsmin, 'hedge_active': _active,
-        'glide': 'incremental (closes the gap, capped/step — never rebuilds from cash)',
+        'glide': 'one-sided trim ceiling — engine cuts Δ when ABOVE it in a bear regime; never adds Δ to reach it',
         'status': _dstatus,
     }
 
