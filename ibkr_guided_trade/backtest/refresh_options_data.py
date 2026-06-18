@@ -33,6 +33,16 @@ def main():
     p.add_argument('--workers', type=int, default=4)
     a = p.parse_args()
     rc = 0
+    # 0) master dataset → today's UNG spot from ThetaData EOD (after close it includes today),
+    #    so the per-day ingestion below has a spot for every new session. Self-contained: a
+    #    cron run doesn't depend on the live dashboard having stamped today's row.
+    try:
+        sys.path.insert(0, THIS)
+        from historical_data_pipeline import refresh_to_today
+        refresh_to_today(persist=True)
+        print('[master dataset] refreshed to today from ThetaData', flush=True)
+    except Exception as e:
+        print(f'[master dataset] refresh skipped ({e!r})', flush=True)
     # 1) IV surface (resume from last surface date → today)
     rc |= _run('IV surface', ['backfill_ung_iv_pg.py', '--workers', str(a.workers)])
     # 2) minute quotes (resume from last trade_date → today, 1m)
