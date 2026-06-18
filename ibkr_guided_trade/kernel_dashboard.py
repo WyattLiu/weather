@@ -1882,17 +1882,19 @@ async function drawSOT(){
       let recon = '';
       const rc = o.reconcile;
       if (rc && rc.real_buyback != null && rc.model_buyback != null) {
+        // STALE data = real red warning (don't trust the price). A price-update on FRESH
+        // data is NOT a warning — the order is a validated decision; we just fill it at the
+        // real market. Green/info, never 'reconsider'. (live = backtest: execute every order.)
         const stale = (rc.quote_stale_days||0) >= 1;
-        const flagged = !!rc.flag || stale;
-        const col = flagged ? '#c62828' : '#2e7d32';
+        const col = stale ? '#c62828' : '#2e7d32';
         const qlabel = stale ? ('real fill ('+rc.quote_stale_days+'d-STALE, '+rc.quote_asof+')') : 'real fill';
         recon = '<div style="margin:5px 0 2px 14px;padding:6px 10px;border-left:2px solid '+col+
           ';background:'+col+'12;border-radius:4px;font-size:.82rem">'+
-          '<b style="color:'+col+'">'+(flagged?'⚠ price check':'✓ price check')+'</b>  '+
-          'engine buyback $'+fmt(rc.model_buyback,2)+' (+$'+fmt(rc.model_pnl,0)+') '+
-          'vs <b>'+qlabel+' ≈$'+fmt(rc.real_buyback,2)+'</b> → realistic <b>+$'+fmt(rc.real_pnl,0)+'</b>'+
+          '<b style="color:'+col+'">'+(stale?'⚠ STALE price':'✓ fill at real price')+'</b>  '+
+          'engine $'+fmt(rc.model_buyback,2)+' (+$'+fmt(rc.model_pnl,0)+') '+
+          '→ <b>'+qlabel+' ≈$'+fmt(rc.real_buyback,2)+'</b> → realistic <b>+$'+fmt(rc.real_pnl,0)+'</b>'+
           (rc.stale_warning?('<div style="color:#c62828;margin-top:2px">'+rc.stale_warning+'</div>'):'')+
-          (rc.flag?('<div style="color:'+col+';margin-top:2px">'+rc.flag+'</div>'):'')+'</div>';
+          (rc.flag && !stale?('<div style="color:var(--text-dim);margin-top:2px">'+rc.flag+'</div>'):'')+'</div>';
       }
       return '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
         (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+

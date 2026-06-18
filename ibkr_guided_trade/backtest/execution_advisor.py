@@ -369,15 +369,15 @@ def _reconcile_economics(rec, plan):
             rc.update(model_buyback=mbb, model_pnl=round(mpnl, 0),
                       real_buyback=round(real_fill, 2), real_pnl=round(real_pnl, 0),
                       entry_prem=round(entry_prem, 2))
-            # material if the real cost is ≥1.5× the model or ≥$0.05 richer per share
-            gap = real_fill - mbb
-            if gap >= 0.05 or (mbb > 0 and real_fill >= 1.5 * mbb):
-                rc['flag'] = (f"Market mid ${q['mid']:.2f} (fill ≈${real_fill:.2f}) is richer than the "
-                              f"engine's ${mbb:.2f} — real take-profit ≈ +${real_pnl:,.0f}, not +${mpnl:,.0f}. "
-                              "Less decayed than modeled; consider waiting for more decay before closing.")
-            elif real_fill <= mbb - 0.05:
-                rc['flag'] = (f"Market is CHEAPER (${real_fill:.2f}) than modeled (${mbb:.2f}) — "
-                              f"real take-profit ≈ +${real_pnl:,.0f}; good time to close.")
+            # ACCURACY ONLY — never advise deviating from the engine's decision. The engine
+            # emitted this order, so the backtest executed it; the operator must too (live =
+            # backtest). When the real fill differs materially from the model, report the REAL
+            # price so the order is FILLED accurately — not to suggest skipping or waiting.
+            if abs(real_fill - mbb) >= 0.03:
+                rc['flag'] = (f"EXECUTE at the real market: fill ≈${real_fill:.2f} "
+                              f"(bid ${q['bid']:.2f}/ask ${q['ask']:.2f}); engine modeled ${mbb:.2f}. "
+                              f"Realistic P&L +${real_pnl:,.0f}. This is a validated decision — fill it "
+                              f"at the real price via the ladder; only the price is updated, not the call.")
     rec['reconcile'] = rc
     # propagate a one-line caveat into the exec plan so the UI shows it inline
     if rc.get('flag'):
