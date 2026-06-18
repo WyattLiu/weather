@@ -1208,6 +1208,17 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     # Walk-forward truth disclosure
     out['warnings'].append('Walk-forward worst 12mo MDD: -17% (full-sample MDD -7% is sample-biased)')
 
+    # ── ALIGNMENT: ORDERS COME FROM THE SHARED ENGINE ONLY ───────────────────
+    # This adapter historically RE-IMPLEMENTED order generation (the appends above) — a
+    # parallel code path that can drift from the backtest. There must be exactly ONE source
+    # of executable orders: live_kernel.get_live_recommendation(), which runs the SAME
+    # replay_engine the backtest runs (live_decision=True). So we DISCARD the re-implemented
+    # recommendations here and point any consumer at the shared engine. The analytics above
+    # (greeks/position_analysis/curves) are display-only and never drive execution.
+    out['recommendations'] = []
+    out['recommendations_source'] = ('DEPRECATED — orders come ONLY from the shared engine '
+                                     '(live_kernel.get_live_recommendation → /api/live SOT panel). '
+                                     'This verdict path no longer generates executable orders.')
     return out
 
 

@@ -403,30 +403,42 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                      'why': (why.format(credit=credit, pnl=pnl) if '{' in why else why),
                      'type': ty})
 
-    # ── HARD COVERAGE CAP (covered-calls-only safety, [[feedback_covered_calls_only]]) ──
-    # NEVER suggest selling more calls than the share book covers. Existing short calls +
-    # any newly-suggested call sales must be ≤ shares//100. Cap/drop offending recs at the
-    # output boundary, regardless of engine path. This guarantees the book stays covered.
-    _existing_calls = sum(int(abs(c.get('qty') or 0)) for c in sc)   # sc = seeded short calls
-    _cap = shares // 100 - _existing_calls
-    _capped = []
-    for r in recs:
-        if (r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL')
-                and r.get('qty')):
-            allow = max(0, min(int(r['qty']), _cap))
-            _cap -= allow
-            if allow <= 0:
-                r['_dropped_uncovered'] = True
-                continue
-            if allow < r['qty']:
-                r['qty'] = allow
-                r['action'] = r['action'].replace(str(int(r.get('qty', 0))), str(allow), 1)
-                r['why'] = (r.get('why', '') + ' [capped to stay covered]')
-        _capped.append(r)
-    recs = _capped
-    coverage = {'shares': int(shares), 'coverable_calls': int(shares // 100),
+    # ── COVERAGE SAFETY ASSERTION (covered-calls-only, [[feedback_covered_calls_only]]) ──
+    # ALIGNMENT: the engine ITSELF enforces covered-calls-only (replay_engine only writes CCs
+    # against uncovered_shares, qty ≤ uncovered_shares//100, reserving a core floor) — the SAME
+    # code the backtest ran. So a SELL-CALL order that breaches shares//100 is impossible from a
+    # correct seed. We therefore do NOT silently cap engine output (that would be a live-only
+    # deviation from the backtest). Instead we ASSERT the invariant: if it's ever breached, the
+    # seed/engine is inconsistent (e.g. miscounted shares) — surface it LOUDLY as a critical
+    # anomaly and hard-block the naked leg (safety), rather than quietly altering a validated
+    # decision. In normal operation this never fires and engine orders pass through verbatim.
+    _existing_calls = sum(int(abs(c.get('qty') or 0)) for c in sc)
+    _new_calls = sum(int(r.get('qty') or 0) for r in recs
+                     if r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL'))
+    _coverable = shares // 100
+    _violation = None
+    if _existing_calls + _new_calls > _coverable:
+        # Should be unreachable (engine self-enforces). If reached → bug, not a strategy choice.
+        _violation = (f"COVERAGE INVARIANT BREACHED: engine emitted {_new_calls} new short call(s) "
+                      f"on top of {_existing_calls} existing vs {_coverable} coverable "
+                      f"({shares} sh). The engine self-enforces covered-calls-only, so this means "
+                      f"the SEED is inconsistent (check share count / UNG-only filter). Naked legs "
+                      f"hard-blocked — DO NOT execute; investigate the seed before trusting today.")
+        kept = []
+        room = _coverable - _existing_calls
+        for r in recs:
+            if (r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL')
+                    and r.get('qty')):
+                if room <= 0:
+                    r['_dropped_uncovered'] = True
+                    continue
+                room -= int(r['qty'])
+            kept.append(r)
+        recs = kept
+    coverage = {'shares': int(shares), 'coverable_calls': int(_coverable),
                 'existing_short_calls': int(_existing_calls),
-                'covered': _existing_calls <= shares // 100}
+                'covered': _existing_calls + _new_calls <= _coverable,
+                'violation': _violation}
     # EXTRINSIC-only theta, BEFORE (your current book) vs AFTER today's orders
     # (the engine's actual post-decision book). Gross of assignment.
     final = getattr(R, '_LIVE_FINAL', {}) or {}

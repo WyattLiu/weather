@@ -1676,7 +1676,10 @@ async function drawSOT(){
           (d.coverage.covered?'#2e7d32':'#c62828')+'">🛡 COVERED-CALLS-ONLY: '+
           d.coverage.existing_short_calls+' short calls vs '+d.coverage.coverable_calls+
           ' coverable ('+d.coverage.shares+' shares) — '+
-          (d.coverage.covered?'covered ✓':'OVER-WRITTEN ⚠')+'</div>'):'')+'</div>';
+          (d.coverage.covered?'covered ✓':'OVER-WRITTEN ⚠')+'</div>'):'')+
+        ((d.coverage&&d.coverage.violation)?('<div style="margin-top:4px;padding:6px 10px;'+
+          'background:#c62828;color:#fff;font-weight:700;border-radius:4px;font-size:.85rem">🚨 '+
+          d.coverage.violation+'</div>'):'')+'</div>';
     }
     const z = d.z_models||{};
     document.getElementById('sot-z').innerHTML =
