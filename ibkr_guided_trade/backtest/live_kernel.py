@@ -178,7 +178,11 @@ def _to_engine_positions(positions):
             right = (p.get('option_type') or p.get('right') or '').upper()[:1]
             exp = p.get('expiry') or p.get('expiration')
             dte = max(1, (pd.Timestamp(exp).normalize() - today).days) if exp else 30
-            entry = today - pd.Timedelta(days=10)
+            # entry = TODAY (0 elapsed). dte already holds the REAL remaining life, so the
+            # engine's T_left = dte − (idx − entry) = dte = real remaining. A past entry date
+            # (was today−10) made the engine subtract phantom elapsed days → it priced every
+            # leg at DTE−10, undervaluing it (~half) and firing TAKE-PROFITS PREMATURELY.
+            entry = today
             rec = {'entry': entry, 'K': K, 'dte': dte, 'qty': abs(qty),
                    'expiry': (str(pd.Timestamp(exp).date()) if exp else None),
                    'entry_prem': float(p.get('average_price') or p.get('avg_price') or 0.3)}

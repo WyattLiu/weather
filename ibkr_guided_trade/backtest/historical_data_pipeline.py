@@ -21,6 +21,7 @@ import argparse
 import math
 import pandas as pd
 import numpy as np
+from io import StringIO
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -187,18 +188,54 @@ def _file_age_hours(path):
     return (datetime.now().timestamp() - os.path.getmtime(path)) / 3600
 
 
-_SYMS = {'UNG': 'UNG', 'KOLD': 'KOLD', 'BOIL': 'BOIL', 'BOXX': 'BOXX',
-         'NG': 'NG=F', 'CL': 'CL=F', 'DX_DXY': 'DX-Y.NYB', 'VIX': '^VIX'}
 _SLOW_COLS = ('eia_production', 'eia_consumption', 'eia_lng_exports', 'eia_pipe_exports',
               'eia_storage_weekly', 'eia_hh_spot_daily')  # weekly/monthly — carry forward
+
+# THETADATA is the authoritative source (same feed as the option chain → no cross-source
+# skew). It serves the ETFs (stock EOD) + VIX (index EOD). NG/CL futures aren't in this
+# subscription (/v3/futures = 404) → those columns are CARRIED FORWARD, never yahoo.
+_THETA_BASE = 'http://127.0.0.1:25503'
+_THETA_STOCK = ('UNG', 'KOLD', 'BOIL', 'BOXX')        # /v3/stock/history/eod
+_THETA_INDEX = {'VIX': 'VIX'}                          # col -> ThetaData index symbol
+_CARRY_PRICE = ('NG', 'CL', 'DX_DXY')                  # not on ThetaData → carry forward
+
+
+def _thetadata_eod_closes(start, end):
+    """Daily closes from ThetaData (authoritative, same feed as the options) for the symbols
+    it serves: ETFs via stock EOD + VIX via index EOD. Returns DataFrame[date × colname] of
+    closes. NG/CL/DXY are intentionally absent (carried forward by the caller)."""
+    import requests
+    s, e = pd.Timestamp(start).strftime('%Y%m%d'), pd.Timestamp(end).strftime('%Y%m%d')
+    out = {}
+    def _fetch(kind, sym, col):
+        try:
+            r = requests.get(f'{_THETA_BASE}/v3/{kind}/history/eod',
+                             params={'symbol': sym, 'start_date': s, 'end_date': e}, timeout=15)
+            if r.status_code != 200 or not r.text.strip():
+                return
+            df = pd.read_csv(StringIO(r.text))
+            if 'created' not in df.columns or 'close' not in df.columns or df.empty:
+                return
+            df['d'] = pd.to_datetime(df['created']).dt.normalize()
+            out[col] = df.groupby('d')['close'].last()
+        except Exception:
+            return
+    for sym in _THETA_STOCK:
+        _fetch('stock', sym, sym)
+    for col, sym in _THETA_INDEX.items():
+        _fetch('index', sym, col)
+    if not out:
+        return None
+    return pd.DataFrame(out)
 
 
 def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
     """SAME-DAY refresh: bring the master dataset up to the real today with FRESH prices,
     so the live decision's signals (z / regime / IV-rank / greeks) reflect today — not
-    yesterday's close. Lightweight: pull recent ETF/futures prices via yfinance, append/
-    update the missing daily rows, carry forward the slow weekly/monthly EIA columns
-    (those legitimately don't change intraday), and recompute the price-derived factors.
+    yesterday's close. Source = THETADATA (authoritative, same feed as the option chain —
+    NOT yahoo): ETFs + VIX from ThetaData EOD, NG/CL/DXY carried forward (not in this
+    subscription), today's row stamped from the live WS spot. Slow weekly/monthly EIA
+    columns carried forward; price-derived factors recomputed.
 
     Guarded: skips the network if the dataset is already current OR was refreshed within
     `max_stale_min`. Defensive: any fetch failure returns the dataset unchanged (the caller
@@ -229,21 +266,20 @@ def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
         # refreshed very recently but still behind (e.g. weekend/holiday) — accept as-is
         return df
     try:
-        import yfinance as yf
-        raw = yf.download(list(_SYMS.values()), period='1mo', progress=False,
-                          auto_adjust=False)['Close']
+        # AUTHORITATIVE source = ThetaData (same feed as the option chain → no cross-source
+        # skew vs the IV surface/quotes). NOT yahoo. ETFs + VIX from ThetaData; NG/CL/DXY
+        # carried forward (not in this subscription). EOD lands after each session close, so
+        # this brings the daily history to the prior close; the live WS spot tracks intraday.
+        raw = _thetadata_eod_closes(last, today)
         if raw is None or raw.empty:
             return df
-        raw.index = pd.to_datetime(raw.index).tz_localize(None).normalize()
-        # map yfinance symbol columns back to our column names
-        rename = {v: k for k, v in _SYMS.items()}
-        raw = raw.rename(columns=rename)
+        raw.index = pd.to_datetime(raw.index).normalize()
         new_rows = raw.index[raw.index > last]
         if len(new_rows) == 0:
             return df
         for dt in new_rows:
             row = {}
-            for col in _SYMS:
+            for col in raw.columns:
                 v = raw.at[dt, col] if col in raw.columns else None
                 if v == v and v is not None:        # not NaN
                     row[col] = float(v)
@@ -258,9 +294,19 @@ def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
                         row[col] = pv
             df.loc[dt] = pd.Series(row)
         df = df.sort_index()
-        # live underlying overrides today's UNG with the real spot (more current than yf)
+        # ThetaData EOD lags to the PRIOR close, so the latest row is yesterday. If we have a
+        # live intraday spot (WS/broker — authoritative for execution), STAMP today's row from
+        # it (carry forward everything else) so signals/regime/greeks reflect the current
+        # session. Never overwrite a real prior close. (If today's row already exists, update it.)
         if live_spot and live_spot == live_spot:
-            df.at[df.index[-1], 'UNG'] = float(live_spot)
+            if df.index[-1] < today:
+                prev = df.iloc[-1]
+                trow = {c: (prev[c] if prev[c] == prev[c] else None) for c in df.columns}
+                trow['UNG'] = float(live_spot)
+                df.loc[today] = pd.Series(trow)
+                df = df.sort_index()
+            else:
+                df.at[df.index[-1], 'UNG'] = float(live_spot)
         # recompute the price-DERIVED factors over the full (now-extended) series
         iv = compute_realized_iv_surface(df['UNG'])
         for c in iv.columns:
