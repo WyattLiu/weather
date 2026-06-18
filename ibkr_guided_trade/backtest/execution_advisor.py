@@ -200,11 +200,17 @@ def latest_spread(K_adj, dte, right, date=None, expiry=None):
                      AND option_right=%s ORDER BY trade_date DESC LIMIT 1""",
                 (last, exp.isoformat(), round(K_raw, 1), right))
     _oi = cur.fetchone()
+    # STALENESS: the quote is from `last` (max trade_date in the minute table). If the
+    # options feed has lagged the real today, this 'live' quote is actually N days old —
+    # the caller MUST flag it so a stale price is never presented as the current market.
+    _qdate = pd.Timestamp(last).normalize()
+    _stale = max(0, (pd.Timestamp.today().normalize() - _qdate).days)
     return {'bid': round(bid, 3), 'ask': round(ask, 3), 'mid': round(mid, 3),
             'spread_pct': round((ask - bid) / mid * 100, 1),
             'spread_cents': round((ask - bid) * 100, 1),
             'oi': int(_oi[0]) if _oi and _oi[0] is not None else None,
-            'expiry': exp.isoformat()}
+            'expiry': exp.isoformat(),
+            'asof': str(_qdate.date()), 'stale_days': int(_stale)}
 
 
 def build_ladder(mid, bid, ask, side, dte, spread_pct, oi=None, window=30):
@@ -342,8 +348,16 @@ def _reconcile_economics(rec, plan):
     qty = int(abs(rec.get('qty') or 0)) or 1
     ty = rec.get('type') or ''
     real_fill = lad.get('expected_fill', q['mid'])
+    qstale = int(q.get('stale_days') or 0)
     rc = {'real_bid': q['bid'], 'real_ask': q['ask'], 'real_mid': q['mid'],
-          'real_fill': round(real_fill, 2)}
+          'real_fill': round(real_fill, 2), 'quote_asof': q.get('asof'),
+          'quote_stale_days': qstale}
+    if qstale >= 1:
+        # The quote is NOT today's market — the options feed lags. Say so loudly; do not
+        # present a stale price as a live fill (root-caused 2026-06-18: feed frozen 6d).
+        rc['stale_warning'] = (f"⚠ quote is {qstale}d STALE (as of {q.get('asof')}) — the UNG "
+                               f"options feed (ThetaData→PG) has lagged; this is NOT today's "
+                               f"market. Refresh the feed before trusting this price.")
     # Take-profit buy-to-close: profit = (entry premium − buyback)·100·qty. Recompute the
     # buyback at the real price; back out the entry premium from the model figures.
     if ty in ('PUT_TP', 'CALL_TP'):

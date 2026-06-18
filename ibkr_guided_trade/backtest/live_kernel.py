@@ -272,6 +272,37 @@ def _book_greeks(short_puts, short_calls, long_puts, long_calls, shares, spot,
     }
 
 
+def _options_data_freshness():
+    """Freshness of the UNG OPTIONS data (IV surface + minute quotes) — SEPARATE from the
+    underlying price feed, which refreshes daily. When the options feed lags (ThetaData→PG
+    ingestion stalled), the engine prices off a carried-forward/stale smile and 'live' quotes
+    are actually N days old. Surface it so the operator never trusts a stale options price."""
+    out = {'surface_asof': None, 'minute_asof': None, 'stale_days': None, 'ok': True}
+    try:
+        surf = R._load_iv_surface()
+        out['surface_asof'] = R.surface_latest_date(surf) if surf else None
+    except Exception:
+        pass
+    try:
+        import psycopg2
+        c = psycopg2.connect(host='192.168.1.172', port=5432, dbname='market_scanner',
+                             user='postgres', password='shinobi2025', connect_timeout=4)
+        cur = c.cursor()
+        cur.execute('SELECT max(trade_date) FROM ung_options_history')
+        md = cur.fetchone()[0]
+        c.close()
+        if md is not None:
+            out['minute_asof'] = str(md)
+    except Exception:
+        pass
+    refs = [d for d in (out['surface_asof'], out['minute_asof']) if d]
+    if refs:
+        newest = max(pd.Timestamp(d).normalize() for d in refs)
+        out['stale_days'] = int(max(0, (pd.Timestamp.today().normalize() - newest).days))
+        out['ok'] = out['stale_days'] <= 1
+    return out
+
+
 def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key=None):
     key = kernel_key or CHAMPION_KEY
     params = R.STRATEGIES.get(KERNELS.get(key, {}).get('strategy', key))
@@ -558,6 +589,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'data_stale_days': int(max(0, (pd.Timestamp.today().normalize()
                                        - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
+        'options_data': _options_data_freshness(),
         'greeks': greeks,
         'delta_compass': delta_compass,
         'concentration': concentration,

@@ -658,6 +658,28 @@ def _load_iv_surface():
         return {}
 
 
+_SURFACE_DATES_SORTED = None
+
+
+def surface_latest_date(surface, on_or_before=None):
+    """Most recent surface date (optionally ≤ on_or_before). Used to CARRY FORWARD the last
+    real smile when today's date is missing (the options feed lags the price feed) instead of
+    dropping to the crude realized-vol proxy. Cached sorted-date list for O(log n) lookup."""
+    global _SURFACE_DATES_SORTED
+    if not surface:
+        return None
+    if _SURFACE_DATES_SORTED is None:
+        _SURFACE_DATES_SORTED = sorted(surface.keys())
+    dates = _SURFACE_DATES_SORTED
+    if not dates:
+        return None
+    if on_or_before is None:
+        return dates[-1]
+    import bisect
+    i = bisect.bisect_right(dates, on_or_before)
+    return dates[i - 1] if i > 0 else None
+
+
 def iv_from_surface(surface, date_str, K, dte, right):
     """Nearest-neighbor IV lookup. Returns None if no data within tolerance."""
     rows = surface.get(date_str)
@@ -896,6 +918,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 real = iv_from_surface(iv_surface, d_str, K, dte, right)
                 if real is not None:
                     return real
+                # CARRY-FORWARD: the options feed (ung_iv_surface) lags the price feed, so on a
+                # fresh day d_str has no entry. Use the most recent REAL smile (≤ d_str) before
+                # dropping to the crude realized-vol proxy — real implied vol shape beats a
+                # realized-vol guess that overshoots after volatile moves. (Root-caused 2026-06-18:
+                # stale surface → proxy IV 0.55 vs real 0.44 → call mispriced $0.40 vs $0.30.)
+                cf = surface_latest_date(iv_surface, d_str)
+                if cf is not None and cf != d_str:
+                    real = iv_from_surface(iv_surface, cf, K, dte, right)
+                    if real is not None:
+                        return real
             return iv_for_quote(row, K, spot_u, dte, right)
         # Per-day IV shape features (term + skew). None if no surface coverage.
         iv_shape = iv_shape_features(iv_surface, d_str, spot_u) if iv_surface else None

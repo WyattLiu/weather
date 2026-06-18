@@ -1645,6 +1645,20 @@ async function drawSOT(){
     const oel = document.getElementById('sot-orders');
     if(d.error){ oel.innerHTML='<div class="rec-why">live error: '+d.error+'</div>'; return; }
     document.getElementById('sot-kernel').textContent = d.kernel_label || d.kernel || '';
+    // ── OPTIONS-DATA STALENESS banner: the options feed (IV surface + minute quotes) is
+    //    SEPARATE from the daily price feed. If it has lagged, model prices use a carried-
+    //    forward smile and 'live' quotes are N days old — warn loudly. ──
+    const od = d.options_data;
+    let oban = document.getElementById('sot-optstale');
+    if (!oban) { oban=document.createElement('div'); oban.id='sot-optstale';
+                 const k0=document.getElementById('sot-kernel'); k0.parentNode.insertBefore(oban, k0.nextSibling); }
+    if (od && od.stale_days != null && od.stale_days > 1) {
+      oban.innerHTML = '<div style="margin:8px 0;padding:9px 13px;border-radius:6px;background:#c6282814;'+
+        'border-left:4px solid #c62828"><span style="font-weight:700;color:#c62828">⚠ OPTIONS DATA '+
+        od.stale_days+' DAYS STALE</span> <span style="color:var(--text-dim)">— IV surface &amp; quotes as of '+
+        (od.surface_asof||od.minute_asof)+' (price feed is current). Model prices use a carried-forward '+
+        'smile; live quotes below are NOT today\'s market. Refresh ThetaData→PG before trusting option prices.</span></div>';
+    } else { oban.innerHTML=''; }
     // ── REGIME banner: the state driving today's posture (accumulate/neutral/distribute) ──
     const rg = d.regime;
     if (rg) {
@@ -1868,14 +1882,17 @@ async function drawSOT(){
       let recon = '';
       const rc = o.reconcile;
       if (rc && rc.real_buyback != null && rc.model_buyback != null) {
-        const flagged = !!rc.flag;
+        const stale = (rc.quote_stale_days||0) >= 1;
+        const flagged = !!rc.flag || stale;
         const col = flagged ? '#c62828' : '#2e7d32';
+        const qlabel = stale ? ('real fill ('+rc.quote_stale_days+'d-STALE, '+rc.quote_asof+')') : 'real fill';
         recon = '<div style="margin:5px 0 2px 14px;padding:6px 10px;border-left:2px solid '+col+
           ';background:'+col+'12;border-radius:4px;font-size:.82rem">'+
           '<b style="color:'+col+'">'+(flagged?'⚠ price check':'✓ price check')+'</b>  '+
           'engine buyback $'+fmt(rc.model_buyback,2)+' (+$'+fmt(rc.model_pnl,0)+') '+
-          'vs <b>real fill ≈$'+fmt(rc.real_buyback,2)+'</b> → realistic <b>+$'+fmt(rc.real_pnl,0)+'</b>'+
-          (flagged?('<div style="color:'+col+';margin-top:2px">'+rc.flag+'</div>'):'')+'</div>';
+          'vs <b>'+qlabel+' ≈$'+fmt(rc.real_buyback,2)+'</b> → realistic <b>+$'+fmt(rc.real_pnl,0)+'</b>'+
+          (rc.stale_warning?('<div style="color:#c62828;margin-top:2px">'+rc.stale_warning+'</div>'):'')+
+          (rc.flag?('<div style="color:'+col+';margin-top:2px">'+rc.flag+'</div>'):'')+'</div>';
       }
       return '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
         (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+
