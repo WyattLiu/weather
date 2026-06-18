@@ -152,6 +152,9 @@ def main(start, end, dte_target, n_strikes, max_workers):
     spot_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache', 'master_dataset.csv')
     spot_df = pd.read_csv(spot_csv, index_col=0, parse_dates=True)
     spot_df = spot_df.loc[start:end, ['UNG']].dropna()
+    if spot_df.empty:
+        print(f"  No new sessions to build in {start}→{end} (surface already current).")
+        return
     print(f"  {len(spot_df)} business days from {spot_df.index[0].date()} to {spot_df.index[-1].date()}")
 
     print(f"Fetching ThetaData expirations list...")
@@ -192,13 +195,28 @@ def main(start, end, dte_target, n_strikes, max_workers):
     conn.close()
 
 
+def _resume_start(default='2021-06-01'):
+    """Day AFTER the last surface date → a daily run only rebuilds new sessions instead of
+    rescanning all of history. Falls back to `default` (full history) if the table is empty."""
+    try:
+        conn = psycopg2.connect(**DB_PARAMS); cur = conn.cursor()
+        cur.execute("SELECT max(date) FROM ung_iv_surface")
+        m = cur.fetchone()[0]; conn.close()
+        if m:
+            return (pd.Timestamp(m) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return default
+
+
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--start', default='2021-06-01')
-    p.add_argument('--end', default=None)
+    p.add_argument('--start', default=None, help='default: resume from last surface date (full history if empty)')
+    p.add_argument('--end', default=None, help='default: today')
     p.add_argument('--dte', type=int, default=30)
     p.add_argument('--n-strikes', type=int, default=5)
     p.add_argument('--workers', type=int, default=4)
     args = p.parse_args()
+    start = args.start or _resume_start()
     end = args.end or date.today().isoformat()
-    main(args.start, end, args.dte, args.n_strikes, args.workers)
+    main(start, end, args.dte, args.n_strikes, args.workers)

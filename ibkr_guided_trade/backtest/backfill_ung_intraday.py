@@ -143,10 +143,27 @@ def process_day(args):
     return 0
 
 
+def _resume_start(default='2026-03-15'):
+    """Day AFTER the last ingested trade_date → a daily run only fetches new sessions and
+    never stops at a hardcoded date. Falls back to `default` if the table is empty."""
+    try:
+        conn = psycopg2.connect(**DB); cur = conn.cursor()
+        cur.execute("SELECT max(trade_date) FROM ung_options_history")
+        m = cur.fetchone()[0]; conn.close()
+        if m:
+            return (pd.Timestamp(m) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return default
+
+
 def main(start, end, interval, workers):
     create_table()
     spot_df = pd.read_csv(os.path.join(CACHE, 'master_dataset.csv'),
                           index_col=0, parse_dates=True).loc[start:end, ['UNG']].dropna()
+    if spot_df.empty:
+        print(f"No new sessions to ingest in {start}→{end} (already current).")
+        return
     exps = expirations()
     print(f"{len(spot_df)} trading days {spot_df.index[0].date()}→{spot_df.index[-1].date()}; "
           f"{len(exps)} expiries; ≤{MAX_DTE}DTE, ±{BAND_PCT:.0%} strikes, {interval} bars")
@@ -172,9 +189,11 @@ def main(start, end, interval, workers):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--start', default='2026-03-15')
-    p.add_argument('--end', default='2026-06-12')
-    p.add_argument('--interval', default='1h')
+    p.add_argument('--start', default=None, help='default: resume from last ingested date')
+    p.add_argument('--end', default=None, help='default: today')
+    p.add_argument('--interval', default='1m', help='existing data is 1m — keep it 1m')
     p.add_argument('--workers', type=int, default=4)
     a = p.parse_args()
-    main(a.start, a.end, a.interval, a.workers)
+    start = a.start or _resume_start()
+    end = a.end or pd.Timestamp.today().strftime('%Y-%m-%d')
+    main(start, end, a.interval, a.workers)
