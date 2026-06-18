@@ -48,7 +48,7 @@ def _compute_live():
             cash = (bal.get('cash') or bal.get('total_cash')
                     or bal.get('net_liquidation') or 100000)
         data = get_live_recommendation(pos, cash=cash, spot=spot,
-                                       kernel_key='regime_wheel_boxx_live')  # fast live variant of the winner
+                                       kernel_key='regime_wheel_boxx_greeks_live')  # PROMOTED champion (greeks-managed)
         # EXECUTION ADVISOR: annotate each order with a manual-execution plan
         # (which minute to work it + limit ladder mid→touch). Operator runs these by hand.
         try:

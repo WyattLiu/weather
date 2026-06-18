@@ -5290,6 +5290,9 @@ STRATEGIES['regime_wheel_boxx_dh'] = {**STRATEGIES['regime_wheel_boxx'],
 # bookwise risk layer — delta hedged when bearish, short-gamma capped per strike/expiry.
 STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
     'gamma_cap': True, 'max_short_per_strike': 10}
+# FAST live variant of the promoted champion (model fills; advisor supplies real exec).
+STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_greeks'],
+    'intraday_exec': False, 'real_chain_pricing': False}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
@@ -5300,7 +5303,7 @@ STRATEGIES['regime_wheel_boxx_v4'] = {**STRATEGIES['regime_wheel_boxx_v3'],
     'crash_fallback': True, 'crash_dd': -0.18, 'crash_distribute_extra': 0.6}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_dh', 'regime_wheel_boxx_greeks', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_dh', 'regime_wheel_boxx_greeks', 'regime_wheel_boxx_greeks_live', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',

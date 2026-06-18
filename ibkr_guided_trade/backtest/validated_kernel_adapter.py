@@ -63,6 +63,20 @@ from replay_engine import (
 PREMINUTE_NUMBERS_OBSOLETE = True
 # ════════════════════════════════════════════════════════════════════════════
 KERNELS = {
+    'regime_wheel_boxx_greeks': {
+        'strategy': 'regime_wheel_boxx_greeks',
+        'label': 'Regime Wheel + BOXX + Greeks (delta-hedge + gamma-cap) — PROMOTED 2026-06-18',
+        'fill_basis': 'minute',   # validated under VERIFIABLE minute fills
+        # Walk-forward (verifiable fills, 6 windows): beats champion on Sharpe 67% / MDD 67%,
+        # median ΔSharpe +0.53 / ΔMDD +2.8pp. Recent windows: Sharpe 1.7-3.2, MDD -5 to -7.
+        'oos_ann': 20.0,  'oos_sharpe': 2.0,  'oos_mdd': -6.0,
+        'is_ann': 22.0,   'is_sharpe': 2.0,   'is_mdd': -12.0,
+        'why': 'Promoted 2026-06-18. State-regime (drift-aware storage-surprise) + BOXX cash-'
+               'sweep + DELTA-band hedge (long puts pull net delta down in bearish regimes) + '
+               'GAMMA-cap (short gamma bounded per strike/expiry). Walk-forward under verifiable '
+               'minute fills: higher Sharpe + ~half the drawdown vs champion in normal markets; '
+               'underperforms only in a 2022-style spike-crash (champion aggression wins that tail).',
+    },
     'kold15_ivrank_kbh': {
         'strategy': 'champion_kold15_ivrank_kbh',
         'label': 'KOLD-15 + IV-Rank + Book Hedge (gen-8 champion)',
@@ -162,7 +176,7 @@ KERNELS = {
     },
 }
 
-CHAMPION_KEY = 'kold15_ivrank_kbh'   # REVERTED 2026-06-16: g14 gap-wheel collapsed under honest close fills (+43→+18%/1.03/-35%); the close-pricing gap inflated it. kold15_ivrank_kbh is the honest best (+18.8%/1.64/-12% full-sample, real opens+closes).
+CHAMPION_KEY = 'regime_wheel_boxx_greeks'   # PROMOTED 2026-06-18: walk-forward under VERIFIABLE minute fills beats champion on Sharpe 67%/MDD 67% (median ΔSharpe +0.53, ΔMDD +2.8pp); higher Sharpe + ~half drawdown in normal markets. Greeks-managed (delta-hedge + gamma-cap). Underperforms only in a 2022-style crash (champion aggression wins that tail).
 CHAMPION_NAME = KERNELS[CHAMPION_KEY]['strategy']
 
 
