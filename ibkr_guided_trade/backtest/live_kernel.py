@@ -264,6 +264,14 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         return {'error': f'kernel {key} not in STRATEGIES'}
     df = pd.read_csv(os.path.join(THIS, 'cache', 'master_dataset.csv'),
                      index_col=0, parse_dates=True)
+    # SAME-DAY REFRESH: bring prices up to real-today (fresh UNG via live_spot + recent
+    # ETF/futures via yfinance; slow weekly EIA carried forward) so signals/regime/greeks
+    # are not a day stale. Defensive — falls back to the on-disk data if the fetch fails.
+    try:
+        from historical_data_pipeline import refresh_to_today
+        df = refresh_to_today(df, live_spot=spot)
+    except Exception as _e:
+        pass
     df = R.precompute_factor_z(df).dropna(subset=['UNG'])
     row = df.iloc[-1]
     spot = float(spot if spot else row['UNG'])

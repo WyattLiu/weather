@@ -187,6 +187,100 @@ def _file_age_hours(path):
     return (datetime.now().timestamp() - os.path.getmtime(path)) / 3600
 
 
+_SYMS = {'UNG': 'UNG', 'KOLD': 'KOLD', 'BOIL': 'BOIL', 'BOXX': 'BOXX',
+         'NG': 'NG=F', 'CL': 'CL=F', 'DX_DXY': 'DX-Y.NYB', 'VIX': '^VIX'}
+_SLOW_COLS = ('eia_production', 'eia_consumption', 'eia_lng_exports', 'eia_pipe_exports',
+              'eia_storage_weekly', 'eia_hh_spot_daily')  # weekly/monthly — carry forward
+
+
+def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
+    """SAME-DAY refresh: bring the master dataset up to the real today with FRESH prices,
+    so the live decision's signals (z / regime / IV-rank / greeks) reflect today — not
+    yesterday's close. Lightweight: pull recent ETF/futures prices via yfinance, append/
+    update the missing daily rows, carry forward the slow weekly/monthly EIA columns
+    (those legitimately don't change intraday), and recompute the price-derived factors.
+
+    Guarded: skips the network if the dataset is already current OR was refreshed within
+    `max_stale_min`. Defensive: any fetch failure returns the dataset unchanged (the caller
+    still has the staleness flag). Returns the refreshed (or unchanged) DataFrame."""
+    path = os.path.join(CACHE_DIR, 'master_dataset.csv')
+    if df is None:
+        df = pd.read_csv(path, index_col=0, parse_dates=True)
+    # normalise the index to clean calendar dates (the raw file has tz-shifted 04:00/05:00
+    # rows + NaN junk rows) — one row per date, keep the last non-null values.
+    df.index = pd.to_datetime(df.index).normalize()
+    df = df.groupby(level=0).last().sort_index()
+    df = df.dropna(subset=['UNG'])
+    today = pd.Timestamp.today().normalize()
+    last = df.index[-1]
+    marker = os.path.join(CACHE_DIR, '.last_intraday_refresh')
+    if last >= today:
+        # already have today's row — just track the latest live spot (no network) so
+        # z / regime / greeks follow intraday UNG moves; recompute UNG-derived factors.
+        if live_spot and live_spot == live_spot and float(live_spot) != float(df.at[last, 'UNG']):
+            df.at[last, 'UNG'] = float(live_spot)
+            iv = compute_realized_iv_surface(df['UNG'])
+            for c in iv.columns:
+                df[c] = iv[c]
+            if persist:
+                df.to_csv(path)
+        return df                                   # already current
+    if os.path.exists(marker) and _file_age_hours(marker) * 60 < max_stale_min and last < today:
+        # refreshed very recently but still behind (e.g. weekend/holiday) — accept as-is
+        return df
+    try:
+        import yfinance as yf
+        raw = yf.download(list(_SYMS.values()), period='1mo', progress=False,
+                          auto_adjust=False)['Close']
+        if raw is None or raw.empty:
+            return df
+        raw.index = pd.to_datetime(raw.index).tz_localize(None).normalize()
+        # map yfinance symbol columns back to our column names
+        rename = {v: k for k, v in _SYMS.items()}
+        raw = raw.rename(columns=rename)
+        new_rows = raw.index[raw.index > last]
+        if len(new_rows) == 0:
+            return df
+        for dt in new_rows:
+            row = {}
+            for col in _SYMS:
+                v = raw.at[dt, col] if col in raw.columns else None
+                if v == v and v is not None:        # not NaN
+                    row[col] = float(v)
+            # NaN-GUARD: any column yfinance didn't fill today (lagged ETF bar, slow EIA
+            # weekly/monthly) is carried forward from the last known value — a same-day
+            # refresh must never INTRODUCE a NaN that a kernel could then decide on.
+            prev = df.iloc[-1]
+            for col in df.columns:
+                if col not in row or row.get(col) != row.get(col):   # missing or NaN
+                    pv = prev.get(col)
+                    if pv == pv:                     # prev not NaN
+                        row[col] = pv
+            df.loc[dt] = pd.Series(row)
+        df = df.sort_index()
+        # live underlying overrides today's UNG with the real spot (more current than yf)
+        if live_spot and live_spot == live_spot:
+            df.at[df.index[-1], 'UNG'] = float(live_spot)
+        # recompute the price-DERIVED factors over the full (now-extended) series
+        iv = compute_realized_iv_surface(df['UNG'])
+        for c in iv.columns:
+            df[c] = iv[c]
+        if 'NG' in df.columns:
+            df['ng_ma200'] = df['NG'].rolling(200).mean()
+            df['ng_trend'] = df['NG'] / df['ng_ma200'] - 1
+        if 'eia_storage_weekly' in df.columns and 'eia_consumption' in df.columns:
+            cons_bcfd = df['eia_consumption'] / 30.0 / 1000.0
+            df['days_supply'] = df['eia_storage_weekly'] / cons_bcfd.replace(0, np.nan)
+        if persist:
+            df.to_csv(path)
+            with open(marker, 'w') as f:
+                f.write(str(today.date()))
+        return df
+    except Exception as e:
+        print(f"[refresh_to_today] skipped ({e!r}) — using existing data")
+        return df
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--years', type=int, default=5)
