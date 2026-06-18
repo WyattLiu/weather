@@ -2539,13 +2539,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                        spot_u, p, model_dte)
                             if prem_dte < 0.05:
                                 continue
-                            credit_dte = prem_dte * 100 * per_dte_qty - per_dte_qty * SPREAD_OPTION * 100
+                            # GAMMA-CAP (anti-concentration): limit short contracts per
+                            # strike×expiry so the book doesn't stack short gamma at one
+                            # point (pin/whipsaw + mass-assignment risk — the $11/23-lot).
+                            q_dte = per_dte_qty
+                            if p.get('gamma_cap'):
+                                _ex = sum(_sp['qty'] for _sp in s['short_puts']
+                                          if abs(_sp['K'] - K) < 0.01
+                                          and abs(_sp.get('dte', 30) - dte_choice) <= 7)
+                                q_dte = min(q_dte, max(0, p.get('max_short_per_strike', 10) - _ex))
+                                if q_dte < 1:
+                                    continue   # strike×expiry full → ladder tries other DTEs
+                            credit_dte = prem_dte * 100 * q_dte - q_dte * SPREAD_OPTION * 100
                             s['cash'] += credit_dte
                             s['short_puts'].append({'entry': idx, 'K': K, 'dte': dte_choice,
-                                                    'qty': per_dte_qty, 'entry_prem': prem_dte})
+                                                    'qty': q_dte, 'entry_prem': prem_dte})
                             trades.append({'date': idx, 'type': 'OPEN_PUT',
                                            'pnl': 0.0, 'credit': credit_dte,
-                                           'K': K, 'qty': per_dte_qty, 'dte': dte_choice,
+                                           'K': K, 'qty': q_dte, 'dte': dte_choice,
                                            'exec_time': _aud['exec_time'], 'bid': _aud['bid'],
                                            'ask': _aud['ask'], 'spread_pct': _aud['spread_pct'],
                                            'fill_source': _aud['source']})
@@ -5252,6 +5263,10 @@ STRATEGIES['regime_wheel_boxx_live'] = {**STRATEGIES['regime_wheel_boxx'],
 STRATEGIES['regime_wheel_boxx_dh'] = {**STRATEGIES['regime_wheel_boxx'],
     'delta_hedge': True, 'delta_target_nav': 0.5, 'delta_bearish_cut': 0.9,
     'delta_hedge_rs_min': 0.25, 'delta_hedge_dte': 30, 'delta_hedge_max': 15}
+# FULL greeks-managed: delta-band hedge + gamma-cap (anti-concentration). The complete
+# bookwise risk layer — delta hedged when bearish, short-gamma capped per strike/expiry.
+STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
+    'gamma_cap': True, 'max_short_per_strike': 10}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
@@ -5262,7 +5277,7 @@ STRATEGIES['regime_wheel_boxx_v4'] = {**STRATEGIES['regime_wheel_boxx_v3'],
     'crash_fallback': True, 'crash_dd': -0.18, 'crash_distribute_extra': 0.6}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_dh', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_dh', 'regime_wheel_boxx_greeks', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
