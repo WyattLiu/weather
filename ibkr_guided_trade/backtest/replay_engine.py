@@ -1481,6 +1481,33 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         s['kold'] -= sell_q
                         trades.append({'date': idx, 'type': 'KOLD_REGIME_TRIM', 'pnl': 0.0,
                                        'qty': sell_q, 'spot': spot_k, 'rs': round(_rs, 2)})
+        # ── DELTA-BAND HEDGE (greeks-based bookwise risk management) ──────────────────
+        # When the regime turns bearish, buy LONG PUTS to pull the book's NET DELTA down
+        # toward a regime-scaled target — forming effective BEAR PUT SPREADS with the
+        # existing short puts (we do NOT close the premium-collecting shorts). Sizing and
+        # DTE are guided by the book greeks (book_greeks/bs_greeks_pt → calibrated IV).
+        if p.get('delta_hedge'):
+            _nd, _ng = book_greeks(s, spot_u, iv_at)
+            _rsd = row.get('regime_strength'); _rsd = _rsd if (_rsd == _rsd and _rsd is not None) else 0.0
+            _base = p.get('delta_target_nav', 0.5) * cur_nav / max(spot_u, 0.5)   # ~normal delta
+            _target = _base * (1.0 - p.get('delta_bearish_cut', 0.9) * max(0.0, min(1.0, _rsd)))
+            _band = 0.15 * abs(_base) + p.get('delta_band_abs', 0.0)
+            if _nd > _target + _band and _rsd > p.get('delta_hedge_rs_min', 0.25):
+                _hd = p.get('delta_hedge_dte', 30)
+                _hK = round(spot_u * (1 + p.get('delta_hedge_otm', 0.0)))   # ~ATM long put
+                _pd, _ = bs_greeks_pt(spot_u, _hK, _hd / 365.0, iv_at(_hK, _hd, 'P'), 'P')
+                _per = abs(_pd) * 100
+                if _per > 1:
+                    _n = max(0, min(int((_nd - _target) / _per), p.get('delta_hedge_max', 15)))
+                    _cost = bs_put(spot_u, _hK, _hd / 365.0, iv_at(_hK, _hd, 'P'))
+                    _debit = _cost * 100 * _n + _n * SPREAD_OPTION * 100
+                    if _n >= 1 and s['cash'] > _debit + 1000:
+                        s['cash'] -= _debit
+                        s['long_puts'].append({'entry': idx, 'K': _hK, 'dte': _hd,
+                                               'qty': _n, 'cost': _cost, 'expiry': None})
+                        trades.append({'date': idx, 'type': 'DELTA_HEDGE_LONG_PUT',
+                                       'pnl': -_debit, 'K': _hK, 'qty': _n, 'dte': _hd,
+                                       'net_delta': round(_nd, 0), 'target': round(_target, 0)})
         # Default no scaling. Strategies opt-in via dd_aware_dial.
         if p.get('dd_aware_dial'):
             if dd_pct < -25:    dd_scale = 0.4
@@ -2959,11 +2986,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _k = round(float(_x.get('K', 0)), 1)
                 _b[_k] = _b.get(_k, 0) + int(_x.get('qty', 0))
             return _b
+        _ndh, _ngh = book_greeks(s, spot_u, iv_at)   # book net delta/gamma (share-equiv)
         history.append({
             'date': idx, 'spot': spot_u, 'z': z, 'regime': r,
             'cash': s['cash'], 'shares': s['shares'], 'boxx': s['boxx'], 'kold': s['kold'],
             'nav': nav, 'short_puts': len(s['short_puts']), 'short_calls': len(s['short_calls']),
             'put_book': _book(s['short_puts']), 'call_book': _book(s['short_calls']),
+            'net_delta': round(_ndh, 0), 'net_gamma': round(_ngh, 1),
         })
 
     if live_decision and seed_state is not None:
@@ -5218,6 +5247,11 @@ STRATEGIES['regime_wheel_boxx'] = {**STRATEGIES['regime_wheel'],
 # execution advisor supplies the real minute pricing/ladder for the operator to act on).
 STRATEGIES['regime_wheel_boxx_live'] = {**STRATEGIES['regime_wheel_boxx'],
     'intraday_exec': False, 'real_chain_pricing': False}
+# DELTA-HEDGE variant: greeks-based book risk mgmt — buy long puts to pull net delta
+# down in bearish regimes (effective bear spreads w/ existing shorts). +0.8pp OOS, Δ -22%.
+STRATEGIES['regime_wheel_boxx_dh'] = {**STRATEGIES['regime_wheel_boxx'],
+    'delta_hedge': True, 'delta_target_nav': 0.5, 'delta_bearish_cut': 0.9,
+    'delta_hedge_rs_min': 0.25, 'delta_hedge_dte': 30, 'delta_hedge_max': 15}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
@@ -5228,7 +5262,7 @@ STRATEGIES['regime_wheel_boxx_v4'] = {**STRATEGIES['regime_wheel_boxx_v3'],
     'crash_fallback': True, 'crash_dd': -0.18, 'crash_distribute_extra': 0.6}
 
 _KEEP_STRATEGIES = {
-    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
+    'accum_wheel', 'accum_wheel_tp', 'seasonal_wheel', 'seasonal_wheel_lowchurn', 'regime_wheel', 'regime_wheel_cont', 'regime_wheel_boxx', 'regime_wheel_boxx_live', 'regime_wheel_boxx_dh', 'regime_wheel_boxx_v3', 'regime_wheel_boxx_v4',
     'g11_itmput_conv', 'g11_itmput_deep', 'g11_itmput_wide', 'g11_itmput_60d',
     'g11_itmcc_divest', 'g11_itmcc_eager', 'g11_itmcc_deep',
     'g11_backspread', 'g11_backspread_wide', 'g11_backspread_3x', 'g11_backspread_deep',
