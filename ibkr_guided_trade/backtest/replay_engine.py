@@ -66,6 +66,37 @@ def bs_call(S, K, T, sig, r=0.045):
     return S*norm.cdf(d1) - K*math.exp(-r*T)*norm.cdf(d1 - sig*math.sqrt(T))
 
 
+def bs_greeks_pt(S, K, T, sig, right, r=0.045):
+    """Per-share (delta, gamma) for one option contract. delta∈[-1,1]."""
+    if T <= 0.001 or sig <= 0 or S <= 0:
+        intr = (S > K) if right == 'C' else (S < K)
+        return ((1.0 if right == 'C' else -1.0) if intr else 0.0), 0.0
+    d1 = (math.log(S / K) + (r + 0.5 * sig ** 2) * T) / (sig * math.sqrt(T))
+    delta = norm.cdf(d1) if right == 'C' else norm.cdf(d1) - 1.0
+    gamma = norm.pdf(d1) / (S * sig * math.sqrt(T))
+    return delta, gamma
+
+
+def book_greeks(s, spot, iv_at):
+    """Aggregate book net DELTA and GAMMA (in share-equivalents) across shares + all
+    short/long puts & calls. Long delta = bullish exposure. Short put adds +delta,
+    short call adds −delta, long put adds −delta (the bearish hedge)."""
+    nd = float(s.get('shares', 0)); ng = 0.0
+    for sp in s.get('short_puts', []):
+        d, g = bs_greeks_pt(spot, sp['K'], max(sp.get('dte', 30), 1) / 365,
+                            iv_at(sp['K'], sp.get('dte', 30), 'P'), 'P')
+        nd += -sp['qty'] * d * 100; ng += -sp['qty'] * g * 100
+    for sc in s.get('short_calls', []):
+        d, g = bs_greeks_pt(spot, sc['K'], max(sc.get('dte', 30), 1) / 365,
+                            iv_at(sc['K'], sc.get('dte', 30), 'C'), 'C')
+        nd += -sc['qty'] * d * 100; ng += -sc['qty'] * g * 100
+    for lp in s.get('long_puts', []):
+        d, g = bs_greeks_pt(spot, lp['K'], max(lp.get('dte', 30), 1) / 365,
+                            iv_at(lp['K'], lp.get('dte', 30), 'P'), 'P')
+        nd += lp['qty'] * d * 100; ng += lp['qty'] * g * 100
+    return nd, ng
+
+
 def compute_historical_z(row, use_surprise=False):
     """Composite z-score (CLEANED 20260603).
 
