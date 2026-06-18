@@ -212,11 +212,20 @@ def _est_theta(short_puts, short_calls, spot):
     return th
 
 
-def _book_greeks(short_puts, short_calls, long_puts, long_calls, shares, spot):
+KOLD_UNG_BETA = -2.0   # KOLD ≈ -2x DAILY natural gas; UNG ≈ +1x → KOLD's UNG-equiv delta
+
+
+def _book_greeks(short_puts, short_calls, long_puts, long_calls, shares, spot,
+                 kold_shares=0, kold_price=0.0):
     """Aggregate FULL book greeks (incl 3rd-order speed/color) from engine leg lists.
     Same leg format for the CURRENT book (sp/sc/lp/lc) and the POST-ORDER book
     (_LIVE_FINAL), so this serves both before→after views. Shorts carry qty<0.
-    IV per leg comes from the real fitted surface (model = what-if only, never a fill)."""
+    IV per leg comes from the real fitted surface (model = what-if only, never a fill).
+
+    KOLD-AWARE: an inverse-ETF hedge is NOT a UNG option but it carries real directional
+    delta — 1 KOLD share ≈ KOLD_UNG_BETA·(kold_px/spot) UNG-share-equivalents (−2x natgas).
+    Counting it is what makes the net Δ honest instead of a blind spot. Reported both folded
+    into `delta` (true total) AND broken out (`options_shares_delta`, `kold_delta`)."""
     surf = R._load_iv_surface()
     latest = max(surf.keys()) if surf else None
     agg = {k: 0.0 for k in ('delta', 'gamma', 'theta', 'vega', 'vanna', 'charm', 'speed', 'color')}
@@ -240,9 +249,15 @@ def _book_greeks(short_puts, short_calls, long_puts, long_calls, shares, spot):
                 agg[k] += g[k] * mult
     # Shares: pure delta 1 each, no higher-order greeks.
     agg['delta'] += int(shares or 0)
+    options_shares_delta = agg['delta']            # what the engine's hedge gate acts on
+    # KOLD hedge: UNG-equivalent delta (negative — it's an inverse ETF). Linear, no gamma/theta.
+    kold_delta = KOLD_UNG_BETA * (kold_price / spot) * int(kold_shares or 0) if (kold_shares and spot) else 0.0
+    agg['delta'] += kold_delta                     # fold into the TRUE total net delta
     # $ sensitivities the operator actually feels.
     return {
         'delta': round(agg['delta'], 1),
+        'options_shares_delta': round(options_shares_delta, 1),
+        'kold_delta': round(kold_delta, 1),
         'gamma': round(agg['gamma'], 2),
         'theta': round(agg['theta'], 1),
         'vega': round(agg['vega'], 1),
@@ -288,6 +303,15 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         return 'UNG' in str(p.get('symbol') or 'UNG').upper()
     shares = sum(int(p.get('qty') or p.get('quantity') or 0)
                  for p in (positions or []) if _is_ung_shares(p))
+    # KOLD hedge shares + price — for the KOLD-AWARE greeks (KOLD is a -2x-natgas inverse ETF;
+    # the book-greeks engine must count its UNG-equivalent delta or the net Δ is a blind spot).
+    kold_shares, kold_px = 0, float(row.get('KOLD') or 0)
+    for p in positions or []:
+        if str(p.get('symbol') or '').upper() == 'KOLD' and not p.get('is_option'):
+            kold_shares += int(p.get('qty') or p.get('quantity') or 0)
+            mv, q = p.get('market_value'), (p.get('qty') or p.get('quantity') or 0)
+            if mv and q:
+                kold_px = abs(float(mv) / float(q))
     seed = {'cash': float(cash), 'shares': int(shares), 'short_puts': sp,
             'short_calls': sc, 'long_puts': lp, 'long_calls': lc}
 
@@ -377,11 +401,13 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     # ── BOOK GREEKS: CURRENT vs POST-ORDER (incl 3rd-order speed/color) ─────────────
     # what-if greeks from the fitted vol surface (NEVER a fill). 'now' = book you hold
     # today; 'after' = the engine's actual post-decision book once today's orders fill.
-    g_now = _book_greeks(sp, sc, lp, lc, shares, spot)
+    g_now = _book_greeks(sp, sc, lp, lc, shares, spot,
+                         kold_shares=kold_shares, kold_price=kold_px)
     g_after = _book_greeks(
         final.get('short_puts', sp), final.get('short_calls', sc),
         final.get('long_puts', lp), final.get('long_calls', lc),
-        final.get('shares', shares), spot)
+        final.get('shares', shares), spot,
+        kold_shares=final.get('kold', kold_shares), kold_price=kold_px)
     _gd = {k: round(g_after[k] - g_now[k], 4) for k in g_now}
     greeks = {
         'now': g_now, 'after': g_after, 'change': _gd,
@@ -434,23 +460,30 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     _dtarget = _base * (1.0 - params.get('delta_bearish_cut', 0.9) * _rsc)
     _dband = 0.15 * abs(_base) + params.get('delta_band_abs', 0.0)
     _rsmin = params.get('delta_hedge_rs_min', 0.25)
-    _ndelta = greeks['now']['delta']
-    _over = _ndelta > _dtarget + _dband
+    _ndelta = greeks['now']['delta']                          # TRUE total (incl KOLD hedge)
+    _gate_delta = greeks['now'].get('options_shares_delta', _ndelta)  # what the engine gates on
+    _kdelta = greeks['now'].get('kold_delta', 0.0)
+    _over = _gate_delta > _dtarget + _dband                   # gate mirrors the engine (no KOLD)
     _bear = _rs > _rsmin
     _active = bool(_over and _bear and params.get('delta_hedge'))
+    _koldnote = (f" (incl {_kdelta:,.0f} from KOLD; engine gates on the {_gate_delta:,.0f} "
+                 f"options+shares Δ)") if abs(_kdelta) >= 1 else ""
     if _active:
-        _dstatus = (f"HEDGE ACTIVE — net Δ {_ndelta:,.0f} is over target {_dtarget:,.0f} in a "
-                    f"bearish regime; engine buys long puts to glide Δ down (incrementally, ≤"
-                    f"{params.get('delta_hedge_max',15)}/step).")
+        _dstatus = (f"HEDGE ACTIVE — options+shares Δ {_gate_delta:,.0f} is over target {_dtarget:,.0f} "
+                    f"in a bearish regime; engine buys long puts to glide Δ down (incrementally, ≤"
+                    f"{params.get('delta_hedge_max',15)}/step).{_koldnote}")
     elif not _bear:
         _dstatus = (f"hedge dormant — regime not bearish enough (strength {_rs:.2f} ≤ {_rsmin}). "
-                    f"Net Δ {_ndelta:,.0f} vs target {_dtarget:,.0f}; book rides.")
+                    f"True net Δ {_ndelta:,.0f} vs target {_dtarget:,.0f}; book rides.{_koldnote}")
     else:
-        _dstatus = (f"hedge dormant — net Δ {_ndelta:,.0f} is at/below target {_dtarget:,.0f} "
-                    f"(±{_dband:,.0f} band); no trim needed.")
+        _dstatus = (f"hedge dormant — options+shares Δ {_gate_delta:,.0f} is at/below target "
+                    f"{_dtarget:,.0f} (±{_dband:,.0f} band); no trim needed.{_koldnote}")
     delta_compass = {
-        'net_delta': round(_ndelta, 0), 'target': round(_dtarget, 0), 'band': round(_dband, 0),
-        'gap': round(_ndelta - _dtarget, 0), 'nav': round(nav, 0),
+        'net_delta': round(_ndelta, 0),                 # TRUE total (incl KOLD)
+        'gate_delta': round(_gate_delta, 0),            # options+shares only (engine gate basis)
+        'kold_delta': round(_kdelta, 0),
+        'target': round(_dtarget, 0), 'band': round(_dband, 0),
+        'gap': round(_gate_delta - _dtarget, 0), 'nav': round(nav, 0),
         'regime_strength': round(_rs, 2), 'rs_min': _rsmin, 'hedge_active': _active,
         'glide': 'incremental (closes the gap, capped/step — never rebuilds from cash)',
         'status': _dstatus,

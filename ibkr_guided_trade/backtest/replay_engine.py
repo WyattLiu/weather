@@ -5289,14 +5289,13 @@ STRATEGIES['regime_wheel_boxx_dh'] = {**STRATEGIES['regime_wheel_boxx'],
     'delta_hedge_rs_min': 0.25, 'delta_hedge_dte': 30, 'delta_hedge_max': 15}
 # FULL greeks-managed: delta-band hedge + gamma-cap (anti-concentration). The complete
 # bookwise risk layer — delta hedged when bearish, short-gamma capped per strike/expiry.
-# NO KOLD: bearishness is expressed PURELY through long puts (delta-band hedge), which the
-# greeks engine fully accounts for. KOLD is a separate inverse-ETF that the book-greeks
-# computation does NOT see (it'd be a silent delta blind spot) and conflicts with the
-# greeks-managed thesis — so the legacy kold_book_hedge / kold_shoulder_hedge inherited from
-# the base regime_wheel are turned OFF here. (Re-validate walk-forward after this change.)
+# KOLD KEPT ON (inherited from base regime_wheel): the KOLD-free A/B walk-forward (2026-06-18,
+# verifiable fills, 6 windows) showed removing KOLD COSTS ~0.4 median Sharpe (1.63 vs 2.03)
+# and ~3pp ann — KOLD earns its keep as crash/bear insurance (2022 crash + the two most recent
+# windows). It was a greeks blind spot, so instead of dropping it we make the greeks engine
+# KOLD-AWARE (live_kernel _book_greeks + delta compass count KOLD's ~-2x UNG-equiv delta).
 STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
-    'gamma_cap': True, 'max_short_per_strike': 10,
-    'kold_book_hedge': False, 'kold_shoulder_hedge': 0}
+    'gamma_cap': True, 'max_short_per_strike': 10}
 # FAST live variant of the promoted champion (model fills; advisor supplies real exec).
 STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_greeks'],
     'intraday_exec': False, 'real_chain_pricing': False}
