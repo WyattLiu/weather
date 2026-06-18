@@ -294,6 +294,14 @@ def precompute_factor_z(df):
                            / (_ddn.rolling(252, min_periods=30).std() + 1e-9)).fillna(0.0)
     except Exception:
         df['dd_anom_z'] = 0.0
+    # OU MEAN-REVERSION z (short-scale buy-low/sell-high) — rolling AR(1) fit on log-UNG.
+    # Negative = cheap vs local mean (bounce expected → good to sell puts); positive = rich
+    # (fade expected → tilt to calls). |z| sizes the tactical tilt. Orthogonal to storage regime.
+    try:
+        from ou_model import ou_z_series
+        df['ou_z'] = ou_z_series(df['UNG'], 90).clip(-4, 4).reindex(df.index).fillna(0.0)
+    except Exception:
+        df['ou_z'] = 0.0
     return df
 
 
@@ -2526,6 +2534,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         dte_ladder = p.get('dte_ladder', [p.get('open_dte', 30)])
                         n_dtes = len(dte_ladder)
                         per_dte_qty = max(1, put_qty // n_dtes)
+                        # OU TILT (fine-scale buy-low timing): when OU-cheap (z<0, bounce
+                        # expected) sell MORE puts — they're likelier to expire OTM; when
+                        # OU-rich (z>0, fade expected) sell FEWER — assignment risk. |z| sizes it.
+                        if p.get('ou_tilt'):
+                            _ou = row.get('ou_z'); _ou = _ou if (_ou == _ou and _ou is not None) else 0.0
+                            _f = 1.0 - max(-1.0, min(1.0, _ou)) * p.get('ou_tilt_k', 0.5)
+                            per_dte_qty = max(0, int(round(per_dte_qty * _f)))
+                            if per_dte_qty < 1:
+                                continue
                         # Re-margin-check the FULL allocation
                         for dte_choice in dte_ladder:
                             # Re-price for this specific DTE — model, then AUDITED fill
@@ -2704,6 +2721,12 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         cc_firm = 1.0 / max(0.5, min(2.5, firm))
                         kelly_q = int(kelly_q * cc_firm)
                     qty = max(0, min(kelly_q, int(p.get('kelly_max_qty', 20)), uncovered_shares // 100))
+                # OU TILT (fine-scale sell-high timing): when OU-rich (z>0, fade expected)
+                # sell MORE calls; when OU-cheap (z<0, bounce expected) sell FEWER (let it run).
+                if p.get('ou_tilt'):
+                    _ouc = row.get('ou_z'); _ouc = _ouc if (_ouc == _ouc and _ouc is not None) else 0.0
+                    _fc = 1.0 + max(-1.0, min(1.0, _ouc)) * p.get('ou_tilt_k', 0.5)
+                    qty = max(0, min(int(round(qty * _fc)), uncovered_shares // 100))
                 if prem > 0.05 and qty >= 1:
                     credit = prem * 100 * qty - qty * SPREAD_OPTION * 100
                     s['cash'] += credit
