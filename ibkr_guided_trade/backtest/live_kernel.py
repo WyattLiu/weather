@@ -62,6 +62,99 @@ _LEG = {
 }
 
 
+def _settlement_watch(positions, spot, horizon_days=1):
+    """SETTLEMENT IS AN ACTION. Scan the operator's REAL options expiring now/imminently
+    (real-today clock) and classify each as a thing to DO/monitor on expiry day:
+
+      • OTM short  → AWAIT WORTHLESS — keep the full premium, collateral/coverage frees up.
+      • ITM short put  → EXPECT ASSIGNMENT — you BUY 100×qty shares at K (cash out, shares up).
+      • ITM short call → EXPECT CALLED-AWAY — you DELIVER 100×qty shares at K (shares down, cash in).
+      • near pin (|S−K|≤$0.05) → UNCERTAIN — could assign or not; decide whether to close pre-expiry.
+      • long expiring → EXERCISE vs ABANDON.
+
+    These never come from the order engine (they happen TO the book) — but the human must
+    watch them, and they move shares/cash/coverage, so they are first-class execution items."""
+    today = pd.Timestamp.today().normalize()
+    out = []
+    for p in positions or []:
+        if 'UNG' not in str(p.get('symbol') or 'UNG').upper():
+            continue
+        if not (p.get('is_option') or p.get('option_type') or p.get('right')):
+            continue
+        exp = p.get('expiry') or p.get('expiration')
+        if not exp:
+            continue
+        try:
+            dte = (pd.Timestamp(exp).normalize() - today).days
+        except Exception:
+            continue
+        if dte < 0 or dte > horizon_days:
+            continue
+        qty = int(p.get('qty') or p.get('quantity') or 0)
+        if qty == 0:
+            continue
+        K = float(p.get('strike') or 0)
+        right = (p.get('option_type') or p.get('right') or '').upper()[:1]
+        if not K or right not in ('P', 'C'):
+            continue
+        n = abs(qty)
+        short = qty < 0
+        long = qty > 0
+        pin = abs(spot - K) <= 0.05
+        itm = (right == 'P' and spot < K) or (right == 'C' and spot > K)
+        intrinsic = max(0.0, (K - spot) if right == 'P' else (spot - K))
+        rt = 'PUT' if right == 'P' else 'CALL'
+        when = 'TODAY' if dte == 0 else f'in {dte}d ({pd.Timestamp(exp).date()})'
+        item = {'right': rt, 'strike': K, 'expiry': str(pd.Timestamp(exp).date()),
+                'qty': n, 'dte': dte, 'spot': round(spot, 2),
+                'moneyness': 'ITM' if itm else ('PIN' if pin else 'OTM'),
+                'cash_impact': 0.0, 'share_impact': 0, 'kind': '', 'action': '', 'why': ''}
+        if short and pin:
+            item.update(kind='UNCERTAIN', action=(
+                f"⚠ PIN RISK: UNG ${K:.2f} {rt} ×{n} expires {when} — spot ${spot:.2f} ≈ strike. "
+                f"Assignment is a coin-flip; decide BEFORE the close whether to buy-to-close and avoid surprise "
+                + ("share delivery." if right == 'C' else "share purchase.")),
+                why='At-the-money into expiry — settlement uncertain; the only controllable action is to close it.')
+        elif short and not itm:
+            item.update(kind='AWAIT_WORTHLESS', action=(
+                f"AWAIT WORTHLESS: UNG ${K:.2f} {rt} ×{n} expires {when} OTM (spot ${spot:.2f}) — "
+                f"do nothing, keep premium; "
+                + ("collateral frees up." if right == 'P' else "share coverage frees up.")),
+                why='OTM short expiring — no action; the position resolves in your favor at expiry.')
+        elif short and itm and right == 'P':
+            cash = -K * 100 * n
+            item.update(kind='EXPECT_ASSIGNMENT', cash_impact=round(cash, 0), share_impact=100 * n,
+                        action=(f"EXPECT ASSIGNMENT: UNG ${K:.2f} PUT ×{n} ITM (spot ${spot:.2f}) expires {when} — "
+                                f"you BUY {100*n} shares @ ${K:.2f} (−${abs(cash):,.0f} cash). "
+                                f"Ensure cash is free, or buy-to-close/roll before the close to decline."),
+                        why=f'ITM short put — assignment delivers {100*n} shares at ${K:.2f} (${intrinsic:.2f} ITM); '
+                            'this is how the wheel accumulates, but it must be a DECISION not a surprise.')
+        elif short and itm and right == 'C':
+            cash = K * 100 * n
+            item.update(kind='EXPECT_CALLED_AWAY', cash_impact=round(cash, 0), share_impact=-100 * n,
+                        action=(f"EXPECT CALLED-AWAY: UNG ${K:.2f} CALL ×{n} ITM (spot ${spot:.2f}) expires {when} — "
+                                f"you DELIVER {100*n} shares @ ${K:.2f} (+${cash:,.0f} cash). "
+                                f"Confirm the shares are there, or buy-to-close/roll up to keep them."),
+                        why=f'ITM covered call — {100*n} shares called away at ${K:.2f} (${intrinsic:.2f} ITM); '
+                            'a planned distribution exit — fine if intended, roll up if you want to keep the shares.')
+        elif long:
+            if itm:
+                item.update(kind='DECIDE_LONG', action=(
+                    f"EXERCISE/SELL: long UNG ${K:.2f} {rt} ×{n} ITM (${intrinsic:.2f}) expires {when} — "
+                    f"sell-to-close for value, or let it auto-exercise."),
+                    why='ITM long expiring — capture the intrinsic; auto-exercise otherwise.')
+            else:
+                item.update(kind='ABANDON_LONG', action=(
+                    f"ABANDON: long UNG ${K:.2f} {rt} ×{n} expires {when} OTM — worthless, no action."),
+                    why='OTM long expiring worthless — nothing to do.')
+        out.append(item)
+    # ITM/pin first (need a decision), then await-worthless; soonest expiry first.
+    order = {'EXPECT_ASSIGNMENT': 0, 'EXPECT_CALLED_AWAY': 0, 'UNCERTAIN': 1,
+             'DECIDE_LONG': 2, 'AWAIT_WORTHLESS': 3, 'ABANDON_LONG': 4}
+    out.sort(key=lambda x: (x['dte'], order.get(x['kind'], 9)))
+    return out
+
+
 def _opt_expiry(dte):
     """Concrete option expiry: today + dte, snapped to the next Friday."""
     d = pd.Timestamp.today().normalize() + pd.Timedelta(days=int(dte or 30))
@@ -235,9 +328,11 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
             action = f"{side} {qty} UNG shares"
         else:
             action = ty
+        _bb = (float(o['buyback']) if ('buyback' in o and o['buyback'] == o['buyback']) else None)
         recs.append({'action': action, 'side': side, 'right': right, 'qty': qty,
                      'strike': K, 'expiry': expiry, 'dte': dte,
                      'credit': round(credit, 0), 'pnl': round(pnl, 0),
+                     'model_buyback': (round(_bb, 2) if _bb is not None else None),
                      'why': (why.format(credit=credit, pnl=pnl) if '{' in why else why),
                      'type': ty})
 
@@ -332,6 +427,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                                        - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
         'greeks': greeks,
+        'settlement': _settlement_watch(positions, spot),
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
                   'after_per_month': round(theta_after * 30, 0),

@@ -633,6 +633,7 @@ td.neutral { color: var(--blue); }
     <div id="sot-theta" class="summary-row" style="margin-bottom:8px"></div>
     <h3 style="margin:14px 0 6px">📐 Book greeks — current → post-order <span class="sub" style="font-weight:400">(what-if from fitted vol surface, never a fill · incl 3rd-order speed/color)</span></h3>
     <div id="sot-greeks"></div>
+    <div id="sot-settlement"></div>
     <h3 style="margin:14px 0 6px">Orders for today</h3>
     <div id="sot-orders"></div>
   </section>
@@ -846,9 +847,11 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
-  <!-- Portfolio Greeks summary -->
+  <!-- Portfolio Greeks summary — fed from the SAME greeks-managed live engine as the
+       SOT panel (current → post-order, incl 3rd-order). Single greeks truth. -->
   <div class="section">
-    <h2>📐 Portfolio Greeks</h2>
+    <h2>📐 Portfolio Greeks — full book, current → post-order</h2>
+    <div class="sub" style="margin-bottom:10px">Same greeks-managed engine as the TODAY panel above (regime_wheel_boxx_greeks) — current book vs the book once today's orders fill. What-if from the fitted vol surface, never a fill. Includes 2nd-order (vanna, charm) and 3rd-order (speed ∂Γ/∂S, color ∂Γ/∂t).</div>
     <div class="summary-row" id="greeks-cards" style="margin-bottom:0"></div>
   </div>
 
@@ -1489,37 +1492,9 @@ async function refresh() {
       document.querySelector('#calendar-grid-table').innerHTML = head + '<tbody>' + body + '</tbody>';
     }
 
-    // Portfolio Greeks cards
-    const g = v.portfolio_greeks;
-    if (g) {
-      const gradGood = v => v > 0 ? 'positive' : v < 0 ? 'negative' : '';
-      $('greeks-cards').innerHTML = `
-        <div class="card">
-          <div class="card-label">Total Δ (shares-eq)</div>
-          <div class="card-value ${g.total_delta>0?'positive':'negative'}">${fmt(g.total_delta,0)}</div>
-          <div class="card-sub">shares: ${fmt(g.shares_delta)}</div>
-        </div>
-        <div class="card">
-          <div class="card-label">$ per 1% UNG</div>
-          <div class="card-value ${g.delta_dollar_per_1pct>0?'positive':'negative'}">$${fmt(g.delta_dollar_per_1pct,0)}</div>
-          <div class="card-sub">linear sensitivity</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Γ (gamma)</div>
-          <div class="card-value neutral">${fmt(g.total_gamma,2)}</div>
-          <div class="card-sub">delta acceleration</div>
-        </div>
-        <div class="card">
-          <div class="card-label">θ / day</div>
-          <div class="card-value ${g.total_theta_per_day>0?'positive':'negative'}">$${fmt(g.total_theta_per_day,1)}</div>
-          <div class="card-sub">passive collection</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Vega</div>
-          <div class="card-value neutral">${fmt(g.total_vega,1)}</div>
-          <div class="card-sub">per 1% IV</div>
-        </div>`;
-    }
+    // Portfolio Greeks cards are populated by drawSOT() from /api/live (the SAME
+    // greeks-managed engine as the TODAY panel) so there is ONE greeks truth — see
+    // renderGreeksCards(). Nothing to do here from the /api/state verdict path.
 
     // Per-position analysis table
     const pa = v.position_analysis || [];
@@ -1739,6 +1714,72 @@ async function drawSOT(){
         '<b style="color:var(--text)">Read:</b> '+(ex.delta||'')+' '+(ex.gamma||'')+'<br>'+
         '<b style="color:var(--text)">3rd-order:</b> '+(ex.speed||'')+' '+(ex.color||'')+'</div>';
     }
+    // ── Dedicated "📐 Portfolio Greeks" section: SAME source (d.greeks), card layout
+    //    so the standalone greeks panel can never diverge from the TODAY panel. ──
+    const gc = document.getElementById('greeks-cards');
+    if (d.greeks && gc) {
+      const n = d.greeks.now, a = d.greeks.after;
+      // each card: NOW → AFTER, colored by whether the orders move toward LESS risk
+      const card = (label, was, now, lessIsSafer, fmtfn, sub) => {
+        const f = fmtfn || (x => fmt(x, Math.abs(x)<1?3:1));
+        const moved = Math.abs(now - was) > 1e-9;
+        const safer = lessIsSafer ? (Math.abs(now) < Math.abs(was)) : (now > was);
+        const cls = !moved ? 'neutral' : (safer ? 'positive' : 'negative');
+        const arr = !moved ? '→' : (now>was?'▲':'▼');
+        return '<div class="card"><div class="card-label">'+label+'</div>'+
+          '<div class="card-value '+cls+'" style="font-size:1.05rem">'+f(was)+
+          ' <span style="opacity:.5">'+arr+'</span> '+f(now)+'</div>'+
+          '<div class="card-sub">'+sub+'</div></div>';
+      };
+      const usd = x => '$'+fmt(x,0);
+      gc.innerHTML =
+        card('Δ delta (sh-eq)', n.delta, a.delta, true, x=>fmt(x,0), 'net directional · '+usd(a.delta_dollar_1pct)+' per +1% UNG')+
+        card('Γ gamma', n.gamma, a.gamma, true, x=>fmt(x,1), 'Δ-accel · '+fmt(a.gamma_dollar_1pct,1)+' sh per +1%')+
+        card('θ theta /day', n.theta, a.theta, false, x=>'$'+fmt(x,0), 'extrinsic decay collected')+
+        card('vega /vol-pt', n.vega, a.vega, true, x=>'$'+fmt(x,0), a.vega<0?'short vol':'long vol')+
+        card('vanna ∂Δ/∂σ', n.vanna, a.vanna, true, x=>fmt(x,2), 'Δ drift per +1 vol-pt')+
+        card('charm ∂Δ/∂t', n.charm, a.charm, true, x=>fmt(x,3), 'Δ drift per day (re-hedge)')+
+        card('speed ∂Γ/∂S ⁳', n.speed, a.speed, true, x=>fmt(x,1), '3rd-order · pin-risk acceleration')+
+        card('color ∂Γ/∂t ⁳', n.color, a.color, true, x=>fmt(x,2), '3rd-order · front-week Γ blow-up rate');
+    }
+    // ── SETTLEMENT WATCH: expiring options are ACTIONS too (await-worthless / assign /
+    //    called-away / pin). They move shares/cash/coverage — surface them for execution. ──
+    const sel2 = document.getElementById('sot-settlement');
+    const sett = d.settlement || [];
+    if (sel2) {
+      if (!sett.length) { sel2.innerHTML = ''; }
+      else {
+        const meta = {
+          EXPECT_ASSIGNMENT:  {ic:'📥', col:'#c62828', tag:'ASSIGNMENT'},
+          EXPECT_CALLED_AWAY: {ic:'📤', col:'#e08a00', tag:'CALLED AWAY'},
+          UNCERTAIN:          {ic:'⚠',  col:'#e08a00', tag:'PIN RISK'},
+          DECIDE_LONG:        {ic:'🎯', col:'#2e7d32', tag:'EXERCISE'},
+          AWAIT_WORTHLESS:    {ic:'✓',  col:'#2e7d32', tag:'EXPIRES OTM'},
+          ABANDON_LONG:       {ic:'✓',  col:'var(--text-dim)', tag:'ABANDON'},
+        };
+        const needsDecision = sett.filter(s=>['EXPECT_ASSIGNMENT','EXPECT_CALLED_AWAY','UNCERTAIN'].includes(s.kind)).length;
+        let netCash=0, netSh=0; sett.forEach(s=>{netCash+=s.cash_impact||0; netSh+=s.share_impact||0;});
+        const rows = sett.map(s=>{
+          const m = meta[s.kind]||{ic:'•',col:'var(--text-dim)',tag:s.kind};
+          const impact = (s.cash_impact||s.share_impact)
+            ? ('<span style="color:'+m.col+'">'+(s.share_impact?(s.share_impact>0?'+':'')+fmt(s.share_impact,0)+' sh':'')+
+               (s.cash_impact?'  '+(s.cash_impact>0?'+':'')+'$'+fmt(s.cash_impact,0):'')+'</span>')
+            : '<span style="color:var(--text-dim)">no cash/share move</span>';
+          return '<div class="rec" style="border-left:3px solid '+m.col+';padding-left:10px;margin-bottom:6px">'+
+            '<div class="rec-action" style="font-weight:600">'+m.ic+' <span style="color:'+m.col+
+              ';font-size:.75rem;font-weight:700;letter-spacing:.04em">['+m.tag+']</span> '+s.action+'</div>'+
+            '<div class="rec-why" style="color:var(--text-dim)">↳ '+(s.why||'')+'  ·  '+impact+'</div></div>';
+        }).join('');
+        sel2.innerHTML =
+          '<h3 style="margin:14px 0 6px">⏳ Settlement today — expiring positions (these are actions: monitor / let settle / decide)'+
+          (needsDecision?(' <span style="color:#c62828;font-size:.8rem">· '+needsDecision+' need a decision before the close</span>'):'')+'</h3>'+
+          rows+
+          '<div style="font-size:.82rem;color:var(--text-dim);margin-top:2px">Net if all settle as-is: '+
+            (netSh?((netSh>0?'+':'')+fmt(netSh,0)+' shares'):'no share change')+
+            (netCash?('  ·  '+(netCash>0?'+':'')+'$'+fmt(netCash,0)+' cash'):'')+
+            '  ·  coverage recomputes after settlement.</div>';
+      }
+    }
     const recs = d.recommendations||[];
     oel.innerHTML = recs.length ? recs.map(o => {
       const ep = o.exec_plan;
@@ -1751,7 +1792,7 @@ async function drawSOT(){
           '<td style="color:var(--text-dim)">'+rg.rung+'</td></tr>').join('');
         exec = '<div class="exec-plan" style="margin:6px 0 2px 14px;padding:8px 10px;'+
           'border-left:2px solid #4a9;background:rgba(74,153,136,.07);border-radius:4px;font-size:.82rem">'+
-          '<div style="margin-bottom:3px">⏱ <b>Work near '+(ep.timing.recommended||'')+'</b></div>'+
+          '<div style="margin-bottom:3px">⏱ <b>'+((ep.timing.recommended||'').replace(/^\s*work near\s*/i,'Work near '))+'</b></div>'+
           '<div style="color:var(--text-dim);margin-bottom:4px">Live: bid $'+q.bid.toFixed(2)+
             ' / ask $'+q.ask.toFixed(2)+' / mid $'+q.mid.toFixed(2)+'  ('+q.spread_pct+
             '% wide · P(mid) '+lad.p_mid+')</div>'+
@@ -1764,9 +1805,22 @@ async function drawSOT(){
         exec = '<div style="margin:4px 0 2px 14px;color:var(--text-dim);font-size:.8rem">⏱ '+
           (ep.timing?ep.timing.recommended:'')+' · '+ep.note+'</div>';
       }
+      // ── RECONCILE: model price vs REAL executable price (accuracy guard) ──
+      let recon = '';
+      const rc = o.reconcile;
+      if (rc && rc.real_buyback != null && rc.model_buyback != null) {
+        const flagged = !!rc.flag;
+        const col = flagged ? '#c62828' : '#2e7d32';
+        recon = '<div style="margin:5px 0 2px 14px;padding:6px 10px;border-left:2px solid '+col+
+          ';background:'+col+'12;border-radius:4px;font-size:.82rem">'+
+          '<b style="color:'+col+'">'+(flagged?'⚠ price check':'✓ price check')+'</b>  '+
+          'engine buyback $'+fmt(rc.model_buyback,2)+' (+$'+fmt(rc.model_pnl,0)+') '+
+          'vs <b>real fill ≈$'+fmt(rc.real_buyback,2)+'</b> → realistic <b>+$'+fmt(rc.real_pnl,0)+'</b>'+
+          (flagged?('<div style="color:'+col+';margin-top:2px">'+rc.flag+'</div>'):'')+'</div>';
+      }
       return '<div class="rec"><div class="rec-action" style="font-weight:600">'+o.action+
         (o.credit?' <span class="positive">+$'+fmt(o.credit,0)+'</span>':'')+'</div>'+
-        '<div class="rec-why" style="color:var(--text-dim)">↳ '+(o.why||'')+'</div>'+exec+'</div>';
+        '<div class="rec-why" style="color:var(--text-dim)">↳ '+(o.why||'')+'</div>'+recon+exec+'</div>';
     }).join('')
       : '<div class="rec-why">Engine holds — no new orders today.</div>';
   }catch(e){ document.getElementById('sot-orders').innerHTML='<div class="rec-why">live fetch failed: '+e+'</div>'; }

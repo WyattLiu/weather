@@ -321,11 +321,53 @@ def plan_for_recs(recs, spot=None):
             continue
         side = 'sell' if (r.get('side') or '').upper().startswith('SELL') else 'buy'
         try:
-            out.append({**r, 'exec_plan': execution_plan(K, dte, rt, side, spot,
-                                                         grid=grid, expiry=r.get('expiry'))})
+            plan = execution_plan(K, dte, rt, side, spot, grid=grid, expiry=r.get('expiry'))
+            rr = {**r, 'exec_plan': plan}
+            _reconcile_economics(rr, plan)   # model price vs REAL quote — accuracy guard
+            out.append(rr)
         except Exception as e:
             out.append({**r, 'exec_plan': {'error': repr(e)[:120]}})
     return out
+
+
+def _reconcile_economics(rec, plan):
+    """ACCURACY GUARD: the engine prices orders off its model/cached chain; the operator
+    fills at the REAL market. When a live two-sided quote exists, recompute the order's
+    economics at the real executable price and FLAG material divergence so a stale-model
+    'take-profit' is never executed blind. Mutates rec in place (adds rec['reconcile'])."""
+    q = (plan or {}).get('live_quote')
+    lad = (plan or {}).get('ladder') or {}
+    if not q or 'mid' not in q:
+        return
+    qty = int(abs(rec.get('qty') or 0)) or 1
+    ty = rec.get('type') or ''
+    real_fill = lad.get('expected_fill', q['mid'])
+    rc = {'real_bid': q['bid'], 'real_ask': q['ask'], 'real_mid': q['mid'],
+          'real_fill': round(real_fill, 2)}
+    # Take-profit buy-to-close: profit = (entry premium − buyback)·100·qty. Recompute the
+    # buyback at the real price; back out the entry premium from the model figures.
+    if ty in ('PUT_TP', 'CALL_TP'):
+        mbb = rec.get('model_buyback')
+        mpnl = rec.get('pnl')
+        if mbb is not None and mpnl is not None:
+            entry_prem = mbb + (mpnl / (100.0 * qty))         # implied by the engine
+            real_pnl = (entry_prem - real_fill) * 100.0 * qty
+            rc.update(model_buyback=mbb, model_pnl=round(mpnl, 0),
+                      real_buyback=round(real_fill, 2), real_pnl=round(real_pnl, 0),
+                      entry_prem=round(entry_prem, 2))
+            # material if the real cost is ≥1.5× the model or ≥$0.05 richer per share
+            gap = real_fill - mbb
+            if gap >= 0.05 or (mbb > 0 and real_fill >= 1.5 * mbb):
+                rc['flag'] = (f"Market mid ${q['mid']:.2f} (fill ≈${real_fill:.2f}) is richer than the "
+                              f"engine's ${mbb:.2f} — real take-profit ≈ +${real_pnl:,.0f}, not +${mpnl:,.0f}. "
+                              "Less decayed than modeled; consider waiting for more decay before closing.")
+            elif real_fill <= mbb - 0.05:
+                rc['flag'] = (f"Market is CHEAPER (${real_fill:.2f}) than modeled (${mbb:.2f}) — "
+                              f"real take-profit ≈ +${real_pnl:,.0f}; good time to close.")
+    rec['reconcile'] = rc
+    # propagate a one-line caveat into the exec plan so the UI shows it inline
+    if rc.get('flag'):
+        plan.setdefault('caveats', []).insert(0, rc['flag'])
 
 
 if __name__ == '__main__':
