@@ -631,7 +631,9 @@ td.neutral { color: var(--blue); }
     <div class="sub" style="margin-bottom:10px">Orders below come straight from the live champion engine run on your real positions — same code as the backtest, every order justified. No re-implementation, no noise.</div>
     <div id="sot-z" class="summary-row" style="margin-bottom:8px"></div>
     <div id="sot-theta" class="summary-row" style="margin-bottom:8px"></div>
-    <h3 style="margin:10px 0 6px">Orders for today</h3>
+    <h3 style="margin:14px 0 6px">📐 Book greeks — current → post-order <span class="sub" style="font-weight:400">(what-if from fitted vol surface, never a fill · incl 3rd-order speed/color)</span></h3>
+    <div id="sot-greeks"></div>
+    <h3 style="margin:14px 0 6px">Orders for today</h3>
     <div id="sot-orders"></div>
   </section>
   <div class="sub">
@@ -1700,6 +1702,43 @@ async function drawSOT(){
               (d.data_stale_days>0 ? ('⚠ '+d.data_stale_days+'d stale · today '+d.today) : ('today '+(d.today||''))),
               d.data_stale_days>1?'warn':'')+
       sotCard('Spot', '$'+fmt(d.spot,2), 'DTE/expiry use real today','');
+    // ── BOOK GREEKS: current → post-order, incl 3rd-order speed/color ──
+    const gel = document.getElementById('sot-greeks');
+    if (d.greeks && gel) {
+      const G = d.greeks, n = G.now, a = G.after, ch = G.change, ex = G.explain||{};
+      // signed delta-arrow: green if the order moves the greek toward LESS risk
+      const arrow = (was, now, lessIsSafer) => {
+        const d2 = now - was; if (Math.abs(d2) < 1e-9) return '<span style="color:var(--text-dim)">→ flat</span>';
+        const safer = lessIsSafer ? (Math.abs(now) < Math.abs(was)) : (now > was);
+        const col = safer ? '#2e7d32' : '#c62828';
+        return '<span style="color:'+col+'">'+(d2>0?'▲':'▼')+' '+(d2>0?'+':'')+fmt(d2,Math.abs(d2)<1?3:1)+'</span>';
+      };
+      const row = (label, was, now, lessIsSafer, sub) =>
+        '<tr><td style="padding:3px 12px 3px 0;font-weight:600">'+label+'</td>'+
+        '<td style="padding:3px 12px 3px 0;text-align:right;font-variant-numeric:tabular-nums">'+fmt(was,Math.abs(was)<1?3:1)+'</td>'+
+        '<td style="padding:3px 8px;color:var(--text-dim)">→</td>'+
+        '<td style="padding:3px 12px 3px 0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">'+fmt(now,Math.abs(now)<1?3:1)+'</td>'+
+        '<td style="padding:3px 12px 3px 0">'+arrow(was,now,lessIsSafer)+'</td>'+
+        '<td style="padding:3px 0;color:var(--text-dim);font-size:.82rem">'+(sub||'')+'</td></tr>';
+      gel.innerHTML =
+        '<table style="border-collapse:collapse;margin:2px 0 6px;font-size:.9rem">'+
+        '<thead><tr style="color:var(--text-dim);font-size:.78rem;text-transform:uppercase">'+
+        '<th style="text-align:left;padding-right:12px">Greek</th><th style="text-align:right">Now</th><th></th>'+
+        '<th style="text-align:right;padding-right:12px">After orders</th><th style="text-align:left">Δ</th><th style="text-align:left">meaning</th></tr></thead><tbody>'+
+        row('Δ delta (sh-eq)', n.delta, a.delta, true, '$'+fmt(a.delta_dollar_1pct,0)+' per +1% UNG · '+(Math.abs(a.delta)<Math.abs(n.delta)?'hedged toward neutral':'directional retained'))+
+        row('Γ gamma', n.gamma, a.gamma, true, 'Δ shifts '+fmt(a.gamma_dollar_1pct,1)+' sh per +1% — short Γ hedges INTO moves')+
+        row('θ theta /day', n.theta, a.theta, false, 'extrinsic decay in your favor')+
+        row('vega /vol-pt', n.vega, a.vega, true, a.vega<0?'short vol — hurt by IV spike':'long vol')+
+        '<tr><td colspan="6" style="padding:6px 0 2px;color:#39d2c0;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em">— 2nd / 3rd-order —</td></tr>'+
+        row('vanna ∂Δ/∂σ', n.vanna, a.vanna, true, 'Δ drift per +1 vol-pt — IV spike silently re-aims you')+
+        row('charm ∂Δ/∂t', n.charm, a.charm, true, 'Δ drift per day even if UNG sits still — re-hedge daily')+
+        row('speed ∂Γ/∂S', n.speed, a.speed, true, 'pin-risk acceleration as spot nears the strike wall')+
+        row('color ∂Γ/∂t', n.color, a.color, true, 'front-week Γ blow-up rate as expiry nears')+
+        '</tbody></table>'+
+        '<div style="font-size:.82rem;color:var(--text-dim);line-height:1.5;border-left:2px solid #39d2c0;padding-left:10px;margin-top:4px">'+
+        '<b style="color:var(--text)">Read:</b> '+(ex.delta||'')+' '+(ex.gamma||'')+'<br>'+
+        '<b style="color:var(--text)">3rd-order:</b> '+(ex.speed||'')+' '+(ex.color||'')+'</div>';
+    }
     const recs = d.recommendations||[];
     oel.innerHTML = recs.length ? recs.map(o => {
       const ep = o.exec_plan;

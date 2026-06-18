@@ -2082,6 +2082,38 @@ def _bs_greeks(S, K, T, r, sigma, right='C'):
     return float(delta), float(gamma), float(theta), float(vega)
 
 
+def _greeks_full(S, K, T, r, sigma, right='C'):
+    """Per-CONTRACT greeks incl 2nd-order cross (vanna, charm) and 3rd-order (speed, color).
+
+      speed = ∂Γ/∂S   — how fast gamma changes as spot moves (pin-risk acceleration).
+      color = ∂Γ/∂t   — gamma's time-decay per calendar day (short-DTE gamma blow-up).
+      vanna = ∂Δ/∂σ   — delta's sensitivity to a vol move (per 1 vol-pt).
+      charm = ∂Δ/∂t   — delta's decay per calendar day (drift of hedge ratio).
+
+    Higher orders are finite-differenced around the validated closed-form _bs_greeks
+    (robust, and reuses the already-trusted 1st/2nd-order forms). Returns a dict of
+    per-1-contract, per-1-share-of-underlying greeks (caller scales by 100×qty)."""
+    d, g, t, v = _bs_greeks(S, K, T, r, sigma, right)
+    out = {'delta': d, 'gamma': g, 'theta': t, 'vega': v,
+           'vanna': 0.0, 'charm': 0.0, 'speed': 0.0, 'color': 0.0}
+    if T <= 0 or sigma <= 0:
+        return out
+    dS = max(S * 0.01, 0.01)        # 1% spot bump for ∂/∂S
+    dsig = 0.01                     # 1 vol-point for ∂/∂σ
+    dt = 1.0 / 365.0                # 1 calendar day for ∂/∂t (time PASSING)
+    _, g_up, _, _ = _bs_greeks(S + dS, K, T, r, sigma, right)
+    _, g_dn, _, _ = _bs_greeks(S - dS, K, T, r, sigma, right)
+    out['speed'] = (g_up - g_dn) / (2 * dS)
+    d_su, _, _, _ = _bs_greeks(S, K, T, r, sigma + dsig, right)
+    d_sd, _, _, _ = _bs_greeks(S, K, T, r, sigma - dsig, right)
+    out['vanna'] = (d_su - d_sd) / 2.0          # per 1 vol-pt
+    Tm = max(T - dt, 1e-6)
+    d_tm, g_tm, _, _ = _bs_greeks(S, K, Tm, r, sigma, right)
+    out['color'] = g_tm - g                     # Γ change as one day passes
+    out['charm'] = d_tm - d                     # Δ change as one day passes
+    return out
+
+
 def _per_position_analysis(positions, spot, snap):
     """For each UNG option, recommend HOLD/CLOSE/ROLL with concrete details."""
     from datetime import date as _date

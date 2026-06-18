@@ -3036,6 +3036,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         today_orders = trades[_mark:]
         globals()['_LIVE_FINAL'] = {
             'short_puts': list(s['short_puts']), 'short_calls': list(s['short_calls']),
+            'long_puts': list(s.get('long_puts', [])), 'long_calls': list(s.get('long_calls', [])),
             'shares': s['shares'], 'cash': s['cash'], 'kold': s['kold'],
         }
         return pd.DataFrame(history), pd.DataFrame(today_orders)

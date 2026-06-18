@@ -13,7 +13,7 @@ import pandas as pd
 THIS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS)
 import replay_engine as R
-from validated_kernel_adapter import CHAMPION_KEY, KERNELS  # noqa: E402
+from validated_kernel_adapter import CHAMPION_KEY, KERNELS, _greeks_full  # noqa: E402
 
 # trade-type → (human action template, why-it-fires)
 JUSTIFY = {
@@ -117,6 +117,51 @@ def _est_theta(short_puts, short_calls, spot):
         extr = max(0.0, leg.get('entry_prem', 0) - intrinsic)
         th += extr * 100 * leg.get('qty', 0) / max(1, leg.get('dte', 30))
     return th
+
+
+def _book_greeks(short_puts, short_calls, long_puts, long_calls, shares, spot):
+    """Aggregate FULL book greeks (incl 3rd-order speed/color) from engine leg lists.
+    Same leg format for the CURRENT book (sp/sc/lp/lc) and the POST-ORDER book
+    (_LIVE_FINAL), so this serves both before→after views. Shorts carry qty<0.
+    IV per leg comes from the real fitted surface (model = what-if only, never a fill)."""
+    surf = R._load_iv_surface()
+    latest = max(surf.keys()) if surf else None
+    agg = {k: 0.0 for k in ('delta', 'gamma', 'theta', 'vega', 'vanna', 'charm', 'speed', 'color')}
+    legsets = ((short_puts, 'P', -1), (short_calls, 'C', -1),
+               (long_puts, 'P', +1), (long_calls, 'C', +1))
+    for legs, right, sign in legsets:
+        for leg in legs or []:
+            K = float(leg.get('K') or 0)
+            dte = int(leg.get('dte') or 0)
+            n = int(leg.get('qty') or 0)
+            if K <= 0 or dte <= 0 or n == 0:
+                continue
+            iv = None
+            if surf and latest:
+                iv = R.iv_from_surface(surf, latest, K, dte, right)
+            if iv is None or iv != iv:
+                iv = 0.50
+            g = _greeks_full(spot, K, dte / 365.0, 0.045, iv, right)
+            mult = 100 * n * sign            # contracts → shares; sign = short/long
+            for k in agg:
+                agg[k] += g[k] * mult
+    # Shares: pure delta 1 each, no higher-order greeks.
+    agg['delta'] += int(shares or 0)
+    # $ sensitivities the operator actually feels.
+    return {
+        'delta': round(agg['delta'], 1),
+        'gamma': round(agg['gamma'], 2),
+        'theta': round(agg['theta'], 1),
+        'vega': round(agg['vega'], 1),
+        'vanna': round(agg['vanna'], 2),
+        'charm': round(agg['charm'], 3),
+        'speed': round(agg['speed'], 4),
+        'color': round(agg['color'], 4),
+        # operator-facing dollar translations
+        'delta_dollar_1pct': round(agg['delta'] * spot * 0.01, 0),      # P&L per +1% UNG
+        'gamma_dollar_1pct': round(agg['gamma'] * spot * 0.01, 1),      # Δ-change per +1% UNG
+        'speed_dollar_1pct': round(agg['speed'] * (spot * 0.01) ** 2, 2),  # Γ-change per +1% UNG
+    }
 
 
 def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key=None):
@@ -226,6 +271,41 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     theta_now = _est_theta(sp, sc, spot)
     theta_after = _est_theta(final.get('short_puts', sp), final.get('short_calls', sc), spot)
 
+    # ── BOOK GREEKS: CURRENT vs POST-ORDER (incl 3rd-order speed/color) ─────────────
+    # what-if greeks from the fitted vol surface (NEVER a fill). 'now' = book you hold
+    # today; 'after' = the engine's actual post-decision book once today's orders fill.
+    g_now = _book_greeks(sp, sc, lp, lc, shares, spot)
+    g_after = _book_greeks(
+        final.get('short_puts', sp), final.get('short_calls', sc),
+        final.get('long_puts', lp), final.get('long_calls', lc),
+        final.get('shares', shares), spot)
+    _gd = {k: round(g_after[k] - g_now[k], 4) for k in g_now}
+    greeks = {
+        'now': g_now, 'after': g_after, 'change': _gd,
+        'explain': {
+            'delta': (f"Net Δ {g_now['delta']:+.0f}→{g_after['delta']:+.0f} sh-equiv "
+                      f"(${g_after['delta_dollar_1pct']:+,.0f} per +1% UNG). "
+                      + ('hedged toward neutral.' if abs(g_after['delta']) < abs(g_now['delta'])
+                         else 'directional long bias retained.')),
+            'gamma': (f"Short Γ {g_now['gamma']:+.1f}→{g_after['gamma']:+.1f}: as spot moves, "
+                      f"Δ shifts {g_after['gamma_dollar_1pct']:+.1f} sh per +1% — "
+                      "negative = hedge needed INTO the move (sell rallies / buy dips)."),
+            'theta': f"Extrinsic decay {g_now['theta']:+.0f}→{g_after['theta']:+.0f} $/day in your favor (short premium).",
+            'vega': (f"Vega {g_now['vega']:+.0f}→{g_after['vega']:+.0f} $/vol-pt — "
+                     + ('short vol, hurt by an IV spike.' if g_after['vega'] < 0 else 'long vol.')),
+            'speed': (f"Speed (3rd-order ∂Γ/∂S) {g_now['speed']:+.4f}→{g_after['speed']:+.4f}: "
+                      "how fast short-Γ ACCELERATES as UNG approaches the strike wall — "
+                      "pin-risk build-up; large |speed| = hedge ratio changes faster the closer to strikes."),
+            'color': (f"Color (3rd-order ∂Γ/∂t) {g_now['color']:+.4f}→{g_after['color']:+.4f} per day: "
+                      "short-DTE gamma BLOWS UP as expiry nears — color is the daily rate of that "
+                      "build-up; watch it on the front-week legs."),
+            'vanna': (f"Vanna {g_now['vanna']:+.2f}→{g_after['vanna']:+.2f}: Δ drifts this much per +1 vol-pt — "
+                      "an IV spike silently changes your directional exposure."),
+            'charm': (f"Charm {g_now['charm']:+.3f}→{g_after['charm']:+.3f} Δ/day: hedge ratio drifts even if "
+                      "UNG sits still — re-check delta daily, not just on moves."),
+        },
+    }
+
     z = R.compute_historical_z(row)
     # ── REGIME STATE (regime_wheel_boxx driver) — what regime we're in TODAY and the
     #    posture it implies, so the operator knows accumulate vs neutral vs distribute.
@@ -251,6 +331,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'data_stale_days': int(max(0, (pd.Timestamp.today().normalize()
                                        - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
+        'greeks': greeks,
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
                   'after_per_month': round(theta_after * 30, 0),
