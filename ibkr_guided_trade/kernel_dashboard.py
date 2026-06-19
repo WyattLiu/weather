@@ -45,8 +45,17 @@ def _compute_live():
             spot = _STATE_CACHE.get('spot')
             pos = _STATE_CACHE.get('positions', [])
             bal = _STATE_CACHE.get('balance') or {}
-            cash = (bal.get('cash') or bal.get('total_cash')
-                    or bal.get('net_liquidation') or 100000)
+            # REAL CASH. The broker exposes only net_liquidation (no cash field), so the old
+            # fallback passed net_liq AS cash — on top of the positions — doubling the engine's
+            # NAV (~$251k vs the real ~$133k) and oversizing every order. Derive true cash:
+            #   net_liq = cash + Σ(position market_value)  →  cash = net_liq − Σ MV.
+            _cash = bal.get('cash') or bal.get('total_cash')
+            if not _cash:
+                _nl = bal.get('net_liquidation')
+                if _nl:
+                    _pos_mv = sum(float(p.get('market_value') or 0) for p in pos)
+                    _cash = float(_nl) - _pos_mv      # = real settled cash
+            cash = _cash or 100000
         data = get_live_recommendation(pos, cash=cash, spot=spot,
                                        kernel_key='regime_wheel_boxx_greeks_live')  # PROMOTED champion (greeks-managed)
         # EXECUTION ADVISOR: annotate each order with a manual-execution plan
