@@ -341,14 +341,23 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     # KOLD hedge shares + price — for the KOLD-AWARE greeks (KOLD is a -2x-natgas inverse ETF;
     # the book-greeks engine must count its UNG-equivalent delta or the net Δ is a blind spot).
     kold_shares, kold_px = 0, float(row.get('KOLD') or 0)
+    boxx_shares = 0
     for p in positions or []:
-        if str(p.get('symbol') or '').upper() == 'KOLD' and not p.get('is_option'):
+        sym = str(p.get('symbol') or '').upper()
+        if p.get('is_option'):
+            continue
+        if sym == 'KOLD':
             kold_shares += int(p.get('qty') or p.get('quantity') or 0)
             mv, q = p.get('market_value'), (p.get('qty') or p.get('quantity') or 0)
             if mv and q:
                 kold_px = abs(float(mv) / float(q))
+        elif sym == 'BOXX':
+            boxx_shares += int(p.get('qty') or p.get('quantity') or 0)
+    # BOXX + KOLD are part of NAV → must seed them or the engine's NAV-based sizing (KOLD hedge,
+    # share target, call_qty_nav_pct, margin) diverges from the backtest (live==backtest).
     seed = {'cash': float(cash), 'shares': int(shares), 'short_puts': sp,
-            'short_calls': sc, 'long_puts': lp, 'long_calls': lc}
+            'short_calls': sc, 'long_puts': lp, 'long_calls': lc,
+            'boxx': float(boxx_shares), 'kold': int(kold_shares)}
 
     _h, orders = R.run_strategy_simple(df, params, seed_state=seed, live_decision=True)
 

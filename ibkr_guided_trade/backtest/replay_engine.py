@@ -509,6 +509,8 @@ def regime(z_val):
 
 
 _IV_SURFACE_CACHE = None  # lazy-loaded once per process
+_CAPTURE_STATES = False   # test-only: snapshot start-of-day book (live==backtest equivalence)
+_STATE_SNAPSHOTS = {}
 _REAL_STRIKE_GRID = None  # {(date_str, right): sorted_list_of_strikes_adj}
 _REAL_STRIKE_GRID_BY_EXP = None  # {(date_str, exp_str, right): sorted_strikes}
 
@@ -893,18 +895,50 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         spot_u = row.get('UNG', 0)
         if spot_u <= 0:
             continue
+        # TEST-ONLY (default off): snapshot the start-of-day book so a live-decision run can be
+        # seeded with the continuous backtest's own state and proven to reproduce that day's
+        # trades (live == backtest equivalence test). Zero impact when _CAPTURE_STATES is False.
+        if _CAPTURE_STATES:
+            import copy as _copy
+            _STATE_SNAPSHOTS[str(pd.Timestamp(idx).date())] = {
+                # book-only fields (what the live path can reconstruct from real positions)
+                'cash': s['cash'], 'shares': s['shares'],
+                'short_puts': [dict(x) for x in s['short_puts']],
+                'short_calls': [dict(x) for x in s['short_calls']],
+                'long_puts': [dict(x) for x in s.get('long_puts', [])],
+                'long_calls': [dict(x) for x in s.get('long_calls', [])],
+                'boxx': s.get('boxx', 0), 'kold': s.get('kold', 0),
+                # FULL internal state + nav_peak (path-dependent; for the determinism test only)
+                '_full_s': _copy.deepcopy(s), '_full_nav_peak': nav_peak,
+            }
         # LIVE-DECISION SEED: on the final row, replace the engine's accumulated
         # paper portfolio with the operator's REAL positions, then let the normal
         # body emit today's orders. nav_peak reset so dd_scale doesn't see a false
         # drawdown from the paper run.
-        if live_decision and i == _last_i and seed_state is not None:
+        if live_decision and i == _last_i and seed_state is not None and seed_state.get('_full_s') is not None:
+            # DETERMINISM-TEST PATH: restore the COMPLETE engine state (incl path-dependent
+            # trackers + nav_peak). Proves seeded single-day == continuous run, bit-for-bit.
+            import copy as _copy
+            s = _copy.deepcopy(seed_state['_full_s'])
+            nav_peak = seed_state['_full_nav_peak']
+            _live_trade_mark = len(trades)
+        elif live_decision and i == _last_i and seed_state is not None:
             s['cash'] = float(seed_state.get('cash', s['cash']))
             s['shares'] = int(seed_state.get('shares', s['shares']))
             s['short_puts'] = list(seed_state.get('short_puts', []))
             s['short_calls'] = list(seed_state.get('short_calls', []))
             s['long_puts'] = list(seed_state.get('long_puts', []))
             s['long_calls'] = list(seed_state.get('long_calls', []))
-            nav_peak = s['cash'] + s['shares'] * spot_u
+            # BOXX + KOLD are part of NAV (cur_nav above) and drive NAV-based sizing (KOLD
+            # hedge, share target, call_qty_nav_pct, margin). Omitting them understated NAV by
+            # the BOXX value → live sizes diverged from the backtest. Restore them too.
+            s['boxx'] = float(seed_state.get('boxx', s['boxx']))
+            s['kold'] = int(seed_state.get('kold', s['kold']))
+            _boxx_px = float(row.get('BOXX') if (row.get('BOXX') == row.get('BOXX')
+                                                 and row.get('BOXX') is not None) else 117.0)
+            _kold_px = float(row.get('KOLD') if (row.get('KOLD') == row.get('KOLD')
+                                                 and row.get('KOLD') is not None) else 0.0)
+            nav_peak = s['cash'] + s['shares'] * spot_u + s['boxx'] * _boxx_px + s['kold'] * _kold_px
             _live_trade_mark = len(trades)   # capture trades emitted from here
         spot_k = row.get('KOLD', 0) or 0
         if isinstance(spot_k, float) and math.isnan(spot_k):
