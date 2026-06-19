@@ -2634,7 +2634,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                 _ex = sum(_sp['qty'] for _sp in s['short_puts']
                                           if abs(_sp['K'] - K) < 0.01
                                           and abs(_sp.get('dte', 30) - dte_choice) <= 7)
-                                q_dte = min(q_dte, max(0, p.get('max_short_per_strike', 10) - _ex))
+                                # SCALE-INVARIANT cap: when max_short_pct_nav is set, the per-
+                                # strike×expiry cap is a % of NAV notional (proportional to the
+                                # account), not a fixed count — so a $50k and a $500k book are
+                                # capped at the SAME fraction of risk. Falls back to the fixed
+                                # max_short_per_strike for legacy kernels. cap = pct·NAV/(K·100).
+                                if p.get('max_short_pct_nav') and K > 0:
+                                    _cap_ct = max(1, int(p['max_short_pct_nav'] * cur_nav / (K * 100)))
+                                else:
+                                    _cap_ct = p.get('max_short_per_strike', 10)
+                                q_dte = min(q_dte, max(0, _cap_ct - _ex))
                                 if q_dte < 1:
                                     continue   # strike×expiry full → ladder tries other DTEs
                             credit_dte = prem_dte * 100 * q_dte - q_dte * SPREAD_OPTION * 100

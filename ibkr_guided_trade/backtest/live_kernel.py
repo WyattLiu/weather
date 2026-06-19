@@ -604,7 +604,15 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     #    (max_short_per_strike). The cap is FORWARD-ONLY (grandfathers existing legs), so a
     #    legacy cluster like 23×$11 puts persists — surface it with a de-risk suggestion. ──
     from collections import defaultdict
-    _cap = params.get('max_short_per_strike')
+    # Per-strike cap matches the engine: a % of NAV notional when max_short_pct_nav is set
+    # (scale-invariant — proportional to the account), else the fixed max_short_per_strike.
+    _pct_nav = params.get('max_short_pct_nav')
+
+    def _cap_for(K):
+        if _pct_nav and K > 0:
+            return max(1, int(_pct_nav * seed_nav / (K * 100)))
+        return params.get('max_short_per_strike')
+    _cap = params.get('max_short_per_strike')   # representative (for display when no pct)
     _byse = defaultdict(int)          # (right,strike,expiry) -> contracts
     _bys = defaultdict(lambda: {'contracts': 0, 'expiries': set()})  # (right,strike) aggregate
     for p in positions or []:
@@ -626,7 +634,8 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     for (rt, K), agg in _bys.items():
         contracts = agg['contracts']
         max_single = max((_byse[(rt, K, e)] for e in agg['expiries']), default=0)
-        over_cap = bool(_cap and max_single > _cap)
+        _kcap = _cap_for(K)
+        over_cap = bool(_kcap and max_single > _kcap)
         rtname = 'PUT' if rt == 'P' else 'CALL'
         sugg = ''
         if over_cap or contracts >= 15:
@@ -639,7 +648,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         concentration.append({
             'right': rtname, 'strike': K, 'contracts': contracts,
             'assignment_shares': contracts * 100, 'expiries': sorted(agg['expiries']),
-            'max_single_expiry': max_single, 'cap': _cap, 'over_cap': over_cap,
+            'max_single_expiry': max_single, 'cap': _kcap, 'over_cap': over_cap,
             'suggestion': sugg})
     concentration.sort(key=lambda c: (-c['contracts'], c['strike']))
 
