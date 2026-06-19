@@ -307,7 +307,40 @@ def _options_data_freshness():
     return out
 
 
-def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key=None):
+_NAV_PEAK_FILE = os.path.join(THIS, 'cache', 'live_nav_peak.json')
+
+
+def _update_nav_peak(cur_nav, override=None):
+    """Persistent high-water mark of live NAV (engine basis). Returns the peak to seed.
+
+    `override` (operator's known account high-water mark) takes precedence and is stored.
+    Otherwise the peak ratchets up as new highs print, so the engine's drawdown-scaling /
+    DD_TRIM reflect the OPERATOR's real path across sessions. Floors at current NAV (a peak
+    below current NAV is meaningless)."""
+    import json
+    stored = 0.0
+    try:
+        with open(_NAV_PEAK_FILE) as f:
+            stored = float(json.load(f).get('peak') or 0.0)
+    except Exception:
+        pass
+    if override and override == override:
+        peak = float(override)
+    else:
+        peak = max(stored, float(cur_nav or 0.0))
+    peak = max(peak, float(cur_nav or 0.0))         # never below current NAV
+    try:
+        with open(_NAV_PEAK_FILE, 'w') as f:
+            json.dump({'peak': round(peak, 2),
+                       'updated': str(pd.Timestamp.today().normalize().date()),
+                       'last_nav': round(float(cur_nav or 0.0), 2)}, f)
+    except Exception:
+        pass
+    return peak
+
+
+def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key=None,
+                            nav_peak=None):
     key = kernel_key or CHAMPION_KEY
     params = R.STRATEGIES.get(KERNELS.get(key, {}).get('strategy', key))
     if params is None:
@@ -341,23 +374,31 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     # KOLD hedge shares + price — for the KOLD-AWARE greeks (KOLD is a -2x-natgas inverse ETF;
     # the book-greeks engine must count its UNG-equivalent delta or the net Δ is a blind spot).
     kold_shares, kold_px = 0, float(row.get('KOLD') or 0)
-    boxx_shares = 0
+    boxx_shares, boxx_px = 0, float(row.get('BOXX') or 117.0)
     for p in positions or []:
         sym = str(p.get('symbol') or '').upper()
         if p.get('is_option'):
             continue
+        q = (p.get('qty') or p.get('quantity') or 0)
+        mv = p.get('market_value')
         if sym == 'KOLD':
-            kold_shares += int(p.get('qty') or p.get('quantity') or 0)
-            mv, q = p.get('market_value'), (p.get('qty') or p.get('quantity') or 0)
+            kold_shares += int(q)
             if mv and q:
                 kold_px = abs(float(mv) / float(q))
         elif sym == 'BOXX':
-            boxx_shares += int(p.get('qty') or p.get('quantity') or 0)
+            boxx_shares += int(q)
+            if mv and q:
+                boxx_px = abs(float(mv) / float(q))
+    # NAV on the ENGINE's basis (cash + shares + BOXX + KOLD; excludes option MV, matching
+    # replay_engine.cur_nav). Track the real high-water mark so drawdown-scaling / DD_TRIM use
+    # the OPERATOR's actual path, not a fresh reset (closes the last live==backtest gap).
+    seed_nav = float(cash) + shares * spot + boxx_shares * boxx_px + kold_shares * kold_px
+    real_peak = _update_nav_peak(seed_nav, override=nav_peak)
     # BOXX + KOLD are part of NAV → must seed them or the engine's NAV-based sizing (KOLD hedge,
     # share target, call_qty_nav_pct, margin) diverges from the backtest (live==backtest).
     seed = {'cash': float(cash), 'shares': int(shares), 'short_puts': sp,
             'short_calls': sc, 'long_puts': lp, 'long_calls': lc,
-            'boxx': float(boxx_shares), 'kold': int(kold_shares)}
+            'boxx': float(boxx_shares), 'kold': int(kold_shares), 'nav_peak': float(real_peak)}
 
     _h, orders = R.run_strategy_simple(df, params, seed_state=seed, live_decision=True)
 
@@ -614,6 +655,9 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'data_stale_days': int(max(0, (pd.Timestamp.today().normalize()
                                        - df.index[-1].normalize()).days)),
         'regime': regime, 'coverage': coverage,
+        'nav_state': {'nav': round(seed_nav, 0), 'peak': round(real_peak, 0),
+                      'drawdown_pct': round((seed_nav / real_peak - 1) * 100, 1) if real_peak else 0.0,
+                      'note': 'engine basis (cash+shares+BOXX+KOLD); drives drawdown-scaling / DD_TRIM'},
         'options_data': _options_data_freshness(),
         'greeks': greeks,
         'delta_compass': delta_compass,

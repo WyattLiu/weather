@@ -938,7 +938,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                  and row.get('BOXX') is not None) else 117.0)
             _kold_px = float(row.get('KOLD') if (row.get('KOLD') == row.get('KOLD')
                                                  and row.get('KOLD') is not None) else 0.0)
-            nav_peak = s['cash'] + s['shares'] * spot_u + s['boxx'] * _boxx_px + s['kold'] * _kold_px
+            _cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * _boxx_px + s['kold'] * _kold_px
+            # nav_peak = the operator's REAL high-water mark when supplied (so drawdown-scaling
+            # and DD_TRIM reflect the operator's actual path, matching the backtest's defensive
+            # behavior) — not a fresh reset that hides real drawdown. Floor at current NAV.
+            nav_peak = max(float(seed_state.get('nav_peak') or 0.0), _cur_nav)
             _live_trade_mark = len(trades)   # capture trades emitted from here
         spot_k = row.get('KOLD', 0) or 0
         if isinstance(spot_k, float) and math.isnan(spot_k):

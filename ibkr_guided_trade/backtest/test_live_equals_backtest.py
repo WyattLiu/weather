@@ -89,8 +89,11 @@ def main():
             det_ok += 1
         elif len(det_fails) < 6:
             det_fails.append((d, cont_sig, sig(o_full)))
-        # (2) LIVE RECONSTRUCTION: only the book fields (what the live adapter can rebuild)
+        # (2) LIVE RECONSTRUCTION: book fields + the operator's real nav_peak (now wired into
+        # the live seed) — here the 'operator' is the continuous run, so its real peak == the
+        # captured nav_peak. This mirrors the production live path post-NAV-peak-wiring.
         book_seed = {k: snaps[d][k] for k in BOOK_KEYS}
+        book_seed['nav_peak'] = snaps[d]['_full_nav_peak']
         _, o_book = R.run_strategy_simple(win, params, seed_state=book_seed, live_decision=True)
         book_n += 1
         if sig(o_book) == cont_sig:
