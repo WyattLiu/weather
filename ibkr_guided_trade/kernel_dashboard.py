@@ -120,9 +120,28 @@ def _refresh():
                     bid = float(raw_q.get('bid') or 0)
                     ask = float(raw_q.get('ask') or 0)
                     last = float(raw_q.get('last') or 0)
-                    spot = (bid + ask) / 2 if (bid > 0 and ask > 0) else last
-                    if not spot or spot <= 0:
-                        spot = float(raw_q.get('price') or 0) or 11.51
+                    quote_spot = (bid + ask) / 2 if (bid > 0 and ask > 0) else last
+                    if not quote_spot or quote_spot <= 0:
+                        quote_spot = float(raw_q.get('price') or 0)
+                    # BROKER MARK = market_value / qty — the authoritative, internally-consistent
+                    # price. The quoteV2 bid/ask midpoint is unreliable when the market is CLOSED
+                    # (holiday/after-hours): a stale or wide book gave a bad spot ($12.34 vs an
+                    # $11.73 mark on a 2026-06-19 holiday). Trust the quote only if it's within 3%
+                    # of the mark; otherwise use the mark. Keeps spot consistent with positions.
+                    mark_spot = None
+                    try:
+                        q = float(ung_share.quantity or 0)
+                        mv = float(ung_share.market_value or 0)
+                        if q and mv:
+                            mark_spot = abs(mv / q)
+                    except Exception:
+                        pass
+                    if mark_spot and mark_spot > 0:
+                        spot = (quote_spot if (quote_spot and quote_spot > 0
+                                               and abs(quote_spot / mark_spot - 1) <= 0.03)
+                                else mark_spot)
+                    else:
+                        spot = quote_spot
                 if spot is None or spot <= 0:
                     spot = 11.51
                 _STATE_CACHE['spot'] = spot
