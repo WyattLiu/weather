@@ -20,9 +20,7 @@ import pandas as pd
 import psycopg2
 
 THIS = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, THIS)
-from fetch_thetadata_iv import bs_implied_vol  # noqa (added to path below)
-sys.path.insert(0, os.path.join(THIS, '..', 'backtest'))
+sys.path.insert(0, os.path.join(THIS, '..', '..', 'backtest'))
 from fetch_thetadata_iv import bs_implied_vol
 
 DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',
