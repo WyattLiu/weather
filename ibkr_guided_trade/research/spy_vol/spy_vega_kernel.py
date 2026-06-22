@@ -1,13 +1,17 @@
-"""SPY VEGA-SCRAPE KERNEL — deployable strategy, optimized for return / Sharpe / MaxDD.
+"""SPY VEGA-SCRAPE KERNEL v2 — deployable strategy, optimized for return / Sharpe / MaxDD.
 
-Mirrors the UNG regime_wheel_boxx idea: the long-vol edge is RARE (only ~low-VIX windows), so the
-kernel holds BOXX/T-bills (~rf) when idle and only deploys into a long ~45 DTE ATM straddle when the
-firmed-up signal is GREEN:
-    LOW VIX (≤ thr)  AND  NOT-CHEAP (ATM IV ≥ RV20, i.e. not just-after a vol spike)  [AND flat skew]
-Entry crosses to ASK, daily MTM at mid, exit at BID on first of: +PT / −STOP / VIX≥vix0+VOLPOP /
-MAXHOLD / expiry. Idle cash compounds at rf. Daily NAV → CAGR, annualized Sharpe, MaxDD.
+Mirrors UNG regime_wheel_boxx: hold BOXX/T-bills (~rf) when idle, deploy a long ~45 DTE ATM straddle
+only when the firmed-up signal is GREEN:
+    LOW VIX (≤ thr, ABSOLUTE)  AND  NOT-CHEAP (ATM IV ≥ RV20)  [AND flat skew]
+Entry crosses to ASK, daily MTM at mid (carried forward when a quote is missing), exit at BID on first
+of: +PT / −STOP / MAXHOLD / expiry. Idle cash compounds at rf. Daily NAV → CAGR, Sharpe, MaxDD.
 
-Sweeps allocation / VIX threshold / flat-skew / max-concurrent and prints a return-Sharpe-MaxDD Pareto.
+v2 fixes from the trade audit (spy_vega_audit.py):
+  * DROP the vol-pop exit — it sold at the first +3 VIX tick, i.e. right as the expansion began,
+    capping winners (+13.2% vs +6.9%/trade). Default volpop=0 (guarded so 0 never triggers).
+  * MAXHOLD 15→30 days — 15 was cutting winners mid-expansion.
+  * No leverage — an entry is skipped if its dollar size exceeds available cash (Σpos ≤ NAV).
+  * NAV carry-forward — positions with no quote on a day are marked at last-known value (no NAV gaps).
 
   venv/bin/python research/spy_vol/spy_vega_kernel.py
 """
@@ -36,12 +40,13 @@ def wing_skew(cur, exp, d, S, dte):
     if d not in cp or d not in cc:
         return None
     T = dte / 365
-    ivp = cp[d][0] / (0.40 * S * math.sqrt(T)); ivc = cc[d][0] / (0.40 * S * math.sqrt(T))
-    return ivp - ivc
+    return cp[d][0] / (0.40 * S * math.sqrt(T)) - cc[d][0] / (0.40 * S * math.sqrt(T))
 
 
 def backtest(cur, days, vix, spy, rv20, vix_thr_series, alloc, require_flat, max_conc,
-             pt=0.30, stop=0.40, volpop=3.0, maxhold=15, cache={}):
+             pt=0.30, stop=0.40, volpop=0.0, maxhold=30, cache=None):
+    if cache is None:
+        cache = {}
     cash = 1.0
     pos = []
     nav_hist = []
@@ -51,58 +56,53 @@ def backtest(cur, days, vix, spy, rv20, vix_thr_series, alloc, require_flat, max
         d = d_ts.date()
         cash *= (1 + RF_D)
         S = float(spy.loc[d_ts]); vx = float(vix.loc[d_ts])
-        # ---- mark & exit open positions ----
+        # ---- mark & exit ----
         keep = []
         for q in pos:
             c, p = q['c'], q['p']
-            if d not in c or d not in p:
-                if d >= q['exp']:                       # expired w/o quote → settle at last known
-                    cash += q['alloc'] * (q['last'] / q['entry'])
-                else:
-                    keep.append(q)
+            if d in c and d in p:
+                mid = c[d][0] + p[d][0]; bid = c[d][1] + p[d][1]
+                q['mv'] = mid / q['eask']; q['bidmv'] = bid / q['eask']
+                ret = mid / q['eask'] - 1; held = (d - q['edate']).days
+                if (ret >= pt or ret <= -stop or (volpop > 0 and vx >= q['vix0'] + volpop)
+                        or held >= maxhold or d >= q['exp']):
+                    cash += q['alloc'] * q['bidmv']            # sell at bid
+                    continue
+            elif d >= q['exp']:
+                cash += q['alloc'] * q['bidmv']                # settle at last-known bid
                 continue
-            mid = c[d][0] + p[d][0]; bid = c[d][1] + p[d][1]
-            q['last'] = bid
-            ret = mid / q['entry'] - 1; held = (d - q['edate']).days
-            if ret >= pt or ret <= -stop or vx >= q['vix0'] + volpop or held >= maxhold or d >= q['exp']:
-                cash += q['alloc'] * (bid / q['entry'])     # sell at bid
-            else:
-                keep.append(q)
+            keep.append(q)
         pos = keep
-        # ---- entry decision ----
-        nav_now = cash + sum(q['alloc'] * ((q['c'][d][0] + q['p'][d][0]) / q['entry'])
-                             for q in pos if d in q['c'] and d in q['p'])
+        nav_now = cash + sum(q['alloc'] * q['mv'] for q in pos)
+        # ---- entry ----
         green = vx <= vix_thr_series.loc[d_ts]
         if green and len(pos) < max_conc and not math.isnan(rv20.loc[d_ts]):
-            key = (d, 'pe')
-            pe = cache.get(key)
+            pe = cache.get((d, 'pe'))
             if pe is None:
-                pe = pick_entry(cur, d, S, 38, 52); cache[key] = pe or False
+                pe = pick_entry(cur, d, S, 38, 52); cache[(d, 'pe')] = pe or False
             if pe and pe is not False:
                 exp, K, dte = pe
-                ck = (exp, K)
-                paths = cache.get(ck)
+                paths = cache.get((exp, K))
                 if paths is None:
-                    c = eod_mid(cur, exp, K, 'C', d, exp); p = eod_mid(cur, exp, K, 'P', d, exp)
-                    cache[ck] = (c, p); paths = (c, p)
+                    paths = (eod_mid(cur, exp, K, 'C', d, exp), eod_mid(cur, exp, K, 'P', d, exp))
+                    cache[(exp, K)] = paths
                 c, p = paths
                 if d in c and d in p:
-                    entry_ask = c[d][2] + p[d][2]; entry_mid = c[d][0] + p[d][0]
+                    eask = c[d][2] + p[d][2]; emid = c[d][0] + p[d][0]
                     T = dte / 365
-                    iv = entry_mid / (0.7979 * S * math.sqrt(T)) if T > 0 else 0
+                    iv = emid / (0.7979 * S * math.sqrt(T)) if T > 0 else 0
                     not_cheap = iv >= float(rv20.loc[d_ts])
                     flat_ok = True
                     if require_flat:
                         sk = wing_skew(cur, exp, d, S, dte)
                         flat_ok = (sk is not None and sk < 0.04)
-                    if entry_ask > 0 and not_cheap and flat_ok:
-                        a = alloc * nav_now
+                    a = alloc * nav_now
+                    if eask > 0 and not_cheap and flat_ok and 0 < a <= cash:   # no leverage
                         cash -= a
-                        pos.append({'entry': entry_ask, 'alloc': a, 'edate': d, 'exp': exp,
-                                    'vix0': vx, 'c': c, 'p': p, 'last': c[d][1] + p[d][1]})
+                        pos.append({'eask': eask, 'alloc': a, 'edate': d, 'exp': exp, 'vix0': vx,
+                                    'c': c, 'p': p, 'mv': emid / eask, 'bidmv': (c[d][1] + p[d][1]) / eask})
                         trades += 1
-        nav_now = cash + sum(q['alloc'] * ((q['c'][d][0] + q['p'][d][0]) / q['entry'])
-                             for q in pos if d in q['c'] and d in q['p'])
+        nav_now = cash + sum(q['alloc'] * q['mv'] for q in pos)
         if pos:
             deployed_days += 1
         nav_hist.append(nav_now)
@@ -121,45 +121,42 @@ def main():
     spv = spv[spv.index >= '2018-01-01']
     vix = spv['VIX']; spy = spv['SPY']
     rv20 = np.log(spy / spy.shift(1)).rolling(20).std() * math.sqrt(252)
-    # adaptive "low VIX" = trailing 1yr 35th pctile (no lookahead), floored at 13
-    vix_pct35 = vix.rolling(252, min_periods=60).quantile(0.35).clip(lower=13)
-    vix_abs16 = pd.Series(16.0, index=vix.index)
+    vix16 = pd.Series(16.0, index=vix.index)
     days = list(spv.index)
     cur = _conn().cursor()
 
-    # benchmarks
+    def metr(nav):
+        r = nav.pct_change().dropna(); yrs = (days[-1] - days[0]).days / 365.25
+        return nav.iloc[-1] ** (1 / yrs) - 1, (r.mean() / r.std() * math.sqrt(252) if r.std() > 0 else 0), (nav / nav.cummax() - 1).min()
+
     boxx = pd.Series((1 + RF_D) ** np.arange(len(days)), index=days)
     bh = spy / spy.iloc[0]
-    def metr(nav):
-        r = nav.pct_change().dropna(); yrs = (days[-1]-days[0]).days/365.25
-        return nav.iloc[-1]**(1/yrs)-1, (r.mean()/r.std()*math.sqrt(252) if r.std()>0 else 0), (nav/nav.cummax()-1).min()
-
-    print("=== SPY VEGA-SCRAPE KERNEL (2018-2026, realistic ask-in/bid-out, idle→BOXX) ===\n")
-    print(f"{'config':<46}{'CAGR':>7}{'Shrp':>6}{'MaxDD':>7}{'trades':>7}{'deploy':>7}")
-    print('-' * 80)
-    bc = metr(boxx); print(f"{'BENCH: all-BOXX (rf 4.5%)':<46}{bc[0]:>6.1%}{bc[1]:>6.1f}{bc[2]:>7.1%}{'-':>7}{'-':>7}")
-    bhm = metr(bh); print(f"{'BENCH: buy&hold SPY':<46}{bhm[0]:>6.1%}{bhm[1]:>6.1f}{bhm[2]:>7.1%}{'-':>7}{'-':>7}")
-    print('-' * 80)
+    print("=== SPY VEGA-SCRAPE KERNEL v2 (2018-2026, ask-in/bid-out, idle→BOXX, +30%/30d, NO volpop) ===\n")
+    print(f"{'config':<40}{'CAGR':>7}{'Shrp':>6}{'MaxDD':>8}{'trades':>7}{'deploy':>7}")
+    print('-' * 75)
+    bc = metr(boxx); print(f"{'BENCH all-BOXX':<40}{bc[0]:>6.1%}{'n/a':>6}{bc[2]:>8.1%}{'-':>7}{'-':>7}")
+    bm = metr(bh); print(f"{'BENCH buy&hold SPY':<40}{bm[0]:>6.1%}{bm[1]:>6.2f}{bm[2]:>8.1%}{'-':>7}{'-':>7}")
+    print('-' * 75)
+    cache = {}
     configs = [
-        ('alloc10 VIX16 conc1', 0.10, vix_abs16, False, 1),
-        ('alloc20 VIX16 conc1', 0.20, vix_abs16, False, 1),
-        ('alloc20 VIX16 conc2', 0.20, vix_abs16, False, 2),
-        ('alloc30 VIX16 conc2', 0.30, vix_abs16, False, 2),
-        ('alloc20 VIX16 conc2 +flat', 0.20, vix_abs16, True, 2),
-        ('alloc20 adaptVIX35 conc2', 0.20, vix_pct35, False, 2),
-        ('alloc30 adaptVIX35 conc2', 0.30, vix_pct35, False, 2),
-        ('alloc30 adaptVIX35 conc3', 0.30, vix_pct35, False, 3),
-        ('alloc50 adaptVIX35 conc3', 0.50, vix_pct35, False, 3),
+        ('alloc10 conc1', 0.10, 1, {}),
+        ('alloc20 conc1', 0.20, 1, {}),
+        ('alloc20 conc2', 0.20, 2, {}),
+        ('alloc30 conc2', 0.30, 2, {}),
+        ('alloc30 conc3', 0.30, 3, {}),
+        ('alloc20 conc2 +flat', 0.20, 2, {'require_flat': True}),
+        ('OLD-EXIT alloc20 conc2 (VIX+3/15d)', 0.20, 2, {'volpop': 3.0, 'maxhold': 15}),
     ]
     best = None
-    for name, alloc, vthr, flat, conc in configs:
-        r = backtest(cur, days, vix, spy, rv20, vthr, alloc, flat, conc)
-        print(f"{name:<46}{r['cagr']:>6.1%}{r['sharpe']:>6.2f}{r['mdd']:>7.1%}{r['trades']:>7}{r['deploy%']:>6.0%}")
-        if best is None or r['sharpe'] > best[1]['sharpe']:
+    for name, alloc, conc, kw in configs:
+        rf = kw.pop('require_flat', False)
+        r = backtest(cur, days, vix, spy, rv20, vix16, alloc, rf, conc, cache=cache, **kw)
+        print(f"{name:<40}{r['cagr']:>6.1%}{r['sharpe']:>6.2f}{r['mdd']:>8.1%}{r['trades']:>7}{r['deploy%']:>6.0%}")
+        if 'OLD' not in name and (best is None or r['sharpe'] > best[1]['sharpe']):
             best = (name, r)
-    print('-' * 80)
-    print(f"\nBEST Sharpe: {best[0]} → CAGR {best[1]['cagr']:.1%}, Sharpe {best[1]['sharpe']:.2f}, "
-          f"MaxDD {best[1]['mdd']:.1%}, {best[1]['trades']} trades, deployed {best[1]['deploy%']:.0%} of days")
+    print('-' * 75)
+    print(f"\nBEST Sharpe (v2): {best[0]} → CAGR {best[1]['cagr']:.1%}, Sharpe {best[1]['sharpe']:.2f}, "
+          f"MaxDD {best[1]['mdd']:.1%}, {best[1]['trades']} trades")
     print("DONE", flush=True)
 
 
