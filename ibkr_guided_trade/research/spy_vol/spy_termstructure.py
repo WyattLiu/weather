@@ -57,7 +57,7 @@ def main():
     print(f"  slope<0 (backwardation/stress) on {inv:.0%} of days; mean slope {df['slope'].mean():+.3f}\n")
 
     def buck(sub, col, label):
-        s = sub[[col, 'ret', 'fwd_vix10', 'slope']].dropna()
+        s = sub[['ret', 'fwd_vix10', 'slope']].dropna().reset_index(drop=True)
         if len(s) < 20:
             print(f"  {label}: n<20"); return
         qs = s['slope'].quantile([0, .25, .5, .75, 1.0]).values
