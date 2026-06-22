@@ -20,25 +20,24 @@ SPY_CSV = os.path.join(THIS, 'cache', 'spy_vix_daily.csv')
 PT, STOP, MAXHOLD = 0.30, 0.40, 30
 
 
-def legval(paths, d, which):
-    """which = list of (path, qty, side) ; side +1 long (ask in / bid out), -1 short (bid in / ask out).
-    returns (entry_cost, exit_path_dict over common dates) using mid for MTM, ask/bid for fills."""
+def legval(legs, d):
+    """legs = list of (path, qty, side); side +1 long (ask in / bid out), -1 short (bid in / ask out).
+    returns (entry_cost, common_dates) using ask/bid for fills."""
     common = None
-    for pth, _, _ in which:
+    for pth, _, _ in legs:
         s = set(pth)
         common = s if common is None else (common & s)
     common = sorted(t for t in common if t >= d)
     if not common or d not in common:
         return None
-    # entry: long pays ask, short receives bid
     entry = 0.0
-    for pth, q, side in which:
+    for pth, q, side in legs:
         entry += q * (pth[d][2] if side > 0 else -pth[d][1])
     return entry, common
 
 
 def sim(which, d):
-    r = legval(which, d, d)
+    r = legval(which, d)
     if not r:
         return None
     entry, common = r
