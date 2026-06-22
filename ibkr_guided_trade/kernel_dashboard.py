@@ -32,6 +32,12 @@ sys.path.insert(0, '/home/wyatt/ibkr_guided_trade')
 
 from validated_kernel_adapter import validated_verdict, CHAMPION_NAME  # type: ignore
 
+try:
+    from spy_vega_alert import spy_vega_signal  # SPY vega-scrape VIX<=16 setup alert
+except Exception:
+    def spy_vega_signal(force=False):  # type: ignore
+        return {'error': 'spy_vega_alert unavailable'}
+
 # Live single-source recommendation cache (the engine run is ~30-40s, so cache it
 # and warm it in the background — the panel then loads instantly).
 _LIVE_CACHE = {'ts': 0.0, 'data': None}
@@ -654,6 +660,11 @@ td.neutral { color: var(--blue); }
 </head><body>
 <div class="container">
   <h1>UNG Kernel Dashboard <span class="tag" id="kernel-tag"></span></h1>
+  <section class="card" id="spy-vega-alert" style="margin:14px 0; padding:13px 16px; border:2px solid #555">
+    <h2 style="margin:0 0 6px">🌊 SPY vega-scrape setup <span id="sv-verdict" class="tag"></span>
+       <span class="sub" style="font-weight:400">long ~45D ATM straddle when VIX≤16 &amp; IV≥RV (crash-aware overlay)</span></h2>
+    <div id="sv-body" class="rec-why">loading…</div>
+  </section>
   <section class="card" id="sot-panel" style="border:2px solid #39d2c0; margin:14px 0; padding:16px;">
     <h2 style="color:#39d2c0; margin-bottom:8px">⚡ TODAY — Single Source of Truth <span class="tag" id="sot-kernel"></span></h2>
     <div class="sub" style="margin-bottom:10px">Orders below come straight from the live champion engine run on your real positions — same code as the backtest, every order justified. No re-implementation, no noise.</div>
@@ -1937,6 +1948,32 @@ async function drawSOT(){
 drawSOT();
 setInterval(drawSOT, 60000);
 
+// ── SPY vega-scrape VIX<=16 setup alert ──
+async function drawSpyVega(){
+  try{
+    const d = await (await fetch('/api/spy_vega')).json();
+    const sec = document.getElementById('spy-vega-alert');
+    const vEl = document.getElementById('sv-verdict');
+    const bEl = document.getElementById('sv-body');
+    if(d.error){ bEl.innerHTML='alert error: '+d.error; return; }
+    const col = d.verdict==='GREEN' ? '#26a269' : (d.verdict==='WATCH' ? '#e5a50a' : '#666');
+    sec.style.borderColor = col;
+    vEl.textContent = d.verdict;
+    vEl.style.background = col; vEl.style.color = '#fff';
+    const chk = (ok)=> ok ? '<span style="color:#26a269">✓</span>' : '<span style="color:#c01c28">✗</span>';
+    const pct = (x)=> (x*100).toFixed(0)+'%';
+    bEl.innerHTML =
+      `<b style="color:${col}">${d.msg}</b><br>`+
+      `VIX <b>${d.vix.toFixed(1)}</b> ${chk(d.low_vix)} (≤16) &nbsp;|&nbsp; `+
+      `IV ${pct(d.iv)} vs RV20 ${pct(d.rv20)} ${chk(d.not_cheap)} (not-cheap) &nbsp;|&nbsp; `+
+      `10d-std ${d.vix_std10.toFixed(2)} ${chk(d.consolidated)} (consolidated) &nbsp;|&nbsp; `+
+      `dist-from-high ${pct(d.dist_high)} &nbsp;|&nbsp; SPY ${d.spy.toFixed(2)}`+
+      `<span class="sub" style="display:block;margin-top:4px">src: ${d.src} · asof ${d.asof}</span>`;
+  }catch(e){ document.getElementById('sv-body').innerHTML='alert fetch failed: '+e; }
+}
+drawSpyVega();
+setInterval(drawSpyVega, 600000); // 10 min
+
 // ── SCRATCH NOISE PANELS — keep only the genuinely useful ones ──
 (function scrubNoise(){
   // Hide only the genuinely-noisy / stale-kernel panels. KEEP the execution-relevant
@@ -2125,6 +2162,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Cache-Control', 'public, max-age=600')
+            self.end_headers()
+            self.wfile.write(body.encode('utf-8'))
+        elif parsed.path == '/api/spy_vega':
+            try:
+                body = json.dumps(spy_vega_signal(), default=str)
+            except Exception as e:
+                body = json.dumps({'error': repr(e)})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(body.encode('utf-8'))
         else:
