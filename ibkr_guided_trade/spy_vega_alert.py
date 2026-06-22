@@ -78,14 +78,26 @@ def spy_vega_signal(force=False):
     low_vix = vix <= 16
     not_cheap = iv >= rv20
     consolidated = base['vix_std10'] < 1.5
-    if low_vix and not_cheap:
-        verdict, msg = 'GREEN', 'SETUP — buy ~45D ATM straddle (afternoon, combo-mid)'
-    elif vix <= 17.5:
-        verdict, msg = 'WATCH', 'close — waiting for VIX to settle ≤16'
+    # Tiers calibrated on the VIX-threshold backtest (spy_vix_threshold.py): the edge cliffs
+    # right at 16 — marginal 16-16.5 trades avg -9%, 16.5-17 -15%, 17-18 -10%; kernel Sharpe
+    # 1.0→0.67 by 16.5 and MaxDD -25%→-53% by 17. 14-15 is the sweet spot.
+    if not not_cheap:
+        verdict, tier, size = 'RED', 0, '0'
+        msg = 'IV<RV (cheap-trap: high realized vol mean-reverts down) — skip regardless of VIX.'
+    elif vix <= 16:
+        verdict, tier, size = 'GREEN', 3, 'full'
+        msg = 'SETUP — long ~45D ATM straddle (afternoon combo-mid). Edge: VIX≤16 +12.7%/65%win (≤15 +16%/69% sweet spot).'
+    elif vix <= 17:
+        verdict, tier, size = 'CAUTION', 2, 'half'
+        msg = 'MARGINAL/NEGATIVE — VIX 16-17 hist avg ~-9%/37%win, kernel Sharpe 1.0→0.67. Only with conviction, HALF size at most.'
+    elif vix <= 18:
+        verdict, tier, size = 'WARNING', 1, 'quarter'
+        msg = 'NEGATIVE expectancy — VIX 17-18 hist avg ~-12%/30%win, kernel MaxDD -25%→-53%. Avoid; if you must, quarter size.'
     else:
-        verdict, msg = 'RED', 'no setup — VIX too high (vol mean-reverts down)'
+        verdict, tier, size = 'RED', 0, '0'
+        msg = 'NO setup — VIX>18, vol mean-reverts down (hist avg ~-8%).'
     base.update({'iv': iv, 'low_vix': low_vix, 'not_cheap': not_cheap, 'consolidated': consolidated,
-                 'verdict': verdict, 'msg': msg})
+                 'verdict': verdict, 'tier': tier, 'size': size, 'msg': msg})
     _CACHE['data'] = base; _CACHE['ts'] = time.time()
     return base
 

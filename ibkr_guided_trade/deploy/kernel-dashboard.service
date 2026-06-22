@@ -1,0 +1,16 @@
+[Unit]
+Description=UNG Kernel Dashboard (+ SPY vega-scrape VIX<=16 alert)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wyatt/weather/ibkr_guided_trade
+ExecStart=/home/wyatt/weather/ibkr_guided_trade/venv/bin/python -u kernel_dashboard.py
+Restart=on-failure
+RestartSec=10
+Environment=KERNEL_DASH_PORT=10001
+StandardOutput=append:/home/wyatt/weather/ibkr_guided_trade/backtest/log/kernel_dashboard.log
+StandardError=append:/home/wyatt/weather/ibkr_guided_trade/backtest/log/kernel_dashboard.log
+
+[Install]
+WantedBy=default.target

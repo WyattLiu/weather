@@ -1956,9 +1956,10 @@ async function drawSpyVega(){
     const vEl = document.getElementById('sv-verdict');
     const bEl = document.getElementById('sv-body');
     if(d.error){ bEl.innerHTML='alert error: '+d.error; return; }
-    const col = d.verdict==='GREEN' ? '#26a269' : (d.verdict==='WATCH' ? '#e5a50a' : '#666');
+    const COL = {GREEN:'#26a269', CAUTION:'#e5a50a', WARNING:'#e8841a', RED:'#666'};
+    const col = COL[d.verdict] || '#666';
     sec.style.borderColor = col;
-    vEl.textContent = d.verdict;
+    vEl.textContent = d.verdict + (d.size && d.size!=='0' ? ' · '+d.size+' size' : '');
     vEl.style.background = col; vEl.style.color = '#fff';
     const chk = (ok)=> ok ? '<span style="color:#26a269">✓</span>' : '<span style="color:#c01c28">✗</span>';
     const pct = (x)=> (x*100).toFixed(0)+'%';
