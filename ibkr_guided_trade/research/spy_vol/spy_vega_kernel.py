@@ -52,6 +52,7 @@ def backtest(cur, days, vix, spy, rv20, vix_thr_series, alloc, require_flat, max
     nav_hist = []
     trades = 0
     deployed_days = 0
+    tradelog = []
     for d_ts in days:
         d = d_ts.date()
         cash *= (1 + RF_D)
@@ -67,9 +68,11 @@ def backtest(cur, days, vix, spy, rv20, vix_thr_series, alloc, require_flat, max
                 if (ret >= pt or ret <= -stop or (volpop > 0 and vx >= q['vix0'] + volpop)
                         or held >= maxhold or d >= q['exp']):
                     cash += q['alloc'] * q['bidmv']            # sell at bid
+                    tradelog.append({'edate': q['edate'], 'xdate': d, 'ret': q['bidmv'] - 1})
                     continue
             elif d >= q['exp']:
                 cash += q['alloc'] * q['bidmv']                # settle at last-known bid
+                tradelog.append({'edate': q['edate'], 'xdate': d, 'ret': q['bidmv'] - 1})
                 continue
             keep.append(q)
         pos = keep
@@ -113,7 +116,8 @@ def backtest(cur, days, vix, spy, rv20, vix_thr_series, alloc, require_flat, max
     sharpe = rets.mean() / rets.std() * math.sqrt(252) if rets.std() > 0 else 0
     mdd = (nav / nav.cummax() - 1).min()
     return {'cagr': cagr, 'sharpe': sharpe, 'mdd': mdd, 'trades': trades,
-            'deploy%': deployed_days / len(days), 'final': nav.iloc[-1], 'nav': nav}
+            'deploy%': deployed_days / len(days), 'final': nav.iloc[-1], 'nav': nav,
+            'tradelog': tradelog}
 
 
 def main():
