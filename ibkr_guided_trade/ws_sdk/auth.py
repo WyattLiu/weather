@@ -59,11 +59,30 @@ def load_cookies() -> dict:
     return data
 
 
-def save_cookies(cookies: dict) -> None:
-    """Persist cookies dict to ``~/.ws_trade/cookies.json`` (0600)."""
+def _atomic_dump_json(obj, path) -> None:
+    """Write JSON atomically: temp file in the same dir + os.replace. A failed/interrupted write
+    (e.g. disk full) leaves the existing file untouched — never truncated to 0 bytes."""
+    import tempfile
     CONFIG_DIR.mkdir(exist_ok=True)
-    with open(COOKIES_FILE, "w") as f:
-        json.dump(cookies, f, indent=2)
+    d = str(path.parent if hasattr(path, "parent") else os.path.dirname(str(path)))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".cookies.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save_cookies(cookies: dict) -> None:
+    """Persist cookies dict to ``~/.ws_trade/cookies.json`` (0600). Atomic — see _atomic_dump_json."""
+    _atomic_dump_json(cookies, COOKIES_FILE)
     os.chmod(COOKIES_FILE, 0o600)
 
 
@@ -147,9 +166,7 @@ def update_cookies_with_new_token(new_token_data: dict) -> dict:
 
     cookies["_oauth2_access_v2"] = urllib.parse.quote(json.dumps(oauth_data))
 
-    CONFIG_DIR.mkdir(exist_ok=True)
-    with open(COOKIES_FILE, "w") as f:
-        json.dump(cookies, f, indent=2)
+    _atomic_dump_json(cookies, COOKIES_FILE)   # atomic — a failed write never zeroes the file
 
     print("Token refreshed successfully.")
     return oauth_data
