@@ -16,6 +16,17 @@ from typing import Optional
 
 import requests
 
+# ------------------------------------------------------------------ force IPv4
+# WS hosts publish AAAA (IPv6) records, but IPv6 has no route on this network, so urllib3 tries
+# IPv6 first and stalls ~20-40s per call before falling back to IPv4. Force IPv4 so every WS
+# request connects in milliseconds. (Process-global, but only WS goes over the internet here.)
+try:
+    import socket as _socket
+    import urllib3.util.connection as _u3conn
+    _u3conn.allowed_gai_family = lambda: _socket.AF_INET
+except Exception:
+    pass
+
 # ------------------------------------------------------------------ config
 CONFIG_DIR = Path.home() / ".ws_trade"
 COOKIES_FILE = CONFIG_DIR / "cookies.json"

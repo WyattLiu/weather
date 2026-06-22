@@ -52,13 +52,20 @@ def graphql_query(
         "variables": actual_variables,
     }
 
-    resp = session.post(GRAPHQL_URL, json=payload)
+    try:
+        resp = session.post(GRAPHQL_URL, json=payload, timeout=45)
+    except requests.exceptions.RequestException as e:
+        print(f"GraphQL request failed: {e}")
+        return {}
 
     if resp.status_code != 200:
         print(f"GraphQL Error: {resp.status_code}")
         print(resp.text[:500])
         return {}
 
+    if not (resp.text or "").strip():
+        print("GraphQL Error: empty response body (WS throttle/edge)")
+        return {}
     data = resp.json()
     if "errors" in data:
         print("GraphQL Errors:")
