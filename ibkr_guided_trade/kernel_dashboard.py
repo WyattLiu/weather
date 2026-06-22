@@ -2179,8 +2179,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
+    daemon_threads = True
+
+
+def _spy_vega_warm_loop():
+    """Pre-compute the SPY vega alert off the request path (the live IBKR snapshot can take ~8s) so
+    the /api/spy_vega handler always serves a warm cache and never blocks the dashboard."""
+    while True:
+        try:
+            spy_vega_signal(force=True)
+        except Exception:
+            pass
+        time.sleep(540)
 
 
 def main():
@@ -2189,6 +2201,7 @@ def main():
     _refresh()
     threading.Thread(target=_refresh_loop, daemon=True).start()
     threading.Thread(target=_live_warm_loop, daemon=True).start()  # warm the SOT cache
+    threading.Thread(target=_spy_vega_warm_loop, daemon=True).start()  # warm the SPY vega alert
     server = ReusableTCPServer(('0.0.0.0', port), Handler)
     print(f'[kernel-dash] Serving on http://localhost:{port}  (kernel: {CHAMPION_NAME})')
     print(f'[kernel-dash] Production dashboard untouched at :9999')

@@ -28,7 +28,12 @@ def _from_csv():
 def _live_vix_spy():
     try:
         import sys
+        import asyncio
         sys.path.insert(0, THIS)
+        try:                                  # ib_insync needs an event loop in this thread
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
         from modules.common import connect
         from ib_insync import Stock, Index
         ib = connect(client_id=91)
