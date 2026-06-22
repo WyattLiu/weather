@@ -14,6 +14,7 @@ THIS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS)
 import replay_engine as R
 from validated_kernel_adapter import CHAMPION_KEY, KERNELS, _greeks_full  # noqa: E402
+from market_days import trading_days_stale  # trading-day-aware staleness (skips weekends/holidays)
 
 # trade-type → (human action template, why-it-fires)
 JUSTIFY = {
@@ -302,7 +303,7 @@ def _options_data_freshness():
     refs = [d for d in (out['surface_asof'], out['minute_asof']) if d]
     if refs:
         newest = max(pd.Timestamp(d).normalize() for d in refs)
-        out['stale_days'] = int(max(0, (pd.Timestamp.today().normalize() - newest).days))
+        out['stale_days'] = trading_days_stale(newest)
         out['ok'] = out['stale_days'] <= 1
     return out
 
@@ -661,8 +662,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         # Surfaced explicitly; staleness flagged. In a pure backtest as_of==today.
         'asof': str(df.index[-1].date()),
         'today': str(pd.Timestamp.today().normalize().date()),
-        'data_stale_days': int(max(0, (pd.Timestamp.today().normalize()
-                                       - df.index[-1].normalize()).days)),
+        'data_stale_days': trading_days_stale(df.index[-1]),
         'regime': regime, 'coverage': coverage,
         'nav_state': {'nav': round(seed_nav, 0), 'peak': round(real_peak, 0),
                       'drawdown_pct': round((seed_nav / real_peak - 1) * 100, 1) if real_peak else 0.0,

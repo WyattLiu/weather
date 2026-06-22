@@ -12,7 +12,11 @@ All RTH-only (09:30–16:00). Surfaced in the dashboard so the operator sees, pe
 """
 import os
 import json
+import sys
 import psycopg2
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from market_days import trading_days_stale  # trading-day-aware staleness
 
 DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',
       'user': 'postgres', 'password': 'shinobi2025'}
@@ -204,7 +208,7 @@ def latest_spread(K_adj, dte, right, date=None, expiry=None):
     # options feed has lagged the real today, this 'live' quote is actually N days old —
     # the caller MUST flag it so a stale price is never presented as the current market.
     _qdate = pd.Timestamp(last).normalize()
-    _stale = max(0, (pd.Timestamp.today().normalize() - _qdate).days)
+    _stale = trading_days_stale(_qdate)
     return {'bid': round(bid, 3), 'ask': round(ask, 3), 'mid': round(mid, 3),
             'spread_pct': round((ask - bid) / mid * 100, 1),
             'spread_cents': round((ask - bid) * 100, 1),
