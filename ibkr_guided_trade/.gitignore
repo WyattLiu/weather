@@ -40,3 +40,4 @@ Thumbs.db
 htmlcov/
 progress.db
 predictions_cache.json
+research/spy_vol/cache/ung_champion_hist.csv
