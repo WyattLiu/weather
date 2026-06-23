@@ -5374,7 +5374,12 @@ STRATEGIES['regime_wheel_boxx_dh'] = {**STRATEGIES['regime_wheel_boxx'],
 # windows). It was a greeks blind spot, so instead of dropping it we make the greeks engine
 # KOLD-AWARE (live_kernel _book_greeks + delta compass count KOLD's ~-2x UNG-equiv delta).
 STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
-    'gamma_cap': True, 'max_short_per_strike': 10}
+    'gamma_cap': True,
+    # SCALE-INVARIANT per-strike concentration cap: limit single-strike short-option ASSIGNMENT
+    # notional to ~8.5% of NAV → cap_contracts = 0.085·NAV/(K·100). Proportional to the account
+    # (≈10 lots @ $11 on $133k, ≈77 @ $1M) instead of a fixed 10. max_short_per_strike kept as the
+    # legacy fallback / floor when pct is unset. Forward-only (grandfathers existing legs).
+    'max_short_pct_nav': 0.085, 'max_short_per_strike': 10}
 # FAST live variant of the promoted champion (model fills; advisor supplies real exec).
 STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_greeks'],
     'intraday_exec': False, 'real_chain_pricing': False}
