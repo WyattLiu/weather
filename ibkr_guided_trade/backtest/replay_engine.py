@@ -1471,7 +1471,9 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             short_call_lots = sum(sc.get('qty', 0) for sc in s['short_calls'])
             min_shares_required = short_call_lots * 100
             if adjust < 0 and not p.get('gap_to_wheel'):  # selling (direct; OFF when gap_to_wheel → divest via CCs)
-                max_sell = current - min_shares_required
+                # clamp to the REAL share balance — `current` may be a forward count (stat_share_target)
+                # that exceeds s['shares']; selling against it could drive shares negative (naked short).
+                max_sell = min(current, s['shares']) - min_shares_required
                 adjust = max(adjust, -max(0, max_sell))
                 if adjust <= -100:
                     sell_qty = -adjust
@@ -2655,6 +2657,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                 _gw.append(1.0 / max(_g, 1e-9))
                             _gws = sum(_gw) or 1.0
                             dte_qtys = [int(round(put_qty * w / _gws)) for w in _gw]
+                            # clamp the rounding residual so Σ NEVER exceeds the margin-approved put_qty
+                            # (3+ buckets can round up to put_qty+1, bypassing the collateral check).
+                            while sum(dte_qtys) > put_qty and max(dte_qtys) > 0:
+                                dte_qtys[dte_qtys.index(max(dte_qtys))] -= 1
                         else:
                             dte_qtys = [max(1, put_qty // n_dtes)] * n_dtes
                         # OU TILT (fine-scale buy-low timing): OU-cheap (z<0, bounce) → sell MORE;

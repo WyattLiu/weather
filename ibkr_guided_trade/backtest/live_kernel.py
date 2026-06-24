@@ -431,6 +431,11 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
             'boxx': float(boxx_shares), 'kold': int(kold_shares), 'nav_peak': float(real_peak)}
 
     _h, orders = R.run_strategy_simple(df, params, seed_state=seed, live_decision=True)
+    # CAPTURE the engine's post-decision book NOW. The expiry_reaccum block below runs the engine a
+    # SECOND time on a hypothetical post-called-away seed, which OVERWRITES the global R._LIVE_FINAL —
+    # capturing here keeps the AFTER-order greeks (g_after) computed from the REAL book, not the
+    # hypothetical one (else the headline greeks panel silently misleads on expiry days).
+    final = dict(getattr(R, '_LIVE_FINAL', {}) or {})
 
     # ── EXPIRY-DAY RE-ACCUMULATION (weekend-theta / live==backtest execution fidelity) ──
     # VERIFIED: the backtest re-accumulates puts on the SAME bar the called-away resolves (137/174 =
@@ -444,12 +449,18 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     # voided only if UNG craters into the close. ON by default.
     expiry_reaccum = None
 
+    _cc_surf = R._load_iv_surface()
+    _cc_latest = max(_cc_surf.keys()) if _cc_surf else None
+
     def _called_certain(c):
         K = c.get('K') or 0
         d = c.get('dte', 30)
         if d > 1 or K <= 0 or spot <= K:
             return False
-        dl, _ = R.bs_greeks_pt(spot, K, max(d, 0.5) / 365, 0.5, 'C')
+        iv = R.iv_from_surface(_cc_surf, _cc_latest, K, d, 'C') if (_cc_surf and _cc_latest) else None
+        if iv is None or iv != iv:
+            iv = 0.5
+        dl, _ = R.bs_greeks_pt(spot, K, max(d, 0.5) / 365, iv, 'C')
         return dl >= 0.90
     _called = [c for c in sc if _called_certain(c)]
     if params.get('expiry_reaccum', True) and _called:
@@ -571,8 +582,8 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                 'existing_short_calls': int(_existing_calls),
                 'covered': _net_calls <= _coverable,
                 'violation': _violation}
-    # _LIVE_FINAL = the engine's post-decision book (for the after-greeks below).
-    final = getattr(R, '_LIVE_FINAL', {}) or {}
+    # `final` was captured right after the FIRST engine run (before expiry_reaccum's 2nd run overwrote
+    # R._LIVE_FINAL) — used for the after-order greeks below.
 
     # ── BOOK GREEKS: CURRENT vs POST-ORDER (incl 3rd-order speed/color) ─────────────
     # what-if greeks from the fitted vol surface (NEVER a fill). 'now' = book you hold
