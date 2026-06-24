@@ -433,19 +433,26 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     _h, orders = R.run_strategy_simple(df, params, seed_state=seed, live_decision=True)
 
     # ── EXPIRY-DAY RE-ACCUMULATION (weekend-theta / live==backtest execution fidelity) ──
-    # The backtest re-accumulates on the SAME bar the called-away resolves: it processes the
-    # called-away (shares↓, cash↑) THEN sells re-accum puts, holding them over the weekend → it
-    # EARNS the weekend theta. Live, run before Friday's close, otherwise waits until the called-away
-    # settles (Monday) and FORGOES that theta (~0.6%/yr) — live underperforms the validated curve.
-    # FIX: when ITM short calls are NEAR-CERTAIN to be called away today (≤1 DTE, comfortably ITM),
-    # run the SAME engine on the post-called-away seed — the exact bar the backtest decides from — and
-    # surface its re-accum PUT sells to place FRIDAY. Conditional + voided if UNG slips below by close.
-    # NOTE: default OFF — a live-only forward pass would DIVERGE from the backtest (live==backtest
-    # violation). The correct home is the ENGINE (delta-triggered early_reaccum, run in backtest too,
-    # then validated). Left here, gated off, as the live-display scaffold for that engine feature.
+    # VERIFIED: the backtest re-accumulates puts on the SAME bar the called-away resolves (137/174 =
+    # 79% of called-away events have a same-bar OPEN_PUT): it processes the called-away (shares↓, cash↑)
+    # THEN writes re-accum puts, holding them over the weekend → it EARNS the weekend theta (~0.6%/yr).
+    # Live, run before Friday's close, would otherwise wait until the called-away settles (Monday) and
+    # FORGO that theta — UNDERPERFORMING the validated curve. So when ITM short calls are NEAR-CERTAIN
+    # to be called away today (≤1 DTE, BS call delta ≥ 0.90), run the SAME engine on the post-called-away
+    # seed — the exact bar the backtest decides from — and surface its re-accum PUT sells to place FRIDAY.
+    # This MATCHES the backtest (it is NOT a divergence — that was a mistake); delta≥0.90 = ~certain,
+    # voided only if UNG craters into the close. ON by default.
     expiry_reaccum = None
-    _called = [c for c in sc if c.get('dte', 30) <= 1 and spot > c['K'] + max(0.05, c['K'] * 0.005)]
-    if params.get('expiry_reaccum', False) and _called:
+
+    def _called_certain(c):
+        K = c.get('K') or 0
+        d = c.get('dte', 30)
+        if d > 1 or K <= 0 or spot <= K:
+            return False
+        dl, _ = R.bs_greeks_pt(spot, K, max(d, 0.5) / 365, 0.5, 'C')
+        return dl >= 0.90
+    _called = [c for c in sc if _called_certain(c)]
+    if params.get('expiry_reaccum', True) and _called:
         _cn = sum(int(c['qty']) for c in _called)
         _cids = {id(c) for c in _called}
         _fseed = dict(seed)
