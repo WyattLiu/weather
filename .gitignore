@@ -41,3 +41,6 @@ autopush.log
 **/__pycache__/
 *.pyc
 ibkr_guided_trade/backtest/log/
+ibkr_guided_trade/research/dba/cache/fundamentals/
+*.bak
+*.csv.bak
