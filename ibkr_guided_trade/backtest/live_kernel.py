@@ -63,7 +63,7 @@ _LEG = {
 }
 
 
-def _settlement_watch(positions, spot, horizon_days=1):
+def _settlement_watch(positions, spot, horizon_days=3):
     """SETTLEMENT IS AN ACTION. Scan the operator's REAL options expiring now/imminently
     (real-today clock) and classify each as a thing to DO/monitor on expiry day:
 
@@ -103,6 +103,8 @@ def _settlement_watch(positions, spot, horizon_days=1):
         long = qty > 0
         pin = abs(spot - K) <= 0.05
         itm = (right == 'P' and spot < K) or (right == 'C' and spot > K)
+        if dte > 1 and not (itm or pin):
+            continue   # beyond tomorrow, only surface ITM/pin (decisions); OTM isn't urgent yet
         intrinsic = max(0.0, (K - spot) if right == 'P' else (spot - K))
         rt = 'PUT' if right == 'P' else 'CALL'
         when = 'TODAY' if dte == 0 else f'in {dte}d ({pd.Timestamp(exp).date()})'
@@ -658,8 +660,10 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
             return 30
 
     concentration = []
-    book_put_edelta = 0.0
-    worst = None
+    book_put_edelta = 0.0          # E[shares PUT to you]  (+delta, down-move)
+    book_call_away = 0.0           # E[shares CALLED AWAY] (−delta, up/flat-move)
+    worst = None                   # most-concentrated PUT cluster (put-roll aid)
+    called_soon = []               # imminent ITM CALL clusters (called-away aid)
     for (rt, K), agg in _bys.items():
         contracts = agg['contracts']
         max_single = max((_byse[(rt, K, e)] for e in agg['expiries']), default=0)
@@ -668,18 +672,25 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         rtname = 'PUT' if rt == 'P' else 'CALL'
         edelta = 0.0
         exp_detail = []
+        for e in sorted(agg['expiries']):
+            n = _byse[(rt, K, e)]
+            dte = _dte_of(e)
+            if rt == 'P':
+                pr = R.p_assign(K, spot, dte, _zc, _sa, _sb, _ssig)        # P(UNG<K): put assigns → +shares
+            else:
+                pr = 1.0 - R.p_assign(K, spot, dte, _zc, _sa, _sb, _ssig)  # P(UNG>K): call away → −shares
+            ed = pr * n * 100
+            edelta += ed
+            exp_detail.append({'expiry': e, 'dte': dte, 'contracts': n,
+                               'prob': round(pr, 3), 'exp_delta': round(ed)})
+            if rt == 'P' and (worst is None or ed > worst['exp_delta']):
+                worst = {'strike': K, 'expiry': e, 'dte': dte, 'contracts': n, 'exp_delta': ed}
+            if rt == 'C' and K < spot and dte <= 4:                        # imminent ITM call → called away
+                called_soon.append({'strike': K, 'expiry': e, 'dte': dte, 'contracts': n})
         if rt == 'P':
-            for e in sorted(agg['expiries']):
-                n = _byse[(rt, K, e)]
-                dte = _dte_of(e)
-                pa = R.p_assign(K, spot, dte, _zc, _sa, _sb, _ssig)
-                ed = pa * n * 100
-                edelta += ed
-                exp_detail.append({'expiry': e, 'dte': dte, 'contracts': n,
-                                   'p_assign': round(pa, 3), 'exp_delta': round(ed)})
-                if worst is None or ed > worst['exp_delta']:
-                    worst = {'strike': K, 'expiry': e, 'dte': dte, 'contracts': n, 'exp_delta': ed}
             book_put_edelta += edelta
+        else:
+            book_call_away += edelta
         sugg = ''
         if over_cap or contracts >= 15:
             if rt == 'P':
@@ -699,11 +710,24 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     _sh = max(int(shares), 1)
     _target_pct = 35
     _smooth_cap = 10
+    _net = book_put_edelta - book_call_away          # NET expected share-Δ change over the horizon
     assign_risk = {'z': round(_zc, 2), 'shares': int(shares),
-                   'total_exp_assign_delta': round(book_put_edelta),
+                   'put_assign_delta': round(book_put_edelta),     # +shares if puts assign (down)
+                   'call_away_delta': round(book_call_away),       # −shares if calls assign (up/flat)
+                   'net_delta': round(_net),
+                   'net_pct_of_shares': round(_net / _sh * 100),
+                   'total_exp_assign_delta': round(book_put_edelta),   # back-compat
                    'pct_of_shares': round(book_put_edelta / _sh * 100),
                    'target_pct': _target_pct, 'target_delta': round(_target_pct / 100 * shares),
                    'within_target': book_put_edelta <= _target_pct / 100 * shares}
+    if called_soon:
+        _ca = sum(c['contracts'] for c in called_soon)
+        _nd = min(c['dte'] for c in called_soon)
+        assign_risk['called_away_soon'] = {
+            'lots': _ca, 'shares': _ca * 100, 'dte': _nd,
+            'clusters': [f"{c['contracts']}× ${c['strike']:.2f} {c['expiry']}" for c in sorted(called_soon, key=lambda c: c['dte'])],
+            'note': (f"~{_ca} lot(s) (~{_ca*100} sh) ITM, expiring in ≤{_nd}d → CALLED AWAY (sold at strike). "
+                     f"Wait for this to resolve, THEN decide on new puts to re-accumulate.")}
     if worst and worst['contracts'] > _smooth_cap:
         roll_n = worst['contracts'] - _smooth_cap
         assign_risk['execution'] = {

@@ -1846,30 +1846,38 @@ async function drawSOT(){
         const within = ar.within_target;
         const arcol = within ? '#26a269' : '#e08a00';
         const ex = ar.execution || {};
+        const ca = ar.called_away_soon;
+        const net = ar.net_delta||0;
         let head =
           '<h3 style="margin:14px 0 6px">🎯 Assignment-risk — <b>statistical model</b> '+
           '<span style="font-size:.76rem;color:var(--text-dim)">(prob-weighted, DTE-aware · z='+(ar.z!=null?ar.z:'–')+')</span></h3>'+
           '<div style="margin:0 0 9px;padding:9px 13px;border-radius:6px;background:'+arcol+'14;border-left:3px solid '+arcol+'">'+
-          '<b style="color:'+arcol+'">Expected assignment Δ +'+fmt(ar.total_exp_assign_delta,0)+'</b> = '+ar.pct_of_shares+'% of your '+fmt(ar.shares,0)+' shares '+
-          '<span style="color:'+arcol+';font-weight:600">('+(within?'WITHIN':'OVER')+' the '+ar.target_pct+'% target)</span>'+
+          '<div><b>Net expected share-Δ '+(net>=0?'+':'')+fmt(net,0)+'</b> '+
+          '<span style="color:var(--text-dim);font-size:.85rem">= puts <span style="color:#26a269">+'+fmt(ar.put_assign_delta,0)+'</span> (assign, down) − calls <span style="color:#c62828">'+fmt(ar.call_away_delta,0)+'</span> (called away, up)</span></div>'+
+          '<div style="margin-top:4px"><b style="color:'+arcol+'">Put-assignment Δ +'+fmt(ar.put_assign_delta,0)+'</b> = '+ar.pct_of_shares+'% of '+fmt(ar.shares,0)+' shares '+
+          '<span style="color:'+arcol+';font-weight:600">('+(within?'WITHIN':'OVER')+' '+ar.target_pct+'% target)</span></div>'+
+          (ca ? '<div style="margin-top:6px;font-size:.88rem;color:#c62828">📤 <b>Called away soon:</b> '+ca.note+' <span style="color:var(--text-dim)">['+ca.clusters.join(', ')+']</span></div>' : '')+
           (ex.roll_n>0
             ? '<div style="margin-top:6px;font-size:.88rem">🔧 <b>Execution aid:</b> '+ex.how+' <span style="color:var(--text-dim)">('+ex.reason+')</span></div>'
-            : '<div style="margin-top:6px;font-size:.86rem;color:var(--text-dim)">✓ spread is fine — no roll needed.</div>')+
+            : '<div style="margin-top:6px;font-size:.86rem;color:var(--text-dim)">✓ put spread is fine — no roll needed.</div>')+
           '</div>';
         const rows = conc.map(c => {
           const col = c.over_cap ? '#e08a00' : 'var(--text-dim)';
-          const ed = (c.right==='PUT' && c.exp_assign_delta!=null) ? '+'+fmt(c.exp_assign_delta,0)+' Δ' : '–';
-          const det = (c.exp_detail||[]).map(e=>e.contracts+'@'+e.dte+'d→'+Math.round(e.p_assign*100)+'%').join('  ');
+          const isP = c.right==='PUT';
+          const ed = (c.exp_assign_delta!=null) ? (isP?'+':'−')+fmt(c.exp_assign_delta,0)+' Δ' : '–';
+          const edcol = isP ? '#26a269' : '#c62828';
+          const lbl = isP ? 'assign' : 'called away';
+          const det = (c.exp_detail||[]).map(e=>e.contracts+'@'+e.dte+'d→'+Math.round((e.prob||0)*100)+'%').join('  ');
           return '<tr style="border-bottom:1px solid rgba(128,128,128,.12)">'+
             '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+col+'">'+c.contracts+'× $'+c.strike.toFixed(2)+' '+c.right+'</td>'+
-            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+(c.right==='PUT'?arcol:'var(--text-dim)')+'">'+ed+'</td>'+
+            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+edcol+'">'+ed+'<span style="color:var(--text-dim);font-weight:400;font-size:.72rem"> '+lbl+'</span></td>'+
             '<td style="padding:3px 12px 3px 0;font-size:.78rem;color:var(--text-dim)">'+(det||'–')+'</td>'+
             '<td style="padding:3px 0;color:'+col+';font-size:.8rem">'+(c.over_cap?'⚠ ':'')+c.max_single_expiry+'/exp vs notional '+(c.cap||'–')+'</td></tr>';
         }).join('');
         xel.innerHTML = head +
           '<table style="border-collapse:collapse;font-size:.9rem"><thead><tr style="color:var(--text-dim);font-size:.76rem;text-transform:uppercase">'+
-          '<th style="text-align:left;padding-right:12px">cluster</th><th style="text-align:left">expected assign Δ</th><th style="text-align:left">P(assign) by expiry</th><th style="text-align:left">notional cap (conservative)</th></tr></thead><tbody>'+rows+'</tbody></table>'+
-          (flagged.length?'<div style="font-size:.74rem;color:var(--text-dim);margin-top:5px">⚠ = over the flat <i>notional</i> cap, which assumes <i>certain</i> assignment → over-conservative. The <b>expected Δ</b> above (weighted by real assignment odds within each DTE) is the honest risk — and it says you\'re '+(within?'fine':'a touch high')+'.</div>':'');
+          '<th style="text-align:left;padding-right:12px">cluster</th><th style="text-align:left">expected Δ</th><th style="text-align:left">prob by expiry</th><th style="text-align:left">notional cap (conservative)</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+          (flagged.length?'<div style="font-size:.74rem;color:var(--text-dim);margin-top:5px">⚠ = over the flat <i>notional</i> cap (assumes <i>certain</i> assignment → over-conservative). The <b>expected Δ</b> above (weighted by real odds within each DTE) is the honest risk.</div>':'');
       }
     }
     // ── SETTLEMENT WATCH: expiring options are ACTIONS too (await-worthless / assign /
