@@ -466,17 +466,24 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     _existing_calls = sum(int(abs(c.get('qty') or 0)) for c in sc)
     _new_calls = sum(int(r.get('qty') or 0) for r in recs
                      if r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL'))
+    # Calls the engine CLOSES today (buy-to-close) FREE coverage — they must be netted out, else a
+    # covered RECYCLE (take-profit close N $K calls, then write ≤N fresh against the freed shares)
+    # reads as a false "naked" breach and a genuinely-covered write gets wrongly dropped. The true
+    # invariant is the POST-ORDER short-call count, not seed-existing + new-sells.
+    _closed_calls = sum(int(r.get('qty') or 0) for r in recs
+                        if r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('BUY'))
     _coverable = shares // 100
+    _net_calls = _existing_calls - _closed_calls + _new_calls          # short calls AFTER today's orders
     _violation = None
-    if _existing_calls + _new_calls > _coverable:
-        # Should be unreachable (engine self-enforces). If reached → bug, not a strategy choice.
-        _violation = (f"COVERAGE INVARIANT BREACHED: engine emitted {_new_calls} new short call(s) "
-                      f"on top of {_existing_calls} existing vs {_coverable} coverable "
-                      f"({shares} sh). The engine self-enforces covered-calls-only, so this means "
-                      f"the SEED is inconsistent (check share count / UNG-only filter). Naked legs "
-                      f"hard-blocked — DO NOT execute; investigate the seed before trusting today.")
+    if _net_calls > _coverable:
+        # Genuine over-write: the post-order book would be uncovered. Surface + hard-block.
+        _violation = (f"COVERAGE INVARIANT BREACHED: post-order short calls {_net_calls} "
+                      f"(= {_existing_calls} existing − {_closed_calls} closing + {_new_calls} new) "
+                      f"exceed {_coverable} coverable ({shares} sh). The engine self-enforces "
+                      f"covered-calls-only, so a breach means the SEED is inconsistent (check share "
+                      f"count / UNG-only filter). Naked legs hard-blocked — DO NOT execute; investigate.")
         kept = []
-        room = _coverable - _existing_calls
+        room = _coverable - (_existing_calls - _closed_calls)          # coverage left after the closes
         for r in recs:
             if (r.get('right') == 'CALL' and (r.get('side') or '').upper().startswith('SELL')
                     and r.get('qty')):
@@ -488,7 +495,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         recs = kept
     coverage = {'shares': int(shares), 'coverable_calls': int(_coverable),
                 'existing_short_calls': int(_existing_calls),
-                'covered': _existing_calls + _new_calls <= _coverable,
+                'covered': _net_calls <= _coverable,
                 'violation': _violation}
     # EXTRINSIC-only theta, BEFORE (your current book) vs AFTER today's orders
     # (the engine's actual post-decision book). Gross of assignment.
