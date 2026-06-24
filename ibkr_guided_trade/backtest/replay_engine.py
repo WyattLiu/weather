@@ -1837,7 +1837,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                'close_fill_source': _aud_c['source']})
                 continue
 
-            if days >= sp['dte']:
+            # EARLY ASSIGNMENT: a deep-ITM short put with ~zero extrinsic (|delta|>0.99) is near-certain
+            # to be exercised EARLY by the long holder (no time value left to keep). Model it rather than
+            # waiting for expiry — realistic and broker-independent. [[feedback_synthetic_early_assignment]]
+            _early_p = False
+            if p.get('model_early_assign', True) and days < sp['dte'] and spot_u < sp['K']:
+                _ivp = iv_at(sp['K'], max(1, sp['dte'] - days), 'P')
+                _dlt, _ = bs_greeks_pt(spot_u, sp['K'], T_left, _ivp, 'P')
+                _extr = bs_put(spot_u, sp['K'], T_left, _ivp) - max(0.0, sp['K'] - spot_u)
+                _early_p = (_dlt < -0.99) and (_extr < p.get('early_assign_extr', 0.02))
+            if days >= sp['dte'] or _early_p:
                 if spot_u < sp['K']:
                     # Assigned: buy 100*qty shares at the strike (worth spot now).
                     # BUGFIX 2026-06-16: was double-deducting the intrinsic loss
@@ -1848,8 +1857,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     pnl = sp['entry_prem'] * 100 * sp['qty'] - loss   # trade-record P&L
                     s['shares'] += sp['qty'] * 100
                     s['cash'] -= sp['qty'] * 100 * sp['K']
-                    trades.append({'date': idx, 'type': 'PUT_ASSIGN', 'qty': sp['qty'],
-                                   'pnl': pnl, 'K': sp['K']})
+                    trades.append({'date': idx, 'type': 'PUT_EARLY_ASSIGN' if _early_p else 'PUT_ASSIGN',
+                                   'qty': sp['qty'], 'pnl': pnl, 'K': sp['K']})
                 else:
                     # OTM expiry — full premium kept
                     pnl = sp['entry_prem'] * 100 * sp['qty']
@@ -2016,14 +2025,27 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                    'from_K': sc['K'], 'to_K': new_K, 'qty': sc['qty']})
                 continue
 
-            if days >= sc['dte']:
+            # EARLY ASSIGNMENT (calls): deep-ITM short call with ~zero extrinsic (delta>0.99) → shares
+            # called away EARLY (holder exercises rather than hold a no-time-value option). Same model
+            # as puts; covered 1:1 so it just moves the called-away forward in time.
+            # CALLS gated behind early_assign_calls (default OFF): early exercise of a call is only
+            # rational to capture a DIVIDEND. UNG pays none → early call assignment ≈ never happens;
+            # modeling it (252 events) was unrealistic and inflated Sharpe. Enable only for dividend names.
+            _early_c = False
+            if (p.get('model_early_assign', True) and p.get('early_assign_calls', False)
+                    and days < sc['dte'] and spot_u > sc['K']):
+                _ivc = iv_at(sc['K'], max(1, sc['dte'] - days), 'C')
+                _dltc, _ = bs_greeks_pt(spot_u, sc['K'], T_left, _ivc, 'C')
+                _extrc = bs_call(spot_u, sc['K'], T_left, _ivc) - max(0.0, spot_u - sc['K'])
+                _early_c = (_dltc > 0.99) and (_extrc < p.get('early_assign_extr', 0.02))
+            if days >= sc['dte'] or _early_c:
                 if spot_u > sc['K']:
                     # Premium kept, but shares called away at K (lost spot-K)
                     lost = (spot_u - sc['K']) * 100 * sc['qty']
                     pnl = sc['entry_prem'] * 100 * sc['qty'] - lost
                     s['shares'] -= sc['qty'] * 100
                     s['cash'] += sc['qty'] * 100 * sc['K']
-                    trades.append({'date': idx, 'type': 'CALL_ASSIGN',
+                    trades.append({'date': idx, 'type': 'CALL_EARLY_ASSIGN' if _early_c else 'CALL_ASSIGN',
                                    'qty': sc['qty'], 'pnl': pnl, 'K': sc['K']})
                 else:
                     pnl = sc['entry_prem'] * 100 * sc['qty']

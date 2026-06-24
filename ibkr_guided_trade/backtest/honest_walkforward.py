@@ -35,15 +35,13 @@ TRAIN_END   = '2024-01-01'  # frozen here; everything after is SEALED test
 TEST_START  = '2024-01-02'
 TEST_END    = '2026-06-03'
 
-# Cost model (IBKR retail realistic)
-COMMISSION_PER_CONTRACT = 0.65  # $0.65 per contract per leg (distinct from spread)
-# DE-DUP (2026-06-15): the bid/ask SPREAD is now modeled INSIDE replay_engine,
-# per-leg, via SPREAD_OPTION ($0.07/sh half-spread, calibrated to real UNG chains)
-# plus fill_factor on opens. Charging an additional 5%-of-premium slippage here
-# double-counted the open spread. Set to 0 so spread is counted exactly once
-# (in-engine). Commission stays — it is a separate IBKR cost, not a spread.
-SLIPPAGE_PCT_OF_PREMIUM = 0.0   # spread now modeled in-engine (was 0.05 → double-count)
-EARLY_ASSIGN_HAIRCUT = 0.30     # 30% of extrinsic lost on early assignment
+# Cost model (Wealthsimple-realistic)
+COMMISSION_PER_CONTRACT = 0.0   # Wealthsimple is COMMISSION-FREE (was IBKR $0.65). The real cost is the
+#                                 bid/ask SPREAD, modeled IN-ENGINE per-leg via SPREAD_OPTION ($0.07/sh
+#                                 half-spread, calibrated to real UNG chains) + fill_factor on opens.
+SLIPPAGE_PCT_OF_PREMIUM = 0.0   # spread is in-engine; no extra slippage (would double-count the open)
+# EARLY ASSIGNMENT is now MODELED in the engine (deep-ITM |delta|>0.99 + extrinsic≈0 → assigned early,
+# not at expiry), so there is no EARLY_ASSIGN_HAIRCUT fudge term.
 
 
 def measure_period(strat, df_period, cash_start=100000):
@@ -113,9 +111,9 @@ def main():
     print(f'HONEST WALK-FORWARD (cash ${args.cash:,}, realistic costs)')
     print(f'  TRAIN window: {TRAIN_START} → {TRAIN_END}  ({len(df_train)} days, {(df_train.index[-1]-df_train.index[0]).days/365.25:.2f} yrs)')
     print(f'  TEST  window: {TEST_START} → {TEST_END}  ({len(df_test)} days, {(df_test.index[-1]-df_test.index[0]).days/365.25:.2f} yrs) — SEALED')
-    print(f'  Costs: ${COMMISSION_PER_CONTRACT}/contract commission, '
-          f'bid/ask spread modeled in-engine (SPREAD_OPTION ${SPREAD_OPTION}/sh/leg + fill_factor), '
-          f'{EARLY_ASSIGN_HAIRCUT*100:.0f}% early-assign haircut')
+    print(f'  Costs (Wealthsimple): $0 commission, bid/ask spread in-engine '
+          f'(SPREAD_OPTION ${SPREAD_OPTION}/sh/leg + fill_factor), early assignment MODELED '
+          f'(deep-ITM |delta|>0.99 + extrinsic~0)')
     print('=' * 100)
 
     rows = []
