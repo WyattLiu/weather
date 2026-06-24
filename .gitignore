@@ -25,3 +25,13 @@ cpc_*/
 
 # CSV output (regenerated)
 *.csv
+
+# secrets / credentials — never commit (added 2026-06-24 after audit found a committed WS token)
+new_cookie
+cookies.json
+*.cookies.json
+*.har
+.env
+*.token
+~/token
+config.json
