@@ -2644,18 +2644,30 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         # sized by 1/N.
                         dte_ladder = p.get('dte_ladder', [p.get('open_dte', 30)])
                         n_dtes = len(dte_ladder)
-                        per_dte_qty = max(1, put_qty // n_dtes)
-                        # OU TILT (fine-scale buy-low timing): when OU-cheap (z<0, bounce
-                        # expected) sell MORE puts — they're likelier to expire OTM; when
-                        # OU-rich (z>0, fade expected) sell FEWER — assignment risk. |z| sizes it.
+                        # GAMMA-WEIGHTED ladder: allocate contracts ∝ 1/gamma per DTE so each expiry
+                        # carries ~EQUAL gamma (short DTE = HIGH gamma → FEWER contracts; gamma∝1/√T).
+                        # Even-split (put_qty//n) dumps gamma into the short bucket — that's WHY the
+                        # even ladder tested LESS smooth. Skip very-short DTEs in the ladder config.
+                        if p.get('gamma_weighted_ladder') and n_dtes > 1:
+                            _gw = []
+                            for _d in dte_ladder:
+                                _, _g = bs_greeks_pt(spot_u, K, _d / 365, iv_at(K, _d, 'P'), 'P')
+                                _gw.append(1.0 / max(_g, 1e-9))
+                            _gws = sum(_gw) or 1.0
+                            dte_qtys = [int(round(put_qty * w / _gws)) for w in _gw]
+                        else:
+                            dte_qtys = [max(1, put_qty // n_dtes)] * n_dtes
+                        # OU TILT (fine-scale buy-low timing): OU-cheap (z<0, bounce) → sell MORE;
+                        # OU-rich (z>0, fade) → sell FEWER (assignment risk). |z| sizes it.
                         if p.get('ou_tilt'):
                             _ou = row.get('ou_z'); _ou = _ou if (_ou == _ou and _ou is not None) else 0.0
                             _f = 1.0 - max(-1.0, min(1.0, _ou)) * p.get('ou_tilt_k', 0.5)
-                            per_dte_qty = max(0, int(round(per_dte_qty * _f)))
+                            dte_qtys = [max(0, int(round(q * _f))) for q in dte_qtys]
+                        # Re-margin-check the FULL allocation
+                        for _di, dte_choice in enumerate(dte_ladder):
+                            per_dte_qty = dte_qtys[_di]
                             if per_dte_qty < 1:
                                 continue
-                        # Re-margin-check the FULL allocation
-                        for dte_choice in dte_ladder:
                             # Re-price for this specific DTE — model, then AUDITED fill
                             # (intraday minute path → EOD real → model), stamping the
                             # trade with exec_time / bid / ask / spread / source.
