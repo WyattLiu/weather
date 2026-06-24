@@ -66,6 +66,16 @@ def bs_call(S, K, T, sig, r=0.045):
     return S*norm.cdf(d1) - K*math.exp(-r*T)*norm.cdf(d1 - sig*math.sqrt(T))
 
 
+# Z-conditional, DTE-aware P(short put assigns within its own DTE) for the gamma-aware concentration
+# cap. drift μ(z)=a+b·z (UNG daily; fit in research/spy_vol/ung_scenario_delta.py), vol scales √dte —
+# so time is first-class: a short-DTE OTM put barely counts, a long-DTE near-money put counts a lot.
+def p_assign(K, S, dte_days, z, a=-0.001205, b=-0.000112, sig=0.04066):
+    if dte_days <= 0 or S <= 0:
+        return 1.0 if S < K else 0.0
+    d = (math.log(K / S) - (a + b * z) * dte_days) / (sig * math.sqrt(dte_days))
+    return norm.cdf(d)
+
+
 def bs_greeks_pt(S, K, T, sig, right, r=0.045):
     """Per-share (delta, gamma) for one option contract. delta∈[-1,1]."""
     if T <= 0.001 or sig <= 0 or S <= 0:
@@ -2630,7 +2640,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                             # strike×expiry so the book doesn't stack short gamma at one
                             # point (pin/whipsaw + mass-assignment risk — the $11/23-lot).
                             q_dte = per_dte_qty
-                            if p.get('gamma_cap'):
+                            if p.get('scenario_delta_target'):
+                                # GAMMA-AWARE cap: cap the BOOK's EXPECTED put-assignment delta
+                                # (Σ P(assign|z,dte)·qty·100) to a fraction of NAV-equiv shares.
+                                # Probability-weighted + DTE-aware → tightens in bearish-z / long-dte,
+                                # loosens in calm-z / short-dte. Replaces the flat notional cap.
+                                _z = compute_historical_z(row, use_surprise=p.get('use_surprise', False))
+                                _A = p.get('scenario_mu_a', -0.001205)
+                                _B = p.get('scenario_mu_b', -0.000112)
+                                _Sg = p.get('scenario_sigma', 0.04066)
+                                _exp_d = sum(p_assign(_sp['K'], spot_u, _sp.get('dte', 30), _z, _A, _B, _Sg)
+                                             * _sp['qty'] * 100 for _sp in s['short_puts'])
+                                _target = p['scenario_delta_target'] * (cur_nav / spot_u)
+                                _pn = p_assign(K, spot_u, dte_choice, _z, _A, _B, _Sg)
+                                _cap_sc = int(max(0.0, _target - _exp_d) / (_pn * 100)) if _pn > 1e-6 else q_dte
+                                q_dte = min(q_dte, max(0, _cap_sc))
+                                if q_dte < 1:
+                                    continue
+                            elif p.get('gamma_cap'):
                                 _ex = sum(_sp['qty'] for _sp in s['short_puts']
                                           if abs(_sp['K'] - K) < 0.01
                                           and abs(_sp.get('dte', 30) - dte_choice) <= 7)
