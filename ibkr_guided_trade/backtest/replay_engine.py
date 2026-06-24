@@ -5455,13 +5455,12 @@ STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
     # notional to ~8.5% of NAV → cap_contracts = 0.085·NAV/(K·100). Proportional to the account
     # (≈10 lots @ $11 on $133k, ≈77 @ $1M) instead of a fixed 10. max_short_per_strike kept as the
     # legacy fallback / floor when pct is unset. Forward-only (grandfathers existing legs).
-    'max_short_pct_nav': 0.085, 'max_short_per_strike': 10,
-    # GAMMA-WEIGHTED re-accumulation ladder (validate_gamma_ladder.py, 2026-06-24): spread puts across
-    # [14,30] DTE with contracts ∝ 1/gamma so each expiry carries EQUAL gamma (short DTE = high gamma →
-    # fewer). Skips the high-gamma 7-DTE bucket. OOS: Sharpe 1.76 vs 1.74, MaxDD −5.2 vs −5.3, IDENTICAL
-    # realized smoothness (vol 9.6%, worst-day −4.7%) vs single-[30] — structurally smoother (2 expiries,
-    # no single-expiry gamma cliff) with no risk cost. Even-split [7,14,30] FAILED (dumps gamma short).
-    'gamma_weighted_ladder': True, 'dte_ladder': [14, 30]}
+    'max_short_pct_nav': 0.085, 'max_short_per_strike': 10}
+# NOTE (2026-06-24): gamma_weighted_ladder=[14,30] was promoted then REVERTED. The audit showed the
+# "+0.02 Sharpe" was TEST-SET-SELECTED (I picked the variant by its sealed-test score = invalid), a
+# statistical tie, and gamma-weighting is near-nil at UNG's ~$11 scale (the only real effect was
+# dropping the 7-DTE bucket). Single-[30] re-accumulation is the parsimonious champion. The
+# gamma_weighted_ladder engine code remains, param-gated OFF, for any future wider-strike asset.
 # FAST live variant of the promoted champion (model fills; advisor supplies real exec).
 STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_greeks'],
     'intraday_exec': False, 'real_chain_pricing': False}
