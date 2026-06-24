@@ -1347,6 +1347,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             target = int(base_shares * mult)
             target = (target // 100) * 100
             current = s['shares']
+            if p.get('stat_share_target'):
+                # GAMMA→DELTA on the ACCUMULATION engine: measure `current` as the statistical FORWARD
+                # share count — deep-ITM calls (delta→1) count as forward-GONE, short puts as forward-
+                # ACQUIRED (p_assign-weighted). So the wheel re-accumulates a few days EARLY as calls go
+                # deep-ITM (capturing the theta the same-bar backtest banks, incl. weekends), and SELF-
+                # LIMITS once the replacement puts are pending (no double-sell). Same fn backtest & live.
+                current = int(round(book_greeks_stat(
+                    s, spot_u, z, p.get('scenario_mu_a', -0.000797),
+                    p.get('scenario_mu_b', -0.000009), p.get('scenario_sigma', 0.0390))))
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
