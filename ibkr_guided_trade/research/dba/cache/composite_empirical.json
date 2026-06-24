@@ -1,0 +1,39 @@
+{
+  "summary": [
+    {
+      "strategy": "UNG kernel only (champion_premium_harvest_scale)",
+      "ann_ret": 0.3238,
+      "sharpe": 1.814,
+      "mdd": -0.1485,
+      "worst_12mo": 0.0034
+    },
+    {
+      "strategy": "DBA wheel only (60d 2% OTM)",
+      "ann_ret": 0.1431,
+      "sharpe": 1.363,
+      "mdd": -0.1227,
+      "worst_12mo": -0.091
+    },
+    {
+      "strategy": "static 60/40",
+      "ann_ret": 0.2536,
+      "sharpe": 2.155,
+      "mdd": -0.0966,
+      "worst_12mo": 0.0523
+    },
+    {
+      "strategy": "regime-gated composite",
+      "ann_ret": 0.2262,
+      "sharpe": 1.758,
+      "mdd": -0.1072,
+      "worst_12mo": 0.0089
+    }
+  ],
+  "correlation": 0.059164037579627564,
+  "ung_strategy": "champion_premium_harvest_scale_invariant",
+  "avg_weights": {
+    "ung": 0.6831836734693877,
+    "dba": 0.03224489795918367,
+    "boxx": 0.2845714285714285
+  }
+}

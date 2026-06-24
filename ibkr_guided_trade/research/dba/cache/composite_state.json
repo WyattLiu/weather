@@ -1,15 +1,54 @@
 {
-  "as_of": "2026-06-09",
-  "ung_edge": -0.0048587926565855965,
-  "dba_edge": 0.7109712834772588,
+  "as_of": "2026-06-24",
+  "ung_edge": 0.18726000759034397,
+  "dba_edge": 0.6700244903637926,
   "oni": 0.48,
-  "dsci_z": 1.3157702678180705,
+  "dsci_z": 0.988195922910342,
   "cpc_outlook": {
-    "issue_date": "14 May 2026",
-    "status": "El Nio Watch",
-    "peak_el_nino_pct": 98,
-    "djf_el_nino_pct": 96,
+    "issue_date": "11 June 2026",
+    "status": "El Nio Advisory",
+    "peak_el_nino_pct": 100,
+    "djf_el_nino_pct": 99,
     "forward_bump_applied": 0.35
+  },
+  "dba_wheel_tilt": {
+    "size_mult": 1.3,
+    "target_otm_pct": 0.02,
+    "target_dte": 60,
+    "score": 2,
+    "score_parts": {
+      "oni_low": false,
+      "cot_washed": true,
+      "stocks_tight": false,
+      "fpi_momentum": true
+    },
+    "macro_warn_count": 1,
+    "inputs": {
+      "oni": 0.48,
+      "month": 6
+    },
+    "basis": "score-graduated confluence (walk-forward: score 3+ = +4.15%/63d); macro-squeeze cap from drawdown forensics"
+  },
+  "ag_single_leg": {
+    "legs": [
+      {
+        "ticker": "CORN",
+        "size_mult": 1.0
+      },
+      {
+        "ticker": "CANE",
+        "size_mult": 1.3
+      }
+    ],
+    "reason": "always-on pair (static beats switching, Sharpe 1.60 vs 1.01); ONI +0.48 tilts CANE",
+    "nav_pct_cap_each": 0.05,
+    "max_contracts": 5
+  },
+  "portfolio_targets": {
+    "DBA": 0.0,
+    "CORN": 0.0,
+    "CANE": 0.0,
+    "step_per_cycle": 0.33
   },
   "allocation": {
     "ung": 0.45,
@@ -19,24 +58,24 @@
   "backtest": [
     {
       "strategy": "composite",
-      "cum_ret": -0.952244891041074,
-      "ann_ret": -0.15242191418539852,
-      "sharpe": -0.3049797007123998,
-      "mdd": -0.9702750960452164
+      "cum_ret": -0.9512828381125429,
+      "ann_ret": -0.15120214121394182,
+      "sharpe": -0.3014027061655356,
+      "mdd": -0.9702750981297233
     },
     {
       "strategy": "ung_only",
-      "cum_ret": -0.9976334850124965,
-      "ann_ret": -0.28016472557259,
-      "sharpe": -0.4154527570588184,
+      "cum_ret": -0.9975724338695703,
+      "ann_ret": -0.278659021134783,
+      "sharpe": -0.4118263335574263,
       "mdd": -0.9987508369156964
     },
     {
       "strategy": "equal_weight",
-      "cum_ret": -0.9181316675826448,
-      "ann_ret": -0.12721499811121473,
-      "sharpe": -0.3635997034170589,
-      "mdd": -0.9499810347464186
+      "cum_ret": -0.9165866286917406,
+      "ann_ret": -0.12607330964761665,
+      "sharpe": -0.35922047099405147,
+      "mdd": -0.9499810348581946
     }
   ]
 }

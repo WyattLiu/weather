@@ -35,3 +35,9 @@ cookies.json
 *.token
 ~/token
 config.json
+
+# auto-push backup noise
+autopush.log
+**/__pycache__/
+*.pyc
+ibkr_guided_trade/backtest/log/

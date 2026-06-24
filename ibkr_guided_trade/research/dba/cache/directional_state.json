@@ -1,0 +1,20 @@
+{
+  "as_of": "2026-06-11",
+  "weights": {
+    "DBA": {
+      "weight_now": 0.0
+    },
+    "CORN": {
+      "weight_now": 0.0
+    },
+    "WEAT": {
+      "weight_now": 0.0
+    },
+    "SOYB": {
+      "weight_now": 0.0
+    },
+    "CANE": {
+      "weight_now": 0.0
+    }
+  }
+}

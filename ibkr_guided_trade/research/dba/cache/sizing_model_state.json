@@ -1,0 +1,19 @@
+{
+  "as_of": "2026-06-09",
+  "er_63d": 0.0094,
+  "sigma63": 0.0568,
+  "warn_count": 0,
+  "size_mult": 1.15,
+  "oos_ic": -0.043,
+  "oos_hit": 0.51,
+  "coefficients": {
+    "month": "2026-06-01",
+    "int": 0.0068,
+    "oni": -0.0064,
+    "cot_chg_13w": -0.0122,
+    "stu_z": -0.0118,
+    "fpi_mom_3m": 0.0047,
+    "month_sin": -0.0044,
+    "month_cos": 0.0096
+  }
+}
