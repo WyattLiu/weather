@@ -107,6 +107,23 @@ def book_greeks(s, spot, iv_at):
     return nd, ng
 
 
+def book_greeks_stat(s, spot, z, a=-0.000797, b=-0.000009, sig=0.0390):
+    """GAMMA → DELTA via the statistical model. The expected SHARE position after every current
+    short option resolves at its OWN expiry, under the REAL-WORLD drift μ(z)=a+b·z (not risk-neutral
+    BS). A short put assigns into a decline → +p_assign·qty·100; a short call is called away →
+    −P(called)·qty·100 = −(1−p_assign)·qty·100. This projects the book's GAMMA (short-option
+    curvature) into its expected DELTA impact, DTE-weighted — so the hedge targets where the book
+    actually drifts, not the instantaneous risk-neutral snapshot. Same fn in backtest and live."""
+    nd = float(s.get('shares', 0))
+    for sp in s.get('short_puts', []):
+        nd += sp['qty'] * p_assign(sp['K'], spot, sp.get('dte', 30), z, a, b, sig) * 100
+    for sc in s.get('short_calls', []):
+        nd -= sc['qty'] * (1.0 - p_assign(sc['K'], spot, sc.get('dte', 30), z, a, b, sig)) * 100
+    for lp in s.get('long_puts', []):
+        nd -= lp['qty'] * p_assign(lp['K'], spot, lp.get('dte', 30), z, a, b, sig) * 100
+    return nd
+
+
 def compute_historical_z(row, use_surprise=False):
     """Composite z-score (CLEANED 20260603).
 
@@ -1576,6 +1593,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # DTE are guided by the book greeks (book_greeks/bs_greeks_pt → calibrated IV).
         if p.get('delta_hedge'):
             _nd, _ng = book_greeks(s, spot_u, iv_at)
+            if p.get('stat_delta_hedge'):
+                # GAMMA→DELTA: hedge the statistical FORWARD delta (real drift), not BS instantaneous.
+                _z_sd = compute_historical_z(row, use_surprise=p.get('use_surprise', False))
+                _nd = book_greeks_stat(s, spot_u, _z_sd, p.get('scenario_mu_a', -0.000797),
+                                       p.get('scenario_mu_b', -0.000009), p.get('scenario_sigma', 0.0390))
             _rsd = row.get('regime_strength'); _rsd = _rsd if (_rsd == _rsd and _rsd is not None) else 0.0
             _base = p.get('delta_target_nav', 0.5) * cur_nav / max(spot_u, 0.5)   # ~normal delta
             _target = _base * (1.0 - p.get('delta_bearish_cut', 0.9) * max(0.0, min(1.0, _rsd)))
