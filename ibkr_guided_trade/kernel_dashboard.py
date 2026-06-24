@@ -317,19 +317,33 @@ def _build_yearly_pnl():
     return years
 
 
+_ANALYTICS_LOCK = threading.Lock()
+
+
+def _compute_analytics():
+    """Heavy compute (~76s of backtests). LOCKED so only one runs at a time — without this, concurrent
+    cold-cache requests each kicked off a 76s backtest, piled up, contended, and NONE returned in time
+    → empty /api/analytics → every lower chart rendered with no data / broken axes. Called only by the
+    warm loop, never on the request path."""
+    with _ANALYTICS_LOCK:
+        if time.time() - _SERIES_CACHE['ts'] < 600 and _SERIES_CACHE['data']:
+            return _SERIES_CACHE['data']
+        data = {
+            'series': _build_series(),
+            'walkforward': _build_walkforward(),
+            'backtest_curve': _build_backtest_curve(),
+            'yearly': _build_yearly_pnl(),
+        }
+        _SERIES_CACHE['ts'] = time.time()
+        _SERIES_CACHE['data'] = data
+        return data
+
+
 def _cached_analytics():
-    """Refresh analytics every 10 minutes (heavy compute)."""
-    if time.time() - _SERIES_CACHE['ts'] < 600 and _SERIES_CACHE['data']:
-        return _SERIES_CACHE['data']
-    data = {
-        'series': _build_series(),
-        'walkforward': _build_walkforward(),
-        'backtest_curve': _build_backtest_curve(),
-        'yearly': _build_yearly_pnl(),
-    }
-    _SERIES_CACHE['ts'] = time.time()
-    _SERIES_CACHE['data'] = data
-    return data
+    """NON-BLOCKING: serve whatever the warm loop has cached (or {} until the first warm completes).
+    NEVER computes synchronously — a 76s backtest on the request path hangs the endpoint and, with
+    concurrent loads, breaks all the charts. The warm loop keeps this fresh off the request path."""
+    return _SERIES_CACHE['data'] or {}
 
 
 # ─── HTML (matches production CSS variables and layout) ──────────────────────
@@ -2034,6 +2048,8 @@ async function drawCharts() {
     const r = await fetch('/api/analytics');
     const a = await r.json();
     if (a.error) { console.error(a.error); return; }
+    // cache still warming (first ~76s after a restart) → {} ; skip and let the next poll draw.
+    if (!a.series || !a.backtest_curve || !a.walkforward || !a.yearly) { setTimeout(drawCharts, 8000); return; }
 
     // Regime: UNG price + z overlay
     const s = a.series;
@@ -2047,7 +2063,7 @@ async function drawCharts() {
       yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'UNG $', side: 'left' },
       yaxis2: { title: 'Z', overlaying: 'y', side: 'right',
                 gridcolor: 'transparent', zeroline: true, zerolinecolor: '#30363d',
-                range: [-3, 3] },
+                range: [Math.min(...s.z, -3) * 1.05, Math.max(...s.z, 3) * 1.05] },
       shapes: [
         // Regime bands as horizontal stripes on z axis
         {type:'rect', xref:'paper', yref:'y2', x0:0, x1:1, y0:1.5, y1:3, fillcolor:'rgba(248,81,73,0.08)', line:{width:0}},
@@ -2077,7 +2093,7 @@ async function drawCharts() {
       ...PLOTLY_LAYOUT_BASE,
       yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'NAV ($)', side: 'left' },
       yaxis2: { title: 'DD %', overlaying: 'y', side: 'right', gridcolor: 'transparent',
-                range: [-25, 0] },
+                range: [Math.min(...bc.drawdown_pct, 0) * 1.1 - 1, 0] },
       legend: { x: 0, y: 1.1, orientation: 'h' },
     }, {displayModeBar: false, responsive: true});
 
@@ -2093,7 +2109,7 @@ async function drawCharts() {
       ...PLOTLY_LAYOUT_BASE,
       yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Annualized %' },
       yaxis2: { title: 'MDD %', overlaying: 'y', side: 'right', gridcolor: 'transparent',
-                range: [-30, 0] },
+                range: [Math.min(...wf.map(w => w.mdd), 0) * 1.1 - 1, 0] },
       legend: { x: 0, y: 1.1, orientation: 'h' },
     }, {displayModeBar: false, responsive: true});
 
@@ -2228,6 +2244,17 @@ def _spy_vega_warm_loop():
         time.sleep(540)
 
 
+def _analytics_warm_loop():
+    """Keep the heavy backtest analytics (curve / walk-forward / yearly / series) warm OFF the request
+    path so /api/analytics is always instant and the lower charts always have data."""
+    while True:
+        try:
+            _compute_analytics()
+        except Exception:
+            pass
+        time.sleep(540)
+
+
 def main():
     port = int(os.environ.get('KERNEL_DASH_PORT', '10001'))
     print(f'[kernel-dash] Bootstrapping state from WS / PG...')
@@ -2235,6 +2262,7 @@ def main():
     threading.Thread(target=_refresh_loop, daemon=True).start()
     threading.Thread(target=_live_warm_loop, daemon=True).start()  # warm the SOT cache
     threading.Thread(target=_spy_vega_warm_loop, daemon=True).start()  # warm the SPY vega alert
+    threading.Thread(target=_analytics_warm_loop, daemon=True).start()  # warm the backtest charts
     server = ReusableTCPServer(('0.0.0.0', port), Handler)
     print(f'[kernel-dash] Serving on http://localhost:{port}  (kernel: {CHAMPION_NAME})')
     print(f'[kernel-dash] Production dashboard untouched at :9999')
