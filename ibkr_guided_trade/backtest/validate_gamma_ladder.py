@@ -1,12 +1,11 @@
-"""GAMMA-WEIGHTED ladder (contracts ∝ 1/gamma so each expiry carries EQUAL gamma), skipping the
-high-gamma 7-DTE bucket. Isolates the two fixes vs the even-ladder that failed:
-  (a) DROP 7-DTE  (even [14,30])         — does removing the high-gamma bucket help?
-  (b) GAMMA-WEIGHT (gamma-wt [14,30])    — does inverse-gamma allocation help on top?
-Scores FRONTIER (ann/Sharpe/MaxDD) + SMOOTHNESS (daily vol + worst single-day = cliff proxy), TRAIN/TEST.
-"""
+"""GAMMA-WEIGHTED ladder (contracts proportional to 1/gamma so each expiry carries EQUAL gamma),
+skipping the high-gamma 7-DTE bucket. Isolates: (a) DROP 7-DTE, (b) GAMMA-WEIGHT on top.
+Scores FRONTIER (ann/Sharpe/MaxDD) + SMOOTHNESS (daily vol + worst single-day). TRAIN/TEST.
+PARALLEL: each (variant, window) run is independent → one process each (120 cores available)."""
 import sys
 import os
 import math
+import multiprocessing as mp
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 from honest_walkforward import TRAIN_START, TRAIN_END, TEST_START, TEST_END
@@ -39,15 +38,31 @@ variants = {
     'GAMMA-wt [14,30,45]':        {**base, 'dte_ladder': [14, 30, 45], 'gamma_weighted_ladder': True},
     'GAMMA-wt [21,45]':           {**base, 'dte_ladder': [21, 45], 'gamma_weighted_ladder': True},
 }
-print("=== GAMMA-WEIGHTED ladder (no 7-DTE): frontier + smoothness ===")
-print("  (smoothness = lower daily-vol + smaller worst-day = fewer gamma cliffs)\n")
-print(f"  {'variant':<28}{'win':<7}{'ann':>7}{'Sh':>6}{'MaxDD':>8}{'vol':>7}{'worstD':>8}{'trd':>6}")
-print('  ' + '-' * 77)
-for name, st in variants.items():
-    for lbl, d in (('TRAIN', tr), ('TEST', te)):
-        try:
-            a, s, m, v, w, n = metrics(st, d)
-            print(f"  {name:<28}{lbl:<7}{a:>6.1f}%{s:>6.2f}{m:>7.1f}%{v:>6.1f}%{w:>7.1f}%{n:>6}", flush=True)
-        except Exception as e:
-            print(f"  {name:<28}{lbl:<7} ERR {str(e)[:30]}", flush=True)
-print("DONE", flush=True)
+
+
+def _job(args):
+    name, st, win = args
+    d = tr if win == 'TRAIN' else te
+    try:
+        return (name, win) + metrics(st, d)
+    except Exception as e:
+        return (name, win, 'ERR', str(e)[:40])
+
+
+if __name__ == '__main__':
+    jobs = [(name, st, win) for name, st in variants.items() for win in ('TRAIN', 'TEST')]
+    with mp.Pool(min(len(jobs), 24)) as pool:
+        res = pool.map(_job, jobs)
+    order = list(variants.keys())
+    res.sort(key=lambda r: (order.index(r[0]), 0 if r[1] == 'TRAIN' else 1))
+    print("=== GAMMA-WEIGHTED ladder (no 7-DTE): frontier + smoothness [PARALLEL] ===")
+    print("  (smoothness = lower daily-vol + smaller worst-day = fewer gamma cliffs)\n")
+    print(f"  {'variant':<28}{'win':<7}{'ann':>7}{'Sh':>6}{'MaxDD':>8}{'vol':>7}{'worstD':>8}{'trd':>6}")
+    print('  ' + '-' * 77)
+    for r in res:
+        if len(r) == 8:
+            name, win, a, s, m, v, w, n = r
+            print(f"  {name:<28}{win:<7}{a:>6.1f}%{s:>6.2f}{m:>7.1f}%{v:>6.1f}%{w:>7.1f}%{n:>6}")
+        else:
+            print(f"  {r[0]:<28}{r[1]:<7} {r[2]} {r[3]}")
+    print("DONE", flush=True)
