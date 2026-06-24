@@ -27,7 +27,7 @@ import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS_DIR)
-from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z
+from replay_engine import run_strategy_simple, STRATEGIES, precompute_factor_z, SPREAD_OPTION
 
 
 TRAIN_START = '2021-06-01'
@@ -36,8 +36,13 @@ TEST_START  = '2024-01-02'
 TEST_END    = '2026-06-03'
 
 # Cost model (IBKR retail realistic)
-COMMISSION_PER_CONTRACT = 0.65  # $0.65 per contract per leg
-SLIPPAGE_PCT_OF_PREMIUM = 0.05  # 5% bid-ask haircut
+COMMISSION_PER_CONTRACT = 0.65  # $0.65 per contract per leg (distinct from spread)
+# DE-DUP (2026-06-15): the bid/ask SPREAD is now modeled INSIDE replay_engine,
+# per-leg, via SPREAD_OPTION ($0.07/sh half-spread, calibrated to real UNG chains)
+# plus fill_factor on opens. Charging an additional 5%-of-premium slippage here
+# double-counted the open spread. Set to 0 so spread is counted exactly once
+# (in-engine). Commission stays — it is a separate IBKR cost, not a spread.
+SLIPPAGE_PCT_OF_PREMIUM = 0.0   # spread now modeled in-engine (was 0.05 → double-count)
 EARLY_ASSIGN_HAIRCUT = 0.30     # 30% of extrinsic lost on early assignment
 
 
@@ -109,7 +114,7 @@ def main():
     print(f'  TRAIN window: {TRAIN_START} → {TRAIN_END}  ({len(df_train)} days, {(df_train.index[-1]-df_train.index[0]).days/365.25:.2f} yrs)')
     print(f'  TEST  window: {TEST_START} → {TEST_END}  ({len(df_test)} days, {(df_test.index[-1]-df_test.index[0]).days/365.25:.2f} yrs) — SEALED')
     print(f'  Costs: ${COMMISSION_PER_CONTRACT}/contract commission, '
-          f'{SLIPPAGE_PCT_OF_PREMIUM*100:.0f}% slippage on opens, '
+          f'bid/ask spread modeled in-engine (SPREAD_OPTION ${SPREAD_OPTION}/sh/leg + fill_factor), '
           f'{EARLY_ASSIGN_HAIRCUT*100:.0f}% early-assign haircut')
     print('=' * 100)
 
