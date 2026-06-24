@@ -219,6 +219,33 @@ def _est_theta(short_puts, short_calls, spot):
     return th
 
 
+def _book_extrinsic(short_puts, short_calls, long_puts, long_calls, spot):
+    """Current TIME-VALUE (extrinsic) in the book via BS on the real IV surface — the MAX theta you
+    can EVER collect from TODAY's legs (it all decays to 0 by expiry). Short = collect, long = pay."""
+    surf = R._load_iv_surface()
+    latest = max(surf.keys()) if surf else None
+    tot = 0.0
+    for legs, rt, sign in ((short_puts, 'P', 1), (short_calls, 'C', 1),
+                           (long_puts, 'P', -1), (long_calls, 'C', -1)):
+        for leg in legs or []:
+            K = float(leg.get('K') or 0); dte = int(leg.get('dte') or 0); n = int(leg.get('qty') or 0)
+            if K <= 0 or dte <= 0 or n == 0:
+                continue
+            iv = R.iv_from_surface(surf, latest, K, dte, rt) if (surf and latest) else None
+            if iv is None or iv != iv:
+                iv = 0.50
+            price = R.bs_put(spot, K, dte / 365, iv) if rt == 'P' else R.bs_call(spot, K, dte / 365, iv)
+            intr = max(0.0, K - spot) if rt == 'P' else max(0.0, spot - K)
+            tot += max(0.0, price - intr) * 100 * n * sign
+    return tot
+
+
+# Champion's PROVEN gross premium-harvest rate (backtest 2021-2026: collects ~2.46% of NAV/mo gross;
+# NET of buybacks/assignment the option book is ~BREAK-EVEN — the return comes from share accumulation
+# + BOXX, NOT net theta). Used to extrapolate a REALISTIC monthly figure (book is re-sold continuously),
+# instead of the front-loaded daily snapshot × 30.
+GROSS_PREMIUM_RATE_MO = 0.0246
+
 KOLD_UNG_BETA = -2.0   # KOLD ≈ -2x DAILY natural gas; UNG ≈ +1x → KOLD's UNG-equiv delta
 
 
@@ -405,6 +432,44 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
 
     _h, orders = R.run_strategy_simple(df, params, seed_state=seed, live_decision=True)
 
+    # ── EXPIRY-DAY RE-ACCUMULATION (weekend-theta / live==backtest execution fidelity) ──
+    # The backtest re-accumulates on the SAME bar the called-away resolves: it processes the
+    # called-away (shares↓, cash↑) THEN sells re-accum puts, holding them over the weekend → it
+    # EARNS the weekend theta. Live, run before Friday's close, otherwise waits until the called-away
+    # settles (Monday) and FORGOES that theta (~0.6%/yr) — live underperforms the validated curve.
+    # FIX: when ITM short calls are NEAR-CERTAIN to be called away today (≤1 DTE, comfortably ITM),
+    # run the SAME engine on the post-called-away seed — the exact bar the backtest decides from — and
+    # surface its re-accum PUT sells to place FRIDAY. Conditional + voided if UNG slips below by close.
+    # NOTE: default OFF — a live-only forward pass would DIVERGE from the backtest (live==backtest
+    # violation). The correct home is the ENGINE (delta-triggered early_reaccum, run in backtest too,
+    # then validated). Left here, gated off, as the live-display scaffold for that engine feature.
+    expiry_reaccum = None
+    _called = [c for c in sc if c.get('dte', 30) <= 1 and spot > c['K'] + max(0.05, c['K'] * 0.005)]
+    if params.get('expiry_reaccum', False) and _called:
+        _cn = sum(int(c['qty']) for c in _called)
+        _cids = {id(c) for c in _called}
+        _fseed = dict(seed)
+        _fseed['shares'] = max(0, int(shares) - _cn * 100)
+        _fseed['cash'] = float(cash) + sum(c['K'] * c['qty'] * 100 for c in _called)
+        _fseed['short_calls'] = [c for c in sc if id(c) not in _cids]
+        try:
+            _fh, _forders = R.run_strategy_simple(df, params, seed_state=_fseed, live_decision=True)
+            _fputs = [o for _, o in (_forders.iterrows() if len(_forders) else [])
+                      if str(o.get('type', '')).upper().startswith('OPEN_PUT')]
+            if _fputs:
+                expiry_reaccum = {
+                    'called_lots': _cn, 'called_shares': _cn * 100,
+                    'clusters': [f"{c['qty']}× ${c['K']:.2f}" for c in _called],
+                    'puts': [{'qty': int(o.get('qty') or 0), 'K': float(o.get('K') or 0),
+                              'dte': int(o.get('dte') or 30), 'credit': round(float(o.get('credit') or 0))}
+                             for o in _fputs],
+                    'note': (f"{_cn} ITM call lot(s) (~{_cn*100} sh) near-certain called away today. The "
+                             f"backtest re-accumulates on THIS bar — sell these puts FRIDAY (pre-close) to "
+                             f"earn the weekend theta and match the validated curve; void if UNG dips below "
+                             f"the strikes into the close (calls then NOT called).")}
+        except Exception:
+            pass
+
     recs = []
     for _, o in orders.iterrows() if len(orders) else []:
         ty = o.get('type', '')
@@ -499,11 +564,8 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
                 'existing_short_calls': int(_existing_calls),
                 'covered': _net_calls <= _coverable,
                 'violation': _violation}
-    # EXTRINSIC-only theta, BEFORE (your current book) vs AFTER today's orders
-    # (the engine's actual post-decision book). Gross of assignment.
+    # _LIVE_FINAL = the engine's post-decision book (for the after-greeks below).
     final = getattr(R, '_LIVE_FINAL', {}) or {}
-    theta_now = _est_theta(sp, sc, spot)
-    theta_after = _est_theta(final.get('short_puts', sp), final.get('short_calls', sc), spot)
 
     # ── BOOK GREEKS: CURRENT vs POST-ORDER (incl 3rd-order speed/color) ─────────────
     # what-if greeks from the fitted vol surface (NEVER a fill). 'now' = book you hold
@@ -515,6 +577,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         final.get('long_puts', lp), final.get('long_calls', lc),
         final.get('shares', shares), spot,
         kold_shares=final.get('kold', kold_shares), kold_price=kold_px)
+    book_extrinsic = _book_extrinsic(sp, sc, lp, lc, spot)
     _gd = {k: round(g_after[k] - g_now[k], 4) for k in g_now}
     greeks = {
         'now': g_now, 'after': g_after, 'change': _gd,
@@ -759,13 +822,20 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'delta_compass': delta_compass,
         'concentration': concentration,
         'assign_risk': assign_risk,
+        'expiry_reaccum': expiry_reaccum,
         'settlement': _settlement_watch(positions, spot),
         'recommendations': recs,
-        'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),
-                  'after_per_month': round(theta_after * 30, 0),
-                  'note': 'extrinsic (time-value) decay only — intrinsic excluded; gross of assignment',
-                  'per_day': round(theta_after, 0), 'per_week': round(theta_after * 7, 0),
-                  'per_month': round(theta_after * 30, 0)},
+        'theta': {'now_per_day': round(g_now['theta'], 0), 'after_per_day': round(g_after['theta'], 0),
+                  # per-day = BS time-decay NOW (front-loaded — near-expiry legs dominate it then expire;
+                  # do NOT ×30). extrinsic_today = max theta from TODAY's legs (decays to 0 by expiry).
+                  # gross_premium_month = backtest-PROVEN harvest (book is re-sold continuously), NET of
+                  # buybacks/assignment ~break-even — the return is shares+BOXX, not theta.
+                  'extrinsic_today': round(book_extrinsic, 0),
+                  'gross_premium_month': round(GROSS_PREMIUM_RATE_MO * seed_nav, 0),
+                  'gross_premium_pct': round(GROSS_PREMIUM_RATE_MO * 100, 2),
+                  'note': 'per-day = BS decay now (front-loaded, do not ×30); per-month = backtest gross harvest; NET of buybacks/assignment ~break-even (return is shares+BOXX)',
+                  'per_day': round(g_after['theta'], 0),
+                  'per_month': round(GROSS_PREMIUM_RATE_MO * seed_nav, 0)},
         'z_models': {
             'z_valuation': round(z, 2),
             'surge_z_momentum': round(float(row.get('ung_surge_z') or 0), 2),

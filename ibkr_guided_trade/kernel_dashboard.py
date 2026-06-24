@@ -1728,9 +1728,9 @@ async function drawSOT(){
       sotCard('HH basis', z.hh_basis, z.hh_basis>0.33?'backwardation⚠':'normal', z.hh_basis>0.33?'warn':'');
     const t = d.theta||{};
     document.getElementById('sot-theta').innerHTML =
-      sotCard('Theta now / day', '$'+fmt(t.now_per_day,0), 'current book','')+
-      sotCard('Theta after orders / day', '$'+fmt(t.after_per_day,0), 'post today','positive')+
-      sotCard('Theta after / month', '$'+fmt(t.after_per_month,0), 'extrinsic only · gross of assign','positive')+
+      sotCard('Theta / day (now)', '$'+fmt(t.now_per_day,0), 'BS decay · front-loaded, don\'t ×30','')+
+      sotCard('Time-value in book', '$'+fmt(t.extrinsic_today,0), 'max theta from today\'s legs','')+
+      sotCard('Gross premium / mo', '$'+fmt(t.gross_premium_month,0), (t.gross_premium_pct||0)+'% NAV (backtest) · net ~break-even','')+
       sotCard('Signals as of', d.asof,
               (d.data_stale_days>0 ? ('⚠ '+d.data_stale_days+'d stale · today '+d.today) : ('today '+(d.today||''))),
               d.data_stale_days>1?'warn':'')+
@@ -1840,8 +1840,17 @@ async function drawSOT(){
     const conc = d.concentration || [];
     if (xel) {
       const ar = d.assign_risk || {};
+      const era = d.expiry_reaccum;
+      let eraHtml = '';
+      if (era && era.puts && era.puts.length) {
+        const plist = era.puts.map(p=>'<b>SELL '+p.qty+'× $'+p.K.toFixed(2)+' put</b> ('+p.dte+'d, +$'+fmt(p.credit,0)+')').join(' · ');
+        eraHtml = '<div style="margin:14px 0 8px;padding:10px 13px;border-radius:6px;background:#1565c018;border-left:3px solid #1565c0">'+
+          '<div style="font-weight:700;color:#1565c0">⏰ EXPIRY-DAY RE-ACCUMULATION — place FRIDAY, pre-close ('+era.clusters.join(', ')+' called away)</div>'+
+          '<div style="margin-top:5px">'+plist+'</div>'+
+          '<div style="margin-top:5px;font-size:.82rem;color:var(--text-dim)">'+era.note+'</div></div>';
+      }
       const flagged = conc.filter(c => c.over_cap);
-      if (!conc.length) { xel.innerHTML=''; }
+      if (!conc.length) { xel.innerHTML = eraHtml; }
       else {
         const within = ar.within_target;
         const arcol = within ? '#26a269' : '#e08a00';
