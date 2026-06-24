@@ -1839,22 +1839,37 @@ async function drawSOT(){
     const xel = document.getElementById('sot-concentration');
     const conc = d.concentration || [];
     if (xel) {
+      const ar = d.assign_risk || {};
       const flagged = conc.filter(c => c.over_cap);
       if (!conc.length) { xel.innerHTML=''; }
       else {
+        const within = ar.within_target;
+        const arcol = within ? '#26a269' : '#e08a00';
+        const ex = ar.execution || {};
+        let head =
+          '<h3 style="margin:14px 0 6px">🎯 Assignment-risk — <b>statistical model</b> '+
+          '<span style="font-size:.76rem;color:var(--text-dim)">(prob-weighted, DTE-aware · z='+(ar.z!=null?ar.z:'–')+')</span></h3>'+
+          '<div style="margin:0 0 9px;padding:9px 13px;border-radius:6px;background:'+arcol+'14;border-left:3px solid '+arcol+'">'+
+          '<b style="color:'+arcol+'">Expected assignment Δ +'+fmt(ar.total_exp_assign_delta,0)+'</b> = '+ar.pct_of_shares+'% of your '+fmt(ar.shares,0)+' shares '+
+          '<span style="color:'+arcol+';font-weight:600">('+(within?'WITHIN':'OVER')+' the '+ar.target_pct+'% target)</span>'+
+          (ex.roll_n>0
+            ? '<div style="margin-top:6px;font-size:.88rem">🔧 <b>Execution aid:</b> '+ex.how+' <span style="color:var(--text-dim)">('+ex.reason+')</span></div>'
+            : '<div style="margin-top:6px;font-size:.86rem;color:var(--text-dim)">✓ spread is fine — no roll needed.</div>')+
+          '</div>';
         const rows = conc.map(c => {
           const col = c.over_cap ? '#e08a00' : 'var(--text-dim)';
+          const ed = (c.right==='PUT' && c.exp_assign_delta!=null) ? '+'+fmt(c.exp_assign_delta,0)+' Δ' : '–';
+          const det = (c.exp_detail||[]).map(e=>e.contracts+'@'+e.dte+'d→'+Math.round(e.p_assign*100)+'%').join('  ');
           return '<tr style="border-bottom:1px solid rgba(128,128,128,.12)">'+
-            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+col+'">'+(c.over_cap?'⚠ ':'')+c.contracts+'× $'+c.strike.toFixed(2)+' '+c.right+'</td>'+
-            '<td style="padding:3px 12px 3px 0">'+fmt(c.assignment_shares,0)+' sh</td>'+
-            '<td style="padding:3px 12px 3px 0;color:'+col+'">'+c.max_single_expiry+'/exp vs cap '+(c.cap||'–')+'</td>'+
-            '<td style="padding:3px 0;color:var(--text-dim);font-size:.82rem">'+(c.suggestion||'within cap — fine')+'</td></tr>';
+            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+col+'">'+c.contracts+'× $'+c.strike.toFixed(2)+' '+c.right+'</td>'+
+            '<td style="padding:3px 12px 3px 0;font-weight:600;color:'+(c.right==='PUT'?arcol:'var(--text-dim)')+'">'+ed+'</td>'+
+            '<td style="padding:3px 12px 3px 0;font-size:.78rem;color:var(--text-dim)">'+(det||'–')+'</td>'+
+            '<td style="padding:3px 0;color:'+col+';font-size:.8rem">'+(c.over_cap?'⚠ ':'')+c.max_single_expiry+'/exp vs notional '+(c.cap||'–')+'</td></tr>';
         }).join('');
-        xel.innerHTML =
-          '<h3 style="margin:14px 0 6px">🎯 Per-strike concentration'+
-          (flagged.length?(' <span style="color:#e08a00;font-size:.8rem">· '+flagged.length+' strike(s) over the gamma-cap (grandfathered — engine won\'t add more, won\'t unwind)</span>'):'')+'</h3>'+
+        xel.innerHTML = head +
           '<table style="border-collapse:collapse;font-size:.9rem"><thead><tr style="color:var(--text-dim);font-size:.76rem;text-transform:uppercase">'+
-          '<th style="text-align:left;padding-right:12px">cluster</th><th style="text-align:left">exposure</th><th style="text-align:left">vs cap</th><th style="text-align:left">de-risk</th></tr></thead><tbody>'+rows+'</tbody></table>';
+          '<th style="text-align:left;padding-right:12px">cluster</th><th style="text-align:left">expected assign Δ</th><th style="text-align:left">P(assign) by expiry</th><th style="text-align:left">notional cap (conservative)</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+          (flagged.length?'<div style="font-size:.74rem;color:var(--text-dim);margin-top:5px">⚠ = over the flat <i>notional</i> cap, which assumes <i>certain</i> assignment → over-conservative. The <b>expected Δ</b> above (weighted by real assignment odds within each DTE) is the honest risk — and it says you\'re '+(within?'fine':'a touch high')+'.</div>':'');
       }
     }
     // ── SETTLEMENT WATCH: expiring options are ACTIONS too (await-worthless / assign /

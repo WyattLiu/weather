@@ -638,13 +638,48 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         _byse[(rt, K, exp)] += n
         _bys[(rt, K)]['contracts'] += n
         _bys[(rt, K)]['expiries'].add(exp)
+    # ── STATISTICAL assignment-risk model (outlier-cleaned, probability-weighted, DTE-aware) ──
+    # The notional cap (above) assumes CERTAIN assignment → over-conservative. The honest risk is the
+    # EXPECTED delta the short puts dump via assignment: Σ P(assign|z,dte)·contracts·100, where
+    # P(assign) = N((ln K/S − μ(z)·dte)/(σ·√dte)) (R.p_assign, fit in ung_scenario_delta.py).
+    _today = pd.Timestamp.today().normalize()
+    try:
+        _zc = float(R.compute_historical_z(row, use_surprise=params.get('use_surprise', False)))
+    except Exception:
+        _zc = 0.0
+    _sa = params.get('scenario_mu_a', -0.000797)
+    _sb = params.get('scenario_mu_b', -0.000009)
+    _ssig = params.get('scenario_sigma', 0.03900)
+
+    def _dte_of(e):
+        try:
+            return max(1, (pd.Timestamp(e).normalize() - _today).days)
+        except Exception:
+            return 30
+
     concentration = []
+    book_put_edelta = 0.0
+    worst = None
     for (rt, K), agg in _bys.items():
         contracts = agg['contracts']
         max_single = max((_byse[(rt, K, e)] for e in agg['expiries']), default=0)
         _kcap = _cap_for(K)
         over_cap = bool(_kcap and max_single > _kcap)
         rtname = 'PUT' if rt == 'P' else 'CALL'
+        edelta = 0.0
+        exp_detail = []
+        if rt == 'P':
+            for e in sorted(agg['expiries']):
+                n = _byse[(rt, K, e)]
+                dte = _dte_of(e)
+                pa = R.p_assign(K, spot, dte, _zc, _sa, _sb, _ssig)
+                ed = pa * n * 100
+                edelta += ed
+                exp_detail.append({'expiry': e, 'dte': dte, 'contracts': n,
+                                   'p_assign': round(pa, 3), 'exp_delta': round(ed)})
+                if worst is None or ed > worst['exp_delta']:
+                    worst = {'strike': K, 'expiry': e, 'dte': dte, 'contracts': n, 'exp_delta': ed}
+            book_put_edelta += edelta
         sugg = ''
         if over_cap or contracts >= 15:
             if rt == 'P':
@@ -657,8 +692,29 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
             'right': rtname, 'strike': K, 'contracts': contracts,
             'assignment_shares': contracts * 100, 'expiries': sorted(agg['expiries']),
             'max_single_expiry': max_single, 'cap': _kcap, 'over_cap': over_cap,
-            'suggestion': sugg})
+            'exp_assign_delta': round(edelta), 'exp_detail': exp_detail, 'suggestion': sugg})
     concentration.sort(key=lambda c: (-c['contracts'], c['strike']))
+
+    # book-level assignment-risk + execution aid (SMOOTH the most-concentrated put cluster)
+    _sh = max(int(shares), 1)
+    _target_pct = 35
+    _smooth_cap = 10
+    assign_risk = {'z': round(_zc, 2), 'shares': int(shares),
+                   'total_exp_assign_delta': round(book_put_edelta),
+                   'pct_of_shares': round(book_put_edelta / _sh * 100),
+                   'target_pct': _target_pct, 'target_delta': round(_target_pct / 100 * shares),
+                   'within_target': book_put_edelta <= _target_pct / 100 * shares}
+    if worst and worst['contracts'] > _smooth_cap:
+        roll_n = worst['contracts'] - _smooth_cap
+        assign_risk['execution'] = {
+            'cluster': f"${worst['strike']:.2f} {worst['expiry']} ({worst['dte']}d)",
+            'contracts': worst['contracts'], 'roll_n': roll_n,
+            'reason': 'smooth single-expiry gamma cliff (total risk already within target)'
+            if assign_risk['within_target'] else 'reduce expected-assignment delta toward target',
+            'how': (f"roll ~{roll_n} of the {worst['contracts']} short ${worst['strike']:.2f} puts in "
+                    f"{worst['expiry']} down a strike or out a week — a few/day (smooth fills).")}
+    else:
+        assign_risk['execution'] = {'roll_n': 0, 'how': 'spread is fine — no roll needed.'}
 
     return {
         'kernel': key, 'kernel_label': KERNELS.get(key, {}).get('label', key),
@@ -678,6 +734,7 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'greeks': greeks,
         'delta_compass': delta_compass,
         'concentration': concentration,
+        'assign_risk': assign_risk,
         'settlement': _settlement_watch(positions, spot),
         'recommendations': recs,
         'theta': {'now_per_day': round(theta_now, 0), 'after_per_day': round(theta_after, 0),

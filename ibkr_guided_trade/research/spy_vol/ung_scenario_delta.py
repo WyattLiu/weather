@@ -62,11 +62,20 @@ def main():
     ung = df['UNG']
     lr = np.log(ung / ung.shift(1))
     z = pd.Series([compute_historical_z(df.iloc[i]) for i in range(len(df))], index=df.index)
-    d = pd.DataFrame({'lr': lr, 'z': z}).dropna()
-    # fit daily drift μ(z) = a + b·z  (high z = bearish storage → lower/negative drift)
+    d0 = pd.DataFrame({'lr': lr, 'z': z}).dropna()
+    # OUTLIER REMOVAL: UNG's spike days (2022 squeeze, etc.) dominate σ and distort the drift, making
+    # the model overstate "typical" assignment risk. Trim daily moves beyond ±4·robust-σ (MAD-based),
+    # so the fit reflects the central/typical regime — extremes are rare-unlikely, handled elsewhere.
+    med = d0['lr'].median(); rsig = 1.4826 * (d0['lr'] - med).abs().median()
+    keep = (d0['lr'] - med).abs() <= 4 * rsig
+    n_out = int((~keep).sum())
+    d = d0[keep]
     b, a = np.polyfit(d['z'].values, d['lr'].values, 1)
     sig = float(d['lr'].std())
-    print(f"=== Z-conditional UNG model (daily, 2021-2026) ===")
+    b0, a0 = np.polyfit(d0['z'].values, d0['lr'].values, 1); sig0 = float(d0['lr'].std())
+    print(f"=== Z-conditional UNG model (daily, 2021-2026, OUTLIERS REMOVED) ===")
+    print(f"  trimmed {n_out}/{len(d0)} spike days (|r|>{4*rsig:.1%}); σ {sig0*math.sqrt(252):.0%}→{sig*math.sqrt(252):.0%}/yr")
+    print(f"  RAW   μ(z)={a0:+.5f}{b0:+.5f}·z  σ={sig0:.4f}")
     print(f"  drift μ(z) = {a:+.5f} {b:+.5f}·z   |   σ_daily = {sig:.4f}  ({sig*math.sqrt(252):.0%} annual)")
     print(f"  → at z=0 drift {a*252:+.0%}/yr; at z=+1 {(a+b)*252:+.0%}/yr; at z=-1 {(a-b)*252:+.0%}/yr\n")
     # validate parametric vs empirical P(assign) at a couple (dte, moneyness) points
