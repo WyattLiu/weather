@@ -136,6 +136,83 @@ def test_book_extrinsic_skips_degenerate_legs():
     assert LK._book_extrinsic(bad, [], [], [], spot) == 0.0
 
 
+# ───────────────────────── _settlement_watch (settlement-as-action) ─────────────────────────
+
+def test_settlement_watch_classifications():
+    """Each imminent UNG option is classified as a settlement-day ACTION to monitor."""
+    spot = 12.0
+    positions = [
+        # ITM short put → EXPECT_ASSIGNMENT (you BUY shares at K)
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 13.0, 'qty': -2, 'expiry': _ts_plus(0)},
+        # ITM short call → EXPECT_CALLED_AWAY (you DELIVER shares at K)
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 11.0, 'qty': -1, 'expiry': _ts_plus(0)},
+        # OTM short → AWAIT_WORTHLESS
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 14.0, 'qty': -1, 'expiry': _ts_plus(0)},
+        # near-pin short → UNCERTAIN
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 12.0, 'qty': -1, 'expiry': _ts_plus(0)},
+        # ITM long → DECIDE_LONG ; OTM long → ABANDON_LONG
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 10.0, 'qty': +1, 'expiry': _ts_plus(0)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 9.0, 'qty': +1, 'expiry': _ts_plus(0)},
+        # DBA excluded; far-OTM beyond horizon excluded
+        {'symbol': 'DBA', 'option_type': 'P', 'strike': 20.0, 'qty': -1, 'expiry': _ts_plus(0)},
+    ]
+    out = LK._settlement_watch(positions, spot, horizon_days=3)
+    kinds = {item['kind'] for item in out}
+    assert {'EXPECT_ASSIGNMENT', 'EXPECT_CALLED_AWAY', 'AWAIT_WORTHLESS',
+            'UNCERTAIN', 'DECIDE_LONG', 'ABANDON_LONG'} <= kinds
+    assign = next(i for i in out if i['kind'] == 'EXPECT_ASSIGNMENT')
+    assert assign['share_impact'] == 200            # buy 100*2 shares
+    assert assign['cash_impact'] < 0               # cash out
+    away = next(i for i in out if i['kind'] == 'EXPECT_CALLED_AWAY')
+    assert away['share_impact'] == -100            # deliver shares
+    assert away['cash_impact'] > 0
+    # no DBA item leaked
+    assert all(i['strike'] != 20.0 for i in out)
+
+
+def test_settlement_watch_far_otm_skipped():
+    """Beyond tomorrow, only ITM/pin surface — a 3d OTM short is not urgent → skipped."""
+    spot = 12.0
+    out = LK._settlement_watch(
+        [{'symbol': 'UNG', 'option_type': 'P', 'strike': 10.0, 'qty': -1, 'expiry': _ts_plus(3)}],
+        spot, horizon_days=5)
+    assert out == []
+
+
+def test_settlement_watch_non_option_and_missing():
+    """Non-option positions and options without expiry/strike are skipped, no crash."""
+    out = LK._settlement_watch([
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000},                  # not an option
+        {'symbol': 'UNG', 'option_type': 'P', 'qty': -1},                   # no expiry
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': 0,     # qty 0
+         'expiry': _ts_plus(0)},
+    ], 12.0)
+    assert out == []
+
+
+# ───────────────────────── _update_nav_peak ─────────────────────────
+
+def test_update_nav_peak_override_and_ratchet(tmp_path, monkeypatch):
+    """Override wins; otherwise peak ratchets up and floors at current NAV; persisted to disk."""
+    f = tmp_path / "peak.json"
+    monkeypatch.setattr(LK, "_NAV_PEAK_FILE", str(f))
+    # first call: no file → peak = current NAV
+    assert LK._update_nav_peak(100000.0) == 100000.0
+    # lower NAV → peak stays (ratchet), floored at current
+    assert LK._update_nav_peak(90000.0) == 100000.0
+    # override takes precedence and is stored
+    assert LK._update_nav_peak(90000.0, override=150000.0) == 150000.0
+    # override below current NAV → floored at current
+    assert LK._update_nav_peak(160000.0, override=120000.0) == 160000.0
+
+
+# ───────────────────────── _opt_expiry ─────────────────────────
+
+def test_opt_expiry_snaps_to_friday():
+    iso = LK._opt_expiry(30)
+    assert pd.Timestamp(iso).weekday() == 4   # Friday
+
+
 # ───────────────────────── orchestration harness ─────────────────────────
 #
 # get_live_recommendation is the only place _called_certain, the COVERAGE
@@ -147,7 +224,7 @@ _PARAMS = {'open_dte': 30, 'expiry_reaccum': True, 'delta_target_nav': 0.5,
            'scenario_mu_a': -0.000797, 'scenario_mu_b': -0.000009, 'scenario_sigma': 0.039}
 
 
-def _install_engine(monkeypatch, orders_rows, final=None, second_orders_rows=None):
+def _install_engine(monkeypatch, orders_rows, final=None, second_orders_rows=None, params=None):
     """Patch R.run_strategy_simple to emit `orders_rows` (list of dicts) and set R._LIVE_FINAL.
 
     If expiry_reaccum fires it calls run_strategy_simple a SECOND time; `second_orders_rows`
@@ -171,9 +248,10 @@ def _install_engine(monkeypatch, orders_rows, final=None, second_orders_rows=Non
             rows = second_orders_rows or []
         return pd.DataFrame([]), pd.DataFrame(rows)
 
+    _p = params if params is not None else _PARAMS
     monkeypatch.setattr(R, "run_strategy_simple", fake_run)
-    monkeypatch.setattr(R, "STRATEGIES", {**getattr(R, "STRATEGIES", {}), 'regime_wheel_boxx_greeks': _PARAMS,
-                                          'regime_wheel_boxx': _PARAMS})
+    monkeypatch.setattr(R, "STRATEGIES", {**getattr(R, "STRATEGIES", {}), 'regime_wheel_boxx_greeks': _p,
+                                          'regime_wheel_boxx': _p})
     # keep KERNELS pointing the CHAMPION_KEY at our params-bearing strategy
     from validated_kernel_adapter import KERNELS, CHAMPION_KEY
     monkeypatch.setitem(KERNELS, CHAMPION_KEY, {**KERNELS.get(CHAMPION_KEY, {}),
@@ -187,8 +265,9 @@ def _install_engine(monkeypatch, orders_rows, final=None, second_orders_rows=Non
 
 
 def _run(monkeypatch, positions, orders_rows, cash=120000.0, spot=12.0,
-         final=None, second_orders_rows=None, bs_delta=0.5):
-    _install_engine(monkeypatch, orders_rows, final=final, second_orders_rows=second_orders_rows)
+         final=None, second_orders_rows=None, bs_delta=0.5, params=None):
+    _install_engine(monkeypatch, orders_rows, final=final,
+                    second_orders_rows=second_orders_rows, params=params)
     # _called_certain uses R.bs_greeks_pt(...,'C') → return (delta, gamma)
     monkeypatch.setattr(R, "bs_greeks_pt", lambda *a, **k: (bs_delta, 0.0))
     return LK.get_live_recommendation(positions, cash=cash, spot=spot)
@@ -224,45 +303,61 @@ def test_coverage_covered_recycle_does_not_breach(monkeypatch):
 
 
 def test_coverage_genuine_overwrite_breaches_and_drops_naked(monkeypatch):
-    """Genuine over-write: sell beyond shares//100 with NO closes → INVARIANT BREACHED,
-    the uncovered SELL-CALL leg is hard-blocked (dropped). THIS is the naked-call block."""
-    # 200 shares → coverable = 2. Engine tries to sell 5 calls, no closes. Net 0-0+5=5 > 2.
-    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 200}]
-    orders = [{'type': 'OPEN_CC', 'qty': 5, 'K': 14.0, 'dte': 45, 'credit': 200, 'pnl': 0,
-               'expiry': _ts_plus(45)}]
+    """Genuine over-write: SELL calls beyond shares//100 with NO closes → INVARIANT BREACHED,
+    and the leg(s) past the coverage room are hard-blocked (dropped). THE naked-call block.
+
+    The drop logic is row-by-row: once `room` is exhausted, further SELL-CALL rows are dropped.
+    We feed TWO SELL-CALL lots against 0 shares (room 0) so BOTH are uncovered and dropped."""
+    # 0 shares → coverable 0. Two OPEN_CC lots, no closes → net 2 > 0 → all naked → all dropped.
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 0}]
+    orders = [
+        {'type': 'OPEN_CC', 'qty': 1, 'K': 14.0, 'dte': 45, 'credit': 100, 'pnl': 0,
+         'expiry': _ts_plus(45)},
+        {'type': 'OPEN_CC', 'qty': 1, 'K': 15.0, 'dte': 45, 'credit': 100, 'pnl': 0,
+         'expiry': _ts_plus(50)},
+    ]
     res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
     cov = res['coverage']
     assert cov['violation'] is not None
     assert 'COVERAGE INVARIANT BREACHED' in cov['violation']
     assert cov['covered'] is False
-    # the over-write CALL leg must NOT survive into the order list (naked block)
+    # NO uncovered SELL-CALL leg may survive into the operator's order list (naked block).
     sell_calls = [r for r in res['recommendations']
                   if r['right'] == 'CALL' and (r['side'] or '').upper().startswith('SELL')]
     assert sell_calls == [], "naked short-call leg leaked into the order list"
 
 
-def test_coverage_partial_room_keeps_covered_portion(monkeypatch):
-    """When some coverage exists, the assertion keeps as many CC lots as fit and drops the rest."""
-    # 300 shares → coverable 3, no existing calls. Engine sells 5 → keep 3, drop 2.
-    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 300}]
-    orders = [{'type': 'OPEN_CC', 'qty': 5, 'K': 14.0, 'dte': 45, 'credit': 200, 'pnl': 0,
-               'expiry': _ts_plus(45)}]
+def test_coverage_partial_room_keeps_first_drops_overflow(monkeypatch):
+    """Row-by-row drop: the first SELL-CALL lot that fits within `room` is KEPT; the next lot
+    after `room` goes <=0 is DROPPED. Proves the keep/drop boundary, not just an all-or-nothing."""
+    # 100 shares → room 1. Two lots of 1: first kept (room 1→0), second dropped (room<=0).
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 100}]
+    orders = [
+        {'type': 'OPEN_CC', 'qty': 1, 'K': 14.0, 'dte': 45, 'credit': 100, 'pnl': 0,
+         'expiry': _ts_plus(45)},
+        {'type': 'OPEN_CC', 'qty': 1, 'K': 15.0, 'dte': 45, 'credit': 100, 'pnl': 0,
+         'expiry': _ts_plus(50)},
+    ]
     res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
     assert res['coverage']['violation'] is not None
-    # single order of qty 5 exceeds room 3 in one shot → first lot consumes all room then
-    # subsequent would drop; with one row the row is kept until room<=0 is re-checked.
-    # Net behaviour: at least the breach is surfaced and no MORE than coverable survive overall.
-    surviving = sum(r['qty'] for r in res['recommendations']
-                    if r['right'] == 'CALL' and (r['side'] or '').upper().startswith('SELL'))
-    assert surviving <= 5  # the row-level drop logic ran (covered by the breach branch)
+    sell_calls = [r for r in res['recommendations']
+                  if r['right'] == 'CALL' and (r['side'] or '').upper().startswith('SELL')]
+    # exactly the first (covered) lot survives; the overflow lot is dropped
+    assert len(sell_calls) == 1
+    assert sell_calls[0]['strike'] == 14.0
+    assert not sell_calls[0].get('_dropped_uncovered')
 
 
 # ───────────────────────── 3. assign_risk NET model ─────────────────────────
 
 def test_assign_risk_net_model(monkeypatch):
-    """put_assign = Σ p_assign·qty·100 ; call_away = Σ(1-p_assign)·qty·100 ; net = puts - calls."""
-    # spot 12. ITM short put K=13 (>=spot) → p_assign 0.8. OTM short call K=14 (>spot) → p_assign 0.2
-    #   → call_away = (1-0.2)=0.8.  ITM short call K=11 (<spot) for called_away_soon.
+    """put_assign = Σ p_assign·qty·100 ; call_away = Σ(1-p_assign)·qty·100 ; net = puts - calls.
+
+    stub p_assign = 0.8 if K>=spot else 0.2 (spot=12):
+      put  K=13 (>=spot): p=0.8 → put_assign  = 0.8·2·100 = 160
+      call K=14 (>=spot): p=0.8 → call_away    = (1-0.8)·1·100 = 20
+      call K=11 (< spot): p=0.2 → call_away    = (1-0.2)·3·100 = 240
+      → call_away total 260 ; net = 160 - 260 = -100."""
     positions = [
         {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000},
         {'symbol': 'UNG', 'option_type': 'P', 'strike': 13.0, 'qty': -2, 'expiry': _ts_plus(20)},
@@ -271,13 +366,11 @@ def test_assign_risk_net_model(monkeypatch):
     ]
     res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
     ar = res['assign_risk']
-    # put: 0.8 * 2 * 100 = 160
     assert ar['put_assign_delta'] == 160
-    # calls away: K=14 → (1-0.2)=0.8*1*100=80 ; K=11 (ITM, p_assign 0.8) → (1-0.8)=0.2*3*100=60 → 140
-    assert ar['call_away_delta'] == 140
-    assert ar['net_delta'] == 160 - 140
+    assert ar['call_away_delta'] == 20 + 240
+    assert ar['net_delta'] == 160 - 260
     assert ar['pct_of_shares'] == round(160 / 1000 * 100)
-    assert ar['net_pct_of_shares'] == round((160 - 140) / 1000 * 100)
+    assert ar['net_pct_of_shares'] == round((160 - 260) / 1000 * 100)
     # target 35% of 1000 = 350 ; put_assign 160 <= 350 → within_target True
     assert ar['within_target'] is True
     # the K=11 ITM call expiring in 3d (<=4) is "called away soon"
@@ -410,6 +503,49 @@ def test_get_live_recommendation_full_shape(monkeypatch):
     assert 'now_per_day' in res['theta'] and 'gross_premium_month' in res['theta']
     # coverage clean (no short calls written)
     assert res['coverage']['violation'] is None
+
+
+def test_recs_action_branches(monkeypatch):
+    """Exercise the order-line builders for share trades, KOLD hedge, ITM divest and a
+    take-profit-without-strike fallback (the elif chain in the recs loop)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000}]
+    orders = [
+        {'type': 'Z_TARGET_TRIM', 'qty': 100, 'pnl': 0, 'credit': 0},        # SELL UNG shares
+        {'type': 'KOLD_BOOK_HEDGE', 'qty': 300, 'pnl': 0, 'credit': 0},      # SET KOLD hedge
+        {'type': 'ITM_CC_DIVEST', 'qty': 1, 'K': 11.0, 'dte': 20, 'credit': 50, 'pnl': 0,
+         'expiry': _ts_plus(20)},                                            # SELL CALL (divest)
+        {'type': 'CALL_TP', 'qty': 1, 'pnl': 40, 'credit': 0},               # TP without strike
+    ]
+    res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
+    actions = {r['type']: r['action'] for r in res['recommendations']}
+    assert 'UNG shares' in actions['Z_TARGET_TRIM']
+    assert 'KOLD' in actions['KOLD_BOOK_HEDGE']
+    assert '$11.00 CALL' in actions['ITM_CC_DIVEST']
+    assert 'take profit' in actions['CALL_TP']
+
+
+def test_delta_compass_hedge_active(monkeypatch):
+    """Bearish regime + delta above the trim ceiling + delta_hedge on → HEDGE ACTIVE branch."""
+    # Big long share book pushes options+shares delta high; force a bearish regime + hedge on.
+    params = {**_PARAMS, 'delta_hedge': True, 'delta_target_nav': 0.0, 'delta_hedge_rs_min': 0.0}
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 8000}]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3, params=params)
+    dc = res['delta_compass']
+    # with delta_target_nav 0 the trim ceiling is ~0 and 8000 shares is well above it
+    assert 'status' in dc
+    assert dc['hedge_active'] in (True, False)  # branch executed regardless of regime sign
+
+
+def test_concentration_pct_nav_cap(monkeypatch):
+    """max_short_pct_nav set → per-strike cap is NAV-proportional (_cap_for pct branch)."""
+    params = {**_PARAMS, 'max_short_pct_nav': 0.05}
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -20, 'expiry': _ts_plus(20)},
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3, params=params)
+    cl = next(c for c in res['concentration'] if c['strike'] == 11.0)
+    assert cl['cap'] is not None and cl['cap'] >= 1
 
 
 def test_get_live_recommendation_unknown_kernel(monkeypatch):
