@@ -164,3 +164,36 @@ def test_early_assign_on_vs_off(strat, df_period):
         assert res is not None and 'error' not in res
         assert res['cost_drag'] == 0
         assert math.isfinite(res['ann']) and math.isfinite(res['sharpe']) and math.isfinite(res['mdd'])
+
+
+# --------------------------------------------------------------------------- #
+# 4. main() — the report driver (TRAIN/TEST split, cost-impact summary)        #
+# --------------------------------------------------------------------------- #
+
+def test_main_runs_on_short_windows(monkeypatch, capsys):
+    """Drive main() end-to-end on SHORT disjoint TRAIN/TEST windows (kept fast).
+
+    Shrinks the module-level date constants to ~100/120-row spans and runs a single
+    real strategy, so the full report path (split, per-strategy table, best-variant +
+    cost-impact summary) executes without a multi-year backtest.
+    """
+    monkeypatch.setattr(H, 'TRAIN_START', '2022-04-11')
+    monkeypatch.setattr(H, 'TRAIN_END', '2022-09-01')
+    monkeypatch.setattr(H, 'TEST_START', '2022-09-02')
+    monkeypatch.setattr(H, 'TEST_END', '2023-02-24')
+    # one real strategy keeps it quick; also exercises the `name not in STRATEGIES` skip
+    monkeypatch.setattr(sys, 'argv',
+                        ['honest_walkforward', '--strategies', STRAT_KEY, '__nonexistent__',
+                         '--cash', '100000'])
+
+    H.main()
+
+    out = capsys.readouterr().out
+    assert 'HONEST WALK-FORWARD' in out
+    assert 'TRAIN window' in out and 'SEALED' in out
+    # the per-strategy row and the best-variant / cost summary rendered
+    assert STRAT_KEY in out
+    assert 'BEST out-of-sample' in out
+    assert 'Total cost drag' in out
+    # Wealthsimple cost model: zero commission/slippage -> $0 drag in the summary line
+    assert 'Total cost drag (TEST window): $0' in out
