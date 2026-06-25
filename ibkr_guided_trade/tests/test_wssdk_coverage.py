@@ -21,6 +21,7 @@ import ws_sdk.auth as auth
 import ws_sdk.gql as gql
 import ws_sdk.quotes as quotes
 import ws_sdk.orders as orders
+import ws_sdk.positions as positions
 from ws_sdk.client import WSClient
 from ws_sdk.errors import (
     AuthError,
@@ -72,6 +73,17 @@ def test_save_cookies_atomic_and_perms(monkeypatch, tmp_path):
     # No stray temp files left behind
     leftover = [p for p in tmp_path.iterdir() if p.name.startswith(".cookies.")]
     assert leftover == []
+
+
+def test_atomic_dump_json_failure_unlink_also_fails(monkeypatch, tmp_path):
+    """If cleanup of the temp file ALSO raises OSError, the original error
+    still propagates and the OSError is swallowed (except OSError: pass)."""
+    _redirect_config(monkeypatch, tmp_path)
+    target = tmp_path / "cookies.json"
+    monkeypatch.setattr(auth.json, "dump", MagicMock(side_effect=RuntimeError("disk full")))
+    monkeypatch.setattr(auth.os, "unlink", MagicMock(side_effect=OSError("gone")))
+    with pytest.raises(RuntimeError):
+        auth._atomic_dump_json({"new": "data"}, target)
 
 
 def test_atomic_dump_json_failure_leaves_original_and_cleans_temp(monkeypatch, tmp_path):
@@ -553,7 +565,7 @@ def test_fetch_extended_order_none(monkeypatch):
 def test_fetch_extended_order_found(monkeypatch):
     monkeypatch.setattr(
         orders, "graphql_query",
-        lambda *a, **k: {"soOrdersExtendedOrder": load_fixture("extended_order_filled")},
+        lambda *a, **k: load_fixture("extended_order_filled"),
     )
     order = orders.fetch_extended_order(MagicMock(), "order-x")
     assert order is not None
@@ -564,7 +576,7 @@ def test_wait_for_order_terminal_immediately(monkeypatch):
     filled = load_fixture("extended_order_filled")
     monkeypatch.setattr(
         orders, "graphql_query",
-        lambda *a, **k: {"soOrdersExtendedOrder": filled},
+        lambda *a, **k: filled,
     )
     order = orders.wait_for_order(MagicMock(), "order-x", now=lambda: 0.0, sleep=lambda s: None)
     assert order.is_terminal
@@ -574,7 +586,7 @@ def test_wait_for_order_times_out_with_last_state(monkeypatch):
     pending = load_fixture("extended_order_pending")
     monkeypatch.setattr(
         orders, "graphql_query",
-        lambda *a, **k: {"soOrdersExtendedOrder": pending},
+        lambda *a, **k: pending,
     )
     clock = {"t": 0.0}
 
@@ -851,6 +863,33 @@ def test_client_list_open_orders_no_verify(client, patch_graphql):
     assert stubs[0].submitted_quantity == Decimal("5")
 
 
+def test_client_list_open_orders_no_verify_sell_stub(client, patch_graphql):
+    """A pending SELL order exercises the SELL branch of _activity_to_stub."""
+    def responder(op_name, variables):
+        if op_name == "FetchActivityFeedItems":
+            return {
+                "activityFeedItems": {
+                    "edges": [{"node": {
+                        "accountId": "non-registered-BpgPfFs0QA",
+                        "type": "OPTIONS_SELL",
+                        "unifiedStatus": "PENDING",
+                        "canonicalId": "order-sell",  # falls back to canonicalId
+                        "securityId": "sec-o-1",
+                        # assetQuantity absent -> "0" default path
+                    }}],
+                    "pageInfo": {"hasNextPage": False},
+                }
+            }
+        return {}
+
+    patch_graphql(responder)
+    stubs = client.list_open_orders(verify=False)
+    assert len(stubs) == 1
+    assert stubs[0].side == OrderSide.SELL
+    assert stubs[0].external_id == "order-sell"
+    assert stubs[0].submitted_quantity == Decimal("0")
+
+
 def test_client_list_open_orders_verify_drops_terminal(client, patch_graphql):
     def responder(op_name, variables):
         if op_name == "FetchActivityFeedItems":
@@ -864,7 +903,7 @@ def test_client_list_open_orders_verify_drops_terminal(client, patch_graphql):
                 }
             }
         if op_name == "FetchSoOrdersExtendedOrder":
-            return {"soOrdersExtendedOrder": load_fixture("extended_order_filled")}
+            return load_fixture("extended_order_filled")
         return {}
 
     patch_graphql(responder)
@@ -884,7 +923,7 @@ def test_client_list_open_orders_verify_keeps_open(client, patch_graphql):
                 }
             }
         if op_name == "FetchSoOrdersExtendedOrder":
-            return {"soOrdersExtendedOrder": load_fixture("extended_order_pending")}
+            return load_fixture("extended_order_pending")
         return {}
 
     patch_graphql(responder)
@@ -917,6 +956,25 @@ def test_client_list_open_orders_verify_skips_missing(client, patch_graphql):
 def test_client_list_open_orders_empty_feed(client, patch_graphql):
     patch_graphql({"FetchActivityFeedItems": {}})
     assert client.list_open_orders() == []
+
+
+# ====================================================================== positions
+def test_fetch_positions_empty_data(monkeypatch):
+    monkeypatch.setattr(positions, "graphql_query", lambda *a, **k: {})
+    assert positions.fetch_positions(MagicMock(), "id-1") == []
+
+
+def test_fetch_positions_without_account_ids_omits_var(monkeypatch):
+    captured = {}
+
+    def fake_q(session, op, query, variables):
+        captured.update(variables)
+        return load_fixture("positions_margin")
+
+    monkeypatch.setattr(positions, "graphql_query", fake_q)
+    out = positions.fetch_positions(MagicMock(), "id-1")  # no account_ids
+    assert "accountIds" not in captured
+    assert len(out) >= 1
 
 
 # ====================================================================== errors
