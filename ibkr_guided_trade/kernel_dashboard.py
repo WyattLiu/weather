@@ -690,6 +690,7 @@ td.neutral { color: var(--blue); }
     <div id="sot-concentration"></div>
     <div id="sot-settlement"></div>
     <h3 style="margin:14px 0 6px">Orders for today</h3>
+    <div id="sot-reaccum"></div>
     <div id="sot-orders"></div>
   </section>
   <div class="sub">
@@ -1858,13 +1859,16 @@ async function drawSOT(){
       let eraHtml = '';
       if (era && era.puts && era.puts.length) {
         const plist = era.puts.map(p=>'<b>SELL '+p.qty+'× $'+p.K.toFixed(2)+' put</b> ('+p.dte+'d, +$'+fmt(p.credit,0)+')').join(' · ');
-        eraHtml = '<div style="margin:14px 0 8px;padding:10px 13px;border-radius:6px;background:#1565c018;border-left:3px solid #1565c0">'+
-          '<div style="font-weight:700;color:#1565c0">⏰ EXPIRY-DAY RE-ACCUMULATION — place FRIDAY, pre-close ('+era.clusters.join(', ')+' called away)</div>'+
-          '<div style="margin-top:5px">'+plist+'</div>'+
+        eraHtml = '<div style="margin:0 0 10px;padding:10px 13px;border-radius:6px;background:#1565c018;border-left:3px solid #1565c0">'+
+          '<div style="font-weight:700;color:#1565c0">⏰ FRIDAY RE-ACCUMULATION — what to SELL pre-close ('+era.clusters.join(', ')+' called away)</div>'+
+          '<div style="margin-top:5px;font-size:1.02rem">'+plist+'</div>'+
           '<div style="margin-top:5px;font-size:.82rem;color:var(--text-dim)">'+era.note+'</div></div>';
       }
+      // surface the SELL at the TOP of "Orders for today" (not buried in the concentration panel)
+      const reEl = document.getElementById('sot-reaccum');
+      if (reEl) reEl.innerHTML = eraHtml;
       const flagged = conc.filter(c => c.over_cap);
-      if (!conc.length) { xel.innerHTML = eraHtml; }
+      if (!conc.length) { xel.innerHTML = ''; }
       else {
         const within = ar.within_target;
         const arcol = within ? '#26a269' : '#e08a00';
