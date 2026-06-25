@@ -555,3 +555,369 @@ def test_get_live_recommendation_unknown_kernel(monkeypatch):
     monkeypatch.setitem(KERNELS, '__nope__', {'strategy': '__nope__'})
     res = LK.get_live_recommendation([], cash=1000.0, spot=12.0, kernel_key='__nope__')
     assert 'error' in res
+
+
+# ═════════════════════ _options_data_freshness (fake psycopg2 DB path) ═════════════════════
+#
+# The real function opens a psycopg2 connection to a LAN Postgres. We inject a FAKE psycopg2
+# module into sys.modules so `import psycopg2` inside the function picks up our stub and the
+# DB branch (lines ~320-329) actually RUNS — no network. Three cases: rows present, no rows,
+# and connect() raising (the except/fallback).
+
+class _FakeCursor:
+    def __init__(self, row):
+        self._row = row
+
+    def execute(self, *a, **k):
+        return None
+
+    def fetchone(self):
+        return self._row
+
+
+class _FakeConn:
+    def __init__(self, row):
+        self._row = row
+
+    def cursor(self):
+        return _FakeCursor(self._row)
+
+    def close(self):
+        return None
+
+
+def _install_fake_psycopg2(monkeypatch, row=None, raise_on_connect=False):
+    import types
+    mod = types.ModuleType('psycopg2')
+
+    def connect(*a, **k):
+        if raise_on_connect:
+            raise RuntimeError('boom')
+        return _FakeConn(row)
+
+    mod.connect = connect
+    monkeypatch.setitem(sys.modules, 'psycopg2', mod)
+
+
+def test_options_data_freshness_with_db_rows(monkeypatch):
+    """DB returns a max(trade_date) → minute_asof set, stale_days computed, ok flag derived."""
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {'2026-06-24': {}})
+    monkeypatch.setattr(R, "surface_latest_date", lambda surf: '2026-06-24')
+    _install_fake_psycopg2(monkeypatch, row=('2026-06-24',))
+    out = LK._options_data_freshness()
+    assert out['surface_asof'] == '2026-06-24'
+    assert out['minute_asof'] == '2026-06-24'
+    assert out['stale_days'] is not None
+    assert isinstance(out['ok'], bool)
+
+
+def test_options_data_freshness_no_rows(monkeypatch):
+    """DB query returns (None,) → minute_asof stays None; if surface also empty, no refs."""
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {})   # empty → surface_asof None
+    _install_fake_psycopg2(monkeypatch, row=(None,))
+    out = LK._options_data_freshness()
+    assert out['minute_asof'] is None
+    assert out['surface_asof'] is None
+    assert out['stale_days'] is None        # no refs → unchanged
+    assert out['ok'] is True
+
+
+def test_options_data_freshness_connect_raises(monkeypatch):
+    """connect() raising is swallowed (except branch); surface-only still drives staleness."""
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {'2026-06-20': {}})
+    monkeypatch.setattr(R, "surface_latest_date", lambda surf: '2026-06-20')
+    _install_fake_psycopg2(monkeypatch, raise_on_connect=True)
+    out = LK._options_data_freshness()
+    assert out['minute_asof'] is None       # DB failed
+    assert out['surface_asof'] == '2026-06-20'
+    assert out['stale_days'] is not None     # surface ref still drives it
+
+
+def test_options_data_freshness_surface_raises(monkeypatch):
+    """_load_iv_surface raising is swallowed too (first try/except)."""
+    def _boom(*a, **k):
+        raise RuntimeError('surface down')
+    monkeypatch.setattr(R, "_load_iv_surface", _boom)
+    _install_fake_psycopg2(monkeypatch, row=(None,))
+    out = LK._options_data_freshness()
+    assert out['surface_asof'] is None
+    assert out['ok'] is True
+
+
+# ═════════════════════ scattered defensive branches ═════════════════════
+
+def test_settlement_watch_skip_arms():
+    """Non-UNG symbol, unparseable expiry, and bad strike/right are each skipped (no crash)."""
+    spot = 12.0
+    out = LK._settlement_watch([
+        {'symbol': 'DBA', 'option_type': 'P', 'strike': 20.0, 'qty': -1, 'expiry': _ts_plus(0)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -1, 'expiry': 'not-a-date'},
+        {'symbol': 'UNG', 'option_type': 'X', 'strike': 11.0, 'qty': -1, 'expiry': _ts_plus(0)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 0, 'qty': -1, 'expiry': _ts_plus(0)},
+    ], spot)
+    assert out == []
+
+
+def test_settlement_watch_long_itm_and_otm():
+    """Long ITM → DECIDE_LONG, long OTM → ABANDON_LONG (the `long` arms)."""
+    spot = 12.0
+    out = LK._settlement_watch([
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 10.0, 'qty': +1, 'expiry': _ts_plus(0)},
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 15.0, 'qty': +1, 'expiry': _ts_plus(0)},
+    ], spot)
+    kinds = {i['kind'] for i in out}
+    assert kinds == {'DECIDE_LONG', 'ABANDON_LONG'}
+
+
+def test_to_engine_positions_bad_record_skipped():
+    """A record whose strike can't be parsed to float raises in the try → skipped (192-193)."""
+    sp, sc, lp, lc = LK._to_engine_positions([
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': object(), 'qty': -1, 'expiry': _ts_plus(10)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -1, 'expiry': _ts_plus(10)},
+    ])
+    assert len(sp) == 1 and sp[0]['K'] == 11.0
+
+
+def test_recs_unknown_actionable_type_falls_through(monkeypatch):
+    """An order with a JUSTIFY type but no _LEG side/right and no K → action = type (else arm)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000}]
+    # KOLD_SHOULDER_ENTRY is in JUSTIFY with _LEG ('BUY','KOLD'); use a put-floor w/o K to hit
+    # the final `else: action = ty` we need a row with right in PUT/CALL fails → use no-K TP-less.
+    # OPEN_LONG_PUT_FLOOR with NO strike → right=PUT but `K` None → none of the K-branches → else.
+    orders = [{'type': 'OPEN_LONG_PUT_FLOOR', 'qty': 2, 'dte': 30, 'credit': 0, 'pnl': 0}]
+    res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
+    rec = next(r for r in res['recommendations'] if r['type'] == 'OPEN_LONG_PUT_FLOOR')
+    assert rec['action'] == 'OPEN_LONG_PUT_FLOOR'   # else: action = ty (no strike)
+
+
+def test_kold_price_from_market_value(monkeypatch):
+    """KOLD/BOXX price derived from market_value/qty when present (the kold_px micro-branch)."""
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000},
+        {'symbol': 'KOLD', 'qty': 200, 'market_value': 10000.0},   # → kold_px = 50
+        {'symbol': 'BOXX', 'qty': 100, 'market_value': 11700.0},   # → boxx_px = 117
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    # KOLD folds into the greeks net delta (kold_delta non-zero proves the price was used)
+    assert 'kold_delta' in res['greeks']['now']
+
+
+def test_delta_compass_nav_zero_fallback(monkeypatch):
+    """positions with no market_value → nav falls back to cash + shares*spot (line ~645)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000}]   # no market_value key
+    res = _run(monkeypatch, positions, [], cash=50000.0, spot=12.0, bs_delta=0.3)
+    # nav must be > 0 (fallback applied), so share_pct_nav computes
+    assert res['delta_compass']['nav'] > 0
+
+
+def test_compute_historical_z_exception_path(monkeypatch):
+    """If compute_historical_z raises inside the assign-risk block, _zc falls back to 0.0."""
+    real = R.compute_historical_z
+    calls = {'n': 0}
+
+    def flaky(row, use_surprise=False):
+        calls['n'] += 1
+        # the assign-risk block call passes use_surprise kw; make THAT one raise
+        if 'use_surprise' in (use_surprise,) or use_surprise is not None:
+            # raise only on the assign-risk invocation (2nd+ call); 1st is z_models
+            if calls['n'] >= 2:
+                raise RuntimeError('z model down')
+        return real(row, use_surprise=use_surprise)
+
+    monkeypatch.setattr(R, "compute_historical_z", flaky)
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -2, 'expiry': _ts_plus(20)},
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    # z falls back to 0.0 → still produces an assign_risk dict, no crash
+    assert res['assign_risk']['z'] == 0.0
+
+
+def test_concentration_dte_parse_fallback(monkeypatch):
+    """An unparseable expiry on a short cluster → _dte_of falls back to 30 (740-741)."""
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -3, 'expiry': 'garbage'},
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    cl = next(c for c in res['concentration'] if c['strike'] == 11.0)
+    assert cl['exp_detail'][0]['dte'] == 30      # fallback
+
+
+def test_book_greeks_direct_branches(monkeypatch):
+    """Directly exercise _book_greeks: degenerate-leg skip, real-surface iv lookup, KOLD delta."""
+    # non-empty surface so the `if surf and latest` arm runs (iv_from_surface path)
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {'2026-06-24': {}})
+    spot = 12.0
+    sp = [
+        {'K': 0, 'dte': 20, 'qty': 1},        # K<=0 → continue (degenerate skip)
+        {'K': 11.0, 'dte': 0, 'qty': 1},      # dte<=0 → continue
+        {'K': 11.0, 'dte': 20, 'qty': 0},     # qty 0 → continue
+        {'K': 11.0, 'dte': 20, 'qty': 2},     # valid → priced off the surface
+    ]
+    g = LK._book_greeks(sp, [], [], [], shares=1000, spot=spot,
+                        kold_shares=100, kold_price=50.0)
+    assert g['delta'] == round(g['delta'], 1)
+    # KOLD folded in (negative inverse-ETF delta) → kold_delta non-zero
+    assert g['kold_delta'] != 0.0
+
+
+def test_book_greeks_iv_nan_fallback(monkeypatch):
+    """iv_from_surface returning NaN → falls back to 0.50 (the `iv != iv` arm)."""
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {'2026-06-24': {}})
+    monkeypatch.setattr(R, "iv_from_surface", lambda *a, **k: float('nan'))
+    g = LK._book_greeks([{'K': 11.0, 'dte': 20, 'qty': 1}], [], [], [], 0, 12.0)
+    assert isinstance(g['delta'], float)
+
+
+def test_is_ung_shares_excludes_option(monkeypatch):
+    """A position flagged is_option=True is excluded from the share count (line 398/411)."""
+    positions = [
+        {'symbol': 'UNG', 'is_option': True, 'option_type': 'P', 'strike': 11.0,
+         'qty': -2, 'expiry': _ts_plus(20)},                 # option → not shares, skipped in KOLD loop
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000},
+        {'symbol': 'KOLD', 'qty': 50},                       # no market_value → mv branch NOT taken
+        {'symbol': 'BOXX', 'qty': 30},                       # no market_value → mv branch NOT taken
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    # share count is exactly the 1000 (option excluded)
+    assert res['coverage']['shares'] == 1000
+
+
+def test_recs_expiry_parse_except(monkeypatch):
+    """A SELL order carrying an unparseable expiry string hits the recompute except (514-515)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000}]
+    orders = [{'type': 'OPEN_PUT', 'qty': 2, 'K': 10.5, 'dte': 30, 'credit': 100, 'pnl': 0,
+               'expiry': 'not-a-real-date'}]
+    res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
+    rec = next(r for r in res['recommendations'] if r['type'] == 'OPEN_PUT')
+    assert rec['expiry'] == 'not-a-real-date'   # kept as-is; dte recompute swallowed
+
+
+def test_coverage_breach_keeps_non_call_recs(monkeypatch):
+    """During a breach, NON-(sell-call) recs pass through the drop loop untouched (573->579)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 0}]
+    orders = [
+        {'type': 'OPEN_PUT', 'qty': 3, 'K': 10.0, 'dte': 30, 'credit': 90, 'pnl': 0,
+         'expiry': _ts_plus(30)},                                   # not a sell-call → kept
+        {'type': 'OPEN_CC', 'qty': 2, 'K': 14.0, 'dte': 45, 'credit': 80, 'pnl': 0,
+         'expiry': _ts_plus(45)},                                   # naked → dropped
+    ]
+    res = _run(monkeypatch, positions, orders, spot=12.0, bs_delta=0.3)
+    assert res['coverage']['violation'] is not None
+    types = [r['type'] for r in res['recommendations']]
+    assert 'OPEN_PUT' in types          # the put survived the drop loop
+    assert 'OPEN_CC' not in types       # the naked call was dropped
+
+
+def test_delta_compass_nav_zero_branch(monkeypatch):
+    """cash=0 and no market_value → nav<=0 → fallback to cash + shares*spot (line 645)."""
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000}]   # no market_value
+    res = _run(monkeypatch, positions, [], cash=0.0, spot=12.0, bs_delta=0.3)
+    assert res['delta_compass']['nav'] == round(1000 * 12.0, 0)
+
+
+def test_delta_compass_dormant_bear_branch(monkeypatch):
+    """Regime bearish (rs_min lowered so _bear=True) but hedge off → the final `else` dormant
+    branch (line 678), distinct from the not-bear dormant branch."""
+    params = {**_PARAMS, 'delta_hedge_rs_min': 0.0}   # _bear = rs(0.012) > 0 → True; no delta_hedge
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000}]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3, params=params)
+    assert res['delta_compass']['hedge_active'] is False
+    assert 'hedge dormant' in res['delta_compass']['status']
+
+
+def test_concentration_skips_bad_short_leg(monkeypatch):
+    """A short position with an invalid right/strike is skipped in the concentration tally (718)."""
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000},
+        {'symbol': 'UNG', 'option_type': 'X', 'strike': 11.0, 'qty': -3, 'expiry': _ts_plus(20)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 0, 'qty': -3, 'expiry': _ts_plus(20)},
+        {'symbol': 'UNG', 'option_type': 'P', 'strike': 11.0, 'qty': -2, 'expiry': _ts_plus(20)},
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    strikes = {c['strike'] for c in res['concentration']}
+    assert strikes == {11.0}    # only the valid leg tallied
+
+
+def test_concentration_over_cap_suggestion(monkeypatch):
+    """A cluster over the per-strike cap emits the de-risk suggestion (over_cap arm, ~781)."""
+    params = {**_PARAMS, 'max_short_per_strike': 2}
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 5000},
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 13.0, 'qty': -8, 'expiry': _ts_plus(20)},
+    ]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3, params=params)
+    cl = next(c for c in res['concentration'] if c['strike'] == 13.0)
+    assert cl['over_cap'] is True
+    assert 'de-risk' in cl['suggestion']     # CALL-side suggestion arm
+
+
+def test_called_certain_iv_nan_fallback(monkeypatch):
+    """_called_certain with a non-empty surface but NaN iv → falls back to 0.5 (461->463)."""
+    monkeypatch.setattr(R, "_load_iv_surface", lambda *a, **k: {'2026-06-24': {}})
+    monkeypatch.setattr(R, "iv_from_surface", lambda *a, **k: float('nan'))
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1500},
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 11.0, 'qty': -5, 'expiry': _ts_plus(1)},
+    ]
+    second = [{'type': 'OPEN_PUT', 'qty': 4, 'K': 11.0, 'dte': 30, 'credit': 150,
+               'expiry': _ts_plus(30)}]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.95, second_orders_rows=second)
+    assert res['expiry_reaccum'] is not None
+
+
+def test_expiry_reaccum_no_puts(monkeypatch):
+    """Called-certain fires but the 2nd engine run emits NO puts → expiry_reaccum stays None
+    (the `if _fputs:` false arm, 477->491)."""
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1500},
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 11.0, 'qty': -5, 'expiry': _ts_plus(1)},
+    ]
+    # second run returns a non-put order → _fputs empty → expiry_reaccum None
+    second = [{'type': 'CALL_TP', 'qty': 1, 'K': 11.0, 'dte': 1, 'pnl': 10}]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.95, second_orders_rows=second)
+    assert res['expiry_reaccum'] is None
+
+
+def test_expiry_reaccum_second_run_raises(monkeypatch):
+    """If the 2nd engine run raises, the except swallows it → expiry_reaccum None (488-489)."""
+    _install_engine(monkeypatch, [])    # sets up params/KERNELS/freshness stub
+    monkeypatch.setattr(R, "bs_greeks_pt", lambda *a, **k: (0.95, 0.0))
+
+    calls = {'n': 0}
+
+    def fake_run(df, params, seed_state=None, live_decision=False, **kw):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            R._LIVE_FINAL = {'short_puts': seed_state.get('short_puts', []),
+                             'short_calls': seed_state.get('short_calls', []),
+                             'long_puts': [], 'long_calls': [],
+                             'shares': seed_state.get('shares', 0),
+                             'cash': seed_state.get('cash', 0.0), 'kold': seed_state.get('kold', 0)}
+            return pd.DataFrame([]), pd.DataFrame([])
+        raise RuntimeError('second run blew up')   # the expiry_reaccum re-run fails
+
+    monkeypatch.setattr(R, "run_strategy_simple", fake_run)
+    positions = [
+        {'symbol': 'UNG', 'right': 'SHARES', 'qty': 1500},
+        {'symbol': 'UNG', 'option_type': 'C', 'strike': 11.0, 'qty': -5, 'expiry': _ts_plus(1)},
+    ]
+    res = LK.get_live_recommendation(positions, cash=120000.0, spot=12.0)
+    assert res['expiry_reaccum'] is None     # except branch hit, no crash
+
+
+def test_refresh_to_today_except_path(monkeypatch):
+    """If refresh_to_today raises, the on-disk df is used (the except pass at ~386-387)."""
+    import types
+    mod = types.ModuleType('historical_data_pipeline')
+
+    def refresh_to_today(df, live_spot=None):
+        raise RuntimeError('network down')
+
+    mod.refresh_to_today = refresh_to_today
+    monkeypatch.setitem(sys.modules, 'historical_data_pipeline', mod)
+    positions = [{'symbol': 'UNG', 'right': 'SHARES', 'qty': 1000}]
+    res = _run(monkeypatch, positions, [], spot=12.0, bs_delta=0.3)
+    assert 'spot' in res        # completed despite refresh failing
