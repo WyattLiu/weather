@@ -1,0 +1,26 @@
+[run]
+branch = True
+source =
+    ws_sdk
+    backtest
+omit =
+    */venv/*
+    */tests/*
+    */__pycache__/*
+    backtest/test_*.py
+    backtest/validate_*.py
+    backtest/measure_*.py
+    backtest/requote_*.py
+
+[report]
+include =
+    */ws_sdk/*
+    */backtest/live_kernel.py
+    */backtest/honest_walkforward.py
+    */backtest/replay_engine.py
+show_missing = False
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    def __repr__

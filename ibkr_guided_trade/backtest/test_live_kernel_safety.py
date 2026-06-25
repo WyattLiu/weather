@@ -170,6 +170,12 @@ def test_settlement_watch_classifications():
     assert all(i['strike'] != 20.0 for i in out)
 
 
+def test_settlement_watch_bare_share_skipped():
+    """A UNG position with NO option markers (bare share) is skipped at the option-check (line 84)."""
+    out = LK._settlement_watch([{'symbol': 'UNG', 'qty': 1000}], 12.0)
+    assert out == []
+
+
 def test_settlement_watch_far_otm_skipped():
     """Beyond tomorrow, only ITM/pin surface — a 3d OTM short is not urgent → skipped."""
     spot = 12.0
@@ -204,6 +210,14 @@ def test_update_nav_peak_override_and_ratchet(tmp_path, monkeypatch):
     assert LK._update_nav_peak(90000.0, override=150000.0) == 150000.0
     # override below current NAV → floored at current
     assert LK._update_nav_peak(160000.0, override=120000.0) == 160000.0
+
+
+def test_update_nav_peak_write_failure_swallowed(tmp_path, monkeypatch):
+    """An unwritable peak-file path makes the json.dump raise → except swallows it (367-368);
+    the function still returns the computed peak (write is best-effort)."""
+    # point at a DIRECTORY → open(..., 'w') raises IsADirectoryError, caught by the except
+    monkeypatch.setattr(LK, "_NAV_PEAK_FILE", str(tmp_path))
+    assert LK._update_nav_peak(100000.0) == 100000.0
 
 
 # ───────────────────────── _opt_expiry ─────────────────────────
