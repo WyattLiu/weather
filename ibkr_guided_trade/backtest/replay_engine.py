@@ -3161,13 +3161,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     excess = s['cash'] - put_collat - cash_buffer
                     margin_factor = p.get('boxx_margin_factor', 0.6)  # default conservative
                 if excess > 5000:
-                    target_boxx_dollars = excess * margin_factor
-                    target_boxx_shares = int(target_boxx_dollars / spot_boxx)
-                    delta = target_boxx_shares - s['boxx']
-                    if delta >= 10:
-                        # Buy more BOXX
-                        s['boxx'] += delta
-                        s['cash'] -= delta * spot_boxx + delta * SPREAD_SHARE
+                    if p.get('boxx_sweep_full') and p.get('boxx_sweep_direct', True):
+                        # SWEEP ALL idle cash above the buffer into BOXX every bar. Buy the EXCESS
+                        # DIRECTLY — the old `delta = target - s['boxx']` netted the cash-derived target
+                        # against the existing holding, so once BOXX was large it UNDER-SWEPT every cash
+                        # inflow (assignments, premium) and left it sitting idle (no yield) until cash
+                        # re-accumulated past the whole BOXX value. BOXX is marginable put collateral, so
+                        # proactively convert idle cash; margin_factor (0.95) keeps headroom.
+                        buy = int(excess * margin_factor / spot_boxx)
+                        if buy >= 10:
+                            s['boxx'] += buy
+                            s['cash'] -= buy * spot_boxx + buy * SPREAD_SHARE
+                    else:
+                        target_boxx_dollars = excess * margin_factor
+                        target_boxx_shares = int(target_boxx_dollars / spot_boxx)
+                        delta = target_boxx_shares - s['boxx']
+                        if delta >= 10:
+                            s['boxx'] += delta
+                            s['cash'] -= delta * spot_boxx + delta * SPREAD_SHARE
                 elif excess < -1000 and s['boxx'] > 0:
                     # Need cash for puts — sell BOXX
                     needed = min(s['boxx'], int(abs(excess) / spot_boxx) + 10)
