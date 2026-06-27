@@ -954,7 +954,7 @@ def print_phase3_report(sym, data):
 
     # Support / Resistance levels
     if support_levels or resistance_levels:
-        print(f'\n  KEY LEVELS:')
+        print('\n  KEY LEVELS:')
         if support_levels:
             sup_str = '  '.join(f'${p:.1f}({c}x)' for p, c in support_levels[:4])
             print(f'    Support:    {sup_str}')
@@ -965,7 +965,7 @@ def print_phase3_report(sym, data):
     # Put chain — annotate strikes near support
     put_data = data.get('put_data', {})
     if put_data:
-        print(f'\n  PUT CHAIN:')
+        print('\n  PUT CHAIN:')
         print(f'  {"Strike":>8} {"OTM%":>6} {"Bid":>7} {"Ask":>7} {"Mid":>7} {"OI":>7} {"Grd":>4} {"IV":>7} {"Delta":>7}')
         print(f'  {"-" * 62}')
         for strike in sorted(put_data.keys(), reverse=True):
@@ -981,7 +981,7 @@ def print_phase3_report(sym, data):
     call_data = data.get('call_data', {})
     otm_calls = {k: v for k, v in call_data.items() if v.get('bid', 0) > 0 and v.get('otm_pct', 0) > 1}
     if otm_calls:
-        print(f'\n  CALL CHAIN (OTM):')
+        print('\n  CALL CHAIN (OTM):')
         print(f'  {"Strike":>8} {"OTM%":>6} {"Bid":>7} {"Ask":>7} {"Mid":>7} {"OI":>7} {"Grd":>4} {"IV":>7} {"Delta":>7}')
         print(f'  {"-" * 62}')
         for strike in sorted(otm_calls.keys()):
@@ -997,7 +997,7 @@ def print_phase3_report(sym, data):
     call_walls = data.get('call_oi_walls', [])
     put_walls = data.get('put_oi_walls', [])
     if call_walls or put_walls:
-        print(f'\n  OI WALLS:')
+        print('\n  OI WALLS:')
         if put_walls:
             for strike, d in put_walls:
                 if d['oi'] > 0:
@@ -1010,7 +1010,7 @@ def print_phase3_report(sym, data):
     # Top bull put spreads — flag support-anchored trades
     spreads = data.get('spreads', [])
     if spreads:
-        print(f'\n  BULL PUT SPREADS:')
+        print('\n  BULL PUT SPREADS:')
         print(f'  {"Spread":>13} {"OTM%":>6} {"MidCr":>7} {"NatCr":>7} {"Width":>6} {"Risk":>7} '
               f'{"RoR":>6} {"AnnRoR":>8} {"OI(S/L)":>12} {"Score":>6}')
         print(f'  {"-" * 88}')
@@ -1025,7 +1025,7 @@ def print_phase3_report(sym, data):
     # Top bear call spreads — flag resistance-anchored trades
     bc_spreads = data.get('bear_call_spreads', [])
     if bc_spreads:
-        print(f'\n  BEAR CALL SPREADS:')
+        print('\n  BEAR CALL SPREADS:')
         print(f'  {"Spread":>13} {"OTM%":>6} {"MidCr":>7} {"NatCr":>7} {"Width":>6} {"Risk":>7} '
               f'{"RoR":>6} {"AnnRoR":>8} {"OI(S/L)":>12} {"Score":>6}')
         print(f'  {"-" * 88}')
@@ -1248,7 +1248,7 @@ def cmd_scan(args):
             if run_portfolio and len(phase3) >= 2:
                 _run_portfolio_opt(ib, phase3, total_capital)
 
-            print(f'\nNOTE: Analysis only — no orders placed')
+            print('\nNOTE: Analysis only — no orders placed')
             return
 
         # === Normal multi-phase flow ===
@@ -1278,7 +1278,7 @@ def cmd_scan(args):
         print_phase1_table(phase1)
 
         if phase1_only:
-            print(f'\nPhase 1 only — done.')
+            print('\nPhase 1 only — done.')
             return
 
         # Phase 2
@@ -1325,7 +1325,7 @@ def cmd_scan(args):
         if run_portfolio and len(phase3) >= 2:
             _run_portfolio_opt(ib, phase3, total_capital)
 
-        print(f'\nNOTE: Analysis only — no orders placed')
+        print('\nNOTE: Analysis only — no orders placed')
 
     finally:
         ib.disconnect()

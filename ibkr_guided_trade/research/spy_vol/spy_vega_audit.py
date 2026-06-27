@@ -139,13 +139,13 @@ def main():
     show['entry'] = show['entry'].round(2)
     print(show.to_string(index=False))
 
-    print(f"\n=== by exit reason ===")
+    print("\n=== by exit reason ===")
     for r, g in tdf.groupby('reason'):
         print(f"  {r:<8} n={len(g):>2}  avg ret {g['ret'].mean():+.1%}  win {(g['ret']>0).mean():.0%}  "
               f"avg held {g['held'].mean():.0f}d")
     print(f"  TOTAL avg ret {tdf['ret'].mean():+.2%}  win {(tdf['ret']>0).mean():.0%}  median {tdf['ret'].median():+.1%}")
 
-    print(f"\n=== LEFT ON THE TABLE (max-mid reached vs actual exit) ===")
+    print("\n=== LEFT ON THE TABLE (max-mid reached vs actual exit) ===")
     tdf['left'] = tdf['maxmid'] - tdf['ret']
     big = tdf[tdf['left'] > 0.15].sort_values('left', ascending=False)
     print(f"  {len(tdf[tdf['maxmid']>=PT])} trades touched +{PT:.0%} mid; {len(big)} left >15% on the table")
@@ -154,12 +154,12 @@ def main():
     stops = tdf[tdf['reason'] == 'stop']
     print(f"  stops that later reached +{PT:.0%} mid: {len(stops[stops['maxmid']>=PT])}/{len(stops)}")
 
-    print(f"\n=== MISSED green days (conc=1 blocked) ===")
+    print("\n=== MISSED green days (conc=1 blocked) ===")
     print(f"  {len(skipped_green)} green days fell inside an open trade; "
           f"their standalone avg ret {np.mean(skip_rets):+.1%} (n={len(skip_rets)}) "
           f"vs taken {tdf['ret'].mean():+.1%}")
 
-    print(f"\n=== ALTERNATIVE EXIT STRATEGIES (same entries, avg / win / total-compounded) ===")
+    print("\n=== ALTERNATIVE EXIT STRATEGIES (same entries, avg / win / total-compounded) ===")
     base_series = tdf['ret'].values
     def comp(x): return np.prod([1 + r for r in x]) - 1
     print(f"  {'BASE +30/-40/VIX+3/15d':<24} avg {np.mean(base_series):+.2%}  win {(base_series>0).mean():.0%}  compounded {comp(base_series):+.1%}")

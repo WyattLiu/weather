@@ -17,7 +17,7 @@ import sys
 import json
 import argparse
 from datetime import datetime, timezone, timedelta
-from collections import Counter, defaultdict
+from collections import Counter
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS_DIR)

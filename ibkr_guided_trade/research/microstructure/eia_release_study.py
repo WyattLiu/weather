@@ -17,7 +17,6 @@ Usage:
 Requires IB gateway at 192.168.1.127:20009 (same as ng_lne_chains.py).
 """
 import os
-import sys
 import time
 import argparse
 from datetime import date, timedelta

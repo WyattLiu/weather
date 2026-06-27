@@ -22,7 +22,6 @@ Usage:
 """
 from __future__ import annotations
 import os
-import sys
 import math
 import argparse
 import psycopg2
@@ -144,7 +143,7 @@ def cross_check_yfinance(latest_n_days=3):
     except Exception:
         out['error'] = 'yfinance not available'
         return out
-    today = _date.today()
+    _date.today()
     conn = _connect()
     cur = conn.cursor()
     cur.execute("""
@@ -158,7 +157,7 @@ def cross_check_yfinance(latest_n_days=3):
     if not pg_rows:
         out['error'] = 'no recent PG data'
         return out
-    pg_date = pg_rows[0][0]
+    pg_rows[0][0]
 
     # Group PG by expiration
     pg_by_exp = defaultdict(dict)

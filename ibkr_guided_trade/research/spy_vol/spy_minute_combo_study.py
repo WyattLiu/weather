@@ -120,7 +120,7 @@ def main():
             cand = (pd.Timestamp(exit_d) + pd.Timedelta(days=off)).date()
             net_out = minute_net(cur, exp, K, cand)
             if net_out:
-                exit_dt = cand; break
+                break
         if not net_out:
             continue
         # time-of-day spread (cost to cross = (ask-bid)/mid) on entry day
@@ -147,7 +147,7 @@ def main():
         print(f"{lbl:<14}{(r>0).mean()*100:>6.0f}%{r.mean():>+9.1%}{np.median(r):>+9.1%}{r.sum():>+9.1%}")
     print(f"\n  combo-mid vs cross edge (spread saved): {(df['combo_mid']-df['cross']).mean():+.2%}/trade avg")
 
-    print(f"\n=== INTRADAY: net combo spread (cost to cross) by time-of-day ===")
+    print("\n=== INTRADAY: net combo spread (cost to cross) by time-of-day ===")
     for hh in sorted(tod_spread):
         v = np.array(tod_spread[hh])
         if len(v) > 20:

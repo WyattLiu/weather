@@ -36,7 +36,6 @@ def fit_seasonal_storage(df: pd.DataFrame, point_in_time: bool = True) -> pd.Ser
     # POINT-IN-TIME: for each date, compute median across PRIOR years' same DOY.
     # Need at least 1 prior year of data; until then, use NaN (or fall back to
     # raw value so engine just doesn't trade on z).
-    expanding_medians = {}
     out = pd.Series(index=df2.index, dtype=float)
     sorted_idx = df2.index.sort_values()
     for d in sorted_idx:

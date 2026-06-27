@@ -21,13 +21,12 @@ import sys
 import time
 import argparse
 import psycopg2
-from psycopg2.extras import execute_values
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetch_thetadata_iv import (
-    THETA_BASE, split_factor_on, get_expirations, get_strikes,
+    split_factor_on, get_expirations, get_strikes,
     get_quote_eod, bs_implied_vol,
 )
 from backfill_ung_iv_pg import DB_PARAMS, insert_rows, get_existing_keys
@@ -137,14 +136,14 @@ def process_one_date_full(args):
 
 def main(start, end, max_workers):
     import pandas as pd
-    print(f"Loading dataset...")
+    print("Loading dataset...")
     spot_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             'cache', 'master_dataset.csv')
     spot_df = pd.read_csv(spot_csv, index_col=0, parse_dates=True)
     spot_df = spot_df.loc[start:end, ['UNG']].dropna()
     print(f"  {len(spot_df)} business days from {spot_df.index[0].date()} to {spot_df.index[-1].date()}")
 
-    print(f"Fetching ThetaData expirations list...")
+    print("Fetching ThetaData expirations list...")
     all_exps = get_expirations('UNG')
     print(f"  {len(all_exps)} historical expirations")
 

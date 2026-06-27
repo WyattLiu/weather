@@ -192,7 +192,7 @@ def run_leg(ws: WSClient, expiry, opt_type, strike, label, results, key):
         # Canonical poll against soOrdersExtendedOrder — no activity-feed lag.
         try:
             final = ws.wait_for_order(order_id, timeout=ORDER_TIMEOUT, poll_interval=POLL_INTERVAL)
-        except OrderTimeout as exc:
+        except OrderTimeout:
             log(f'  {label} timeout (attempt {attempt}) — cancelling...')
             ws.cancel(order_id)
             time.sleep(2)   # let cancel settle before next place
@@ -315,7 +315,7 @@ def main():
     call_room   = max(0, max_calls - sc)
     put_room    = max(0, MAX_PUTS - sp)
 
-    print(f'\nUNG Position')
+    print('\nUNG Position')
     print(f'  Shares     : {shares}  avg cost ${avg_cost:.4f}')
     print(f'  Short calls: {sc}  (covered cap {max_calls}, room for {call_room} more)')
     print(f'  Short puts : {sp}  (hard cap {MAX_PUTS}, room for {put_room} more)')
@@ -337,7 +337,7 @@ def main():
     if dry:
         print(f'\nDRY RUN — {n_calls} calls + {n_puts} puts on {args.expiry}. Add --place to execute.\n')
     else:
-        print(f'\nCancelling any resting UNG option orders...')
+        print('\nCancelling any resting UNG option orders...')
         cancel_ung_options(ws)
         time.sleep(2)
         print(f'\nLaunching independent ladders: {n_calls} calls + {n_puts} puts on {args.expiry}\n')

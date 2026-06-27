@@ -16,8 +16,6 @@ import os
 import sys
 import math
 import json
-import numpy as np
-import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wheel_backtest import run_wheel
@@ -71,11 +69,11 @@ def main():
 
     rho = 0.00  # measured ~0 in step 2
     print(f'\nUNG×DBA correlation: ρ = {rho:.3f} (measured ≈0)')
-    print(f'\nProduction UNG kernel baseline:')
+    print('\nProduction UNG kernel baseline:')
     print(f'  ann={UNG_PROD["ann_ret"]:+.2%}  σ={UNG_PROD["vol_ann"]:.2%}  '
           f'sharpe={UNG_PROD["sharpe"]:+.3f}')
 
-    print(f'\n=== Composite scenarios (UNG production × DBA wheel) ===')
+    print('\n=== Composite scenarios (UNG production × DBA wheel) ===')
     print(f'{"DBA config":>26s}  {"weight":>10s}  {"ann":>7s}  {"σ":>6s}  {"sharpe":>7s}  {"Δ vs UNG":>10s}')
     print('-' * 80)
     rows = []
@@ -99,7 +97,7 @@ def main():
 
     # Find best Sharpe
     best = max(rows, key=lambda r: r['sharpe'])
-    print(f'\n🏆 BEST risk-adjusted composite:')
+    print('\n🏆 BEST risk-adjusted composite:')
     print(f'   {best["dba_config"]}  @  {best["w_ung"]*100:.0f}/{best["w_dba"]*100:.0f}')
     print(f'   ann return: {best["ann_ret"]:+.2%}')
     print(f'   Sharpe: {best["sharpe"]:+.3f} (vs UNG-alone {UNG_PROD["sharpe"]:+.3f}, '

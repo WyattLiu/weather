@@ -7,7 +7,6 @@ Analyzes different IV crush scenarios to find the "catch"
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
-from datetime import datetime, timedelta
 
 # Black-Scholes pricing
 def bs_price(S, K, T, r, sigma, option_type='call'):

@@ -18,12 +18,9 @@ Run:
     venv/bin/python research/dba/wheel_backtest.py --both
 """
 import os
-import sys
 import math
 import argparse
-import numpy as np
 import pandas as pd
-from datetime import timedelta
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(ROOT, 'cache')
@@ -65,7 +62,6 @@ def third_friday(year, month):
 def nearest_monthly_dte(today, target_dte, lo=25, hi=80):
     """Days to the monthly (3rd-Friday) expiry nearest target_dte within
     [lo, hi]; None if no monthly fits (skip entry)."""
-    from datetime import timedelta as _td
     best = None
     for k in range(0, 4):
         m = today.month + k
@@ -125,7 +121,6 @@ def run_wheel(ticker, start='2015-01-01',
 
     for date, spot in prices.items():
         sigma = rv.loc[date]
-        T_yr_one_day = 1.0 / 252
 
         # --- 1. Mark-to-market open positions, decide close ---
         new_open_puts = []

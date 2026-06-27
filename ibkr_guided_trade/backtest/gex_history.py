@@ -77,7 +77,7 @@ def validate(g):
     print(f"\nGEX history: {len(g)} days  ({g['trade_date'].min()} → {g['trade_date'].max()})")
     print(f"  net GEX range: {g['net_gex_mm'].min():.1f} … {g['net_gex_mm'].max():.1f} $mm/1%")
     print(f"  NEG-GEX days: {100*(g['net_gex']<0).mean():.0f}%")
-    print(f"\nVALIDATION — next-day |move|:")
+    print("\nVALIDATION — next-day |move|:")
     print(f"  after NEG-GEX (swing): mean {neg.mean():.2f}%  p90 {neg.quantile(.9):.2f}%  (n={len(neg)})")
     print(f"  after POS-GEX (pin):   mean {pos.mean():.2f}%  p90 {pos.quantile(.9):.2f}%  (n={len(pos)})")
     lift = neg.mean() / max(pos.mean(), 1e-9) - 1

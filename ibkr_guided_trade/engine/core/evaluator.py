@@ -1,9 +1,8 @@
 """Quality evaluator — scores a state. Used to rank candidates by qΔ."""
-import math
 from typing import Dict
 from .params import Params
 from .state import PortfolioState
-from .signals import z_score, regime
+from .signals import z_score
 from .options import bs_delta, bs_gamma, bs_theta
 
 

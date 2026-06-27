@@ -23,7 +23,7 @@ from ws_trading import (
     get_session, graphql_query, QUERY_OPTION_CHAIN, QUERY_FETCH_POSITIONS,
     place_multileg_order, cancel_order, fetch_multileg_order,
     load_config, load_cookies, extract_identity_from_cookies,
-    KNOWN_SECURITIES, DEFAULT_ACCOUNT_ID,
+    KNOWN_SECURITIES,
 )
 
 SPY_SEC_ID = KNOWN_SECURITIES.get('SPY', 'sec-s-27167ecbd81140fe9cdc02535f43174d')
@@ -298,7 +298,7 @@ def run_cycle(session, place=False):
 
             strad_bid = c['bid'] + p['bid']
             strad_ask = c['ask'] + p['ask']
-            strad_mid = round((strad_bid + strad_ask) / 2, 2)
+            round((strad_bid + strad_ask) / 2, 2)
 
             sellable = max(0, held - MIN_HOLD)
             sell_base = strad_bid

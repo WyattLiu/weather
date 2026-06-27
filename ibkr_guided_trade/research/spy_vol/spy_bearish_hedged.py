@@ -99,7 +99,6 @@ def run(name, trig, spy, vix):
     print(f"\n=== trigger: {name}  (n={len(idx)} entry days) ===")
     print(f"  {'structure':<30}{'avg':>8}{'win%':>6}{'ret|↓':>8}{'ret|↑':>8}{'Sharpe':>8}")
     print('  ' + '-' * 68)
-    base = None
     for sname, st in STRUCTS.items():
         rs, mv = [], []
         for i in idx:

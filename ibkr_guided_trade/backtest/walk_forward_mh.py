@@ -4,7 +4,7 @@ of the edge and (b) whether the crash-fallback closes the 2022 blind spot.
 """
 import os, sys, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pandas as pd, numpy as np
+import pandas as pd
 import replay_engine as R
 
 HORIZONS = {'6mo': 126, '12mo': 252, '18mo': 378, '24mo': 504}
@@ -47,14 +47,14 @@ def main():
         print(f"  {hname}: done", flush=True)
     r = pd.DataFrame(allrows)
     r.to_csv(os.path.join(os.path.dirname(__file__), 'results', 'walk_forward_mh.csv'), index=False)
-    print(f"\n=== MULTI-HORIZON WALK-FORWARD (v4 crash-fallback vs champion) ===")
+    print("\n=== MULTI-HORIZON WALK-FORWARD (v4 crash-fallback vs champion) ===")
     print(f"{'horizon':8}{'#win':>5}{'Sh-win%':>9}{'med Δann':>9}{'med ΔSh':>9}{'med ΔMDD':>9}{'worst Δann':>11}")
     for h in HORIZONS:
         sub = r[r['h'] == h]
         if not len(sub): continue
         print(f"{h:8}{len(sub):5}{(sub['d_sh']>0).mean()*100:8.0f}%{sub['d_ann'].median():+9.1f}"
               f"{sub['d_sh'].median():+9.2f}{sub['d_mdd'].median():+9.1f}{sub['d_ann'].min():+11.1f}")
-    print(f"\n=== DID CRASH-FALLBACK CLOSE THE 2022 BLIND SPOT? (v4 vs original boxx) ===")
+    print("\n=== DID CRASH-FALLBACK CLOSE THE 2022 BLIND SPOT? (v4 vs original boxx) ===")
     crash = r[r['start'].str.startswith('2022')]
     print(f"  2022-start windows: median v4-vs-boxx0 Δann {crash['v4_vs_b0'].median():+.1f}pp "
           f"(min {crash['v4_vs_b0'].min():+.1f}, max {crash['v4_vs_b0'].max():+.1f})")

@@ -15,11 +15,10 @@ import os
 import sys
 import math
 import json
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wheel_backtest import run_wheel, summarize
+from wheel_backtest import run_wheel
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(ROOT, 'cache')

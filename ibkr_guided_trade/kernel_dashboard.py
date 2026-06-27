@@ -2286,7 +2286,7 @@ def _analytics_warm_loop():
 
 def main():
     port = int(os.environ.get('KERNEL_DASH_PORT', '10001'))
-    print(f'[kernel-dash] Bootstrapping state from WS / PG...')
+    print('[kernel-dash] Bootstrapping state from WS / PG...')
     _refresh()
     threading.Thread(target=_refresh_loop, daemon=True).start()
     threading.Thread(target=_live_warm_loop, daemon=True).start()  # warm the SOT cache
@@ -2294,7 +2294,7 @@ def main():
     threading.Thread(target=_analytics_warm_loop, daemon=True).start()  # warm the backtest charts
     server = ReusableTCPServer(('0.0.0.0', port), Handler)
     print(f'[kernel-dash] Serving on http://localhost:{port}  (kernel: {CHAMPION_NAME})')
-    print(f'[kernel-dash] Production dashboard untouched at :9999')
+    print('[kernel-dash] Production dashboard untouched at :9999')
     try:
         server.serve_forever()
     except KeyboardInterrupt:

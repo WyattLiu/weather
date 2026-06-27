@@ -15,7 +15,6 @@ Usage:
 """
 import os
 import sys
-import math
 import json
 import argparse
 import pandas as pd
@@ -125,7 +124,7 @@ def analyze(strategy_name, top_n=20):
         })
     # Pattern 3: High-vol no-trade days
     if len(high_iv_missed) > 30:
-        sum_pct = sum(abs(e['daily_pct']) for e in high_iv_missed) / max(len(high_iv_missed), 1)
+        sum(abs(e['daily_pct']) for e in high_iv_missed) / max(len(high_iv_missed), 1)
         suggestions.append({
             'pattern': 'high_IV_no_trade',
             'evidence': f"{len(high_iv_missed)} days with rv30>0.70 and 0 trades fired (premium-rich days missed)",
@@ -176,13 +175,13 @@ def main():
 
     print(f"\n=== Day-by-day evolution: {args.strategy} ===")
     print(f"Total days analyzed: {result['total_days']}")
-    print(f"\nRegime P&L summary:")
+    print("\nRegime P&L summary:")
     for r, s in sorted(result['regime_summary'].items()):
         print(f"  {r:<15} loss_days={s['n_loss_days']:>3} avg=${s['avg_loss']:>+8.0f}  "
               f"gain_days={s['n_gain_days']:>3} avg=${s['avg_gain']:>+8.0f}  "
               f"net=${s['net']:>+10.0f}")
 
-    print(f"\nMissed opportunities:")
+    print("\nMissed opportunities:")
     print(f"  High-IV no-trade days: {result['high_iv_missed_count']}")
     print(f"  Extreme-z no-trade days: {result['extreme_z_missed_count']}")
 
@@ -198,7 +197,7 @@ def main():
         print(f"  {e['date'][:10]}  ${e['daily_pnl']:>+8.0f}  UNG ${e['ung']:.2f}  "
               f"{e['regime']:<14} anom={e['anomaly']:<12}  trades:{tt}")
 
-    print(f"\n=== EVOLUTION SUGGESTIONS ===")
+    print("\n=== EVOLUTION SUGGESTIONS ===")
     for s in result['evolution_suggestions']:
         print(f"\n[{s['pattern']}]")
         print(f"  Evidence:   {s['evidence']}")

@@ -7,7 +7,6 @@ what you see is exactly what the validated backtest does. Zero noise.
 """
 import os
 import sys
-import math
 import pandas as pd
 
 THIS = os.path.dirname(os.path.abspath(__file__))

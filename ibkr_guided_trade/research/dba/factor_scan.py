@@ -15,10 +15,8 @@ top-minus-bottom. Monthly-sampled to avoid overlapping-window inflation.
 Run: venv/bin/python research/dba/factor_scan.py
 """
 import os
-import sys
 import glob
 import math
-import numpy as np
 import pandas as pd
 from scipy import stats as sstats
 

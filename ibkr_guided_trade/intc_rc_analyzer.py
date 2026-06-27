@@ -10,10 +10,7 @@ Usage:
 """
 
 import argparse
-import json
-import sys
 from datetime import datetime, timedelta
-from typing import Optional
 import numpy as np
 from scipy.stats import norm
 
@@ -368,7 +365,7 @@ class INTCReverseCalendarAnalyzer:
 def cmd_analyze(args):
     """Analyze reverse calendar combinations"""
     print(f"\n{'='*100}")
-    print(f"INTC REVERSE CALENDAR ANALYZER")
+    print("INTC REVERSE CALENDAR ANALYZER")
     print(f"{'='*100}")
 
     analyzer = INTCReverseCalendarAnalyzer('INTC')
@@ -536,20 +533,20 @@ def cmd_place(args):
     # Place orders
     print("\nPlacing orders...")
     print("\nTo place these orders manually, run:")
-    print(f"\n  # Leg 1: Buy short-dated put")
+    print("\n  # Leg 1: Buy short-dated put")
     print(f"  python ws_trading.py buy-opt {selected['put_id_short']} {qty} {selected['entry_buy_put']:.2f}")
-    print(f"\n  # Leg 2: Sell long-dated put")
+    print("\n  # Leg 2: Sell long-dated put")
     print(f"  python ws_trading.py sell-opt {selected['put_id_long']} {qty} {selected['entry_sell_put']:.2f}")
-    print(f"\n  # Leg 3: Buy short-dated call")
+    print("\n  # Leg 3: Buy short-dated call")
     print(f"  python ws_trading.py buy-opt {selected['call_id_short']} {qty} {selected['entry_buy_call']:.2f}")
-    print(f"\n  # Leg 4: Sell long-dated call")
+    print("\n  # Leg 4: Sell long-dated call")
     print(f"  python ws_trading.py sell-opt {selected['call_id_long']} {qty} {selected['entry_sell_call']:.2f}")
 
     # Optionally execute
     execute = input("\nExecute orders now? (yes/no): ").strip().lower()
 
     if execute == 'yes':
-        from ws_trading import place_order, generate_order_id, DEFAULT_ACCOUNT_ID
+        from ws_trading import place_order, DEFAULT_ACCOUNT_ID
 
         orders = [
             ('BUY', selected['put_id_short'], qty, selected['entry_buy_put'], 'OPEN'),
@@ -579,7 +576,7 @@ def cmd_place(args):
             if result:
                 print(f"    Order placed: {result.get('id', 'Unknown')}")
             else:
-                print(f"    Order FAILED")
+                print("    Order FAILED")
 
         print("\n✓ All orders submitted")
 
@@ -600,7 +597,7 @@ def main():
                                help='Compare different DTE combinations')
 
     # Place command
-    place_parser = subparsers.add_parser('place', help='Place trade interactively')
+    subparsers.add_parser('place', help='Place trade interactively')
 
     args = parser.parse_args()
 

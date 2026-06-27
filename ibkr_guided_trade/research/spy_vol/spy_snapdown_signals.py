@@ -5,7 +5,6 @@ precede sudden equity drops? Builds a tuned composite and prints lift + the curr
 
   venv/bin/python research/spy_vol/spy_snapdown_signals.py
 """
-import numpy as np
 import pandas as pd
 
 TK = {'SPY': 'SPY', 'VIX': '^VIX', 'DXY': 'DX-Y.NYB', 'HYG': 'HYG', 'LQD': 'LQD',
@@ -63,7 +62,7 @@ def main():
     fz = f[good].apply(lambda s: (s - s.rolling(252).mean()) / s.rolling(252).std())
     comp = fz.mean(axis=1)
     s = pd.DataFrame({'comp': comp, 'snap': snap}).dropna()
-    print(f"\n  === TUNED composite (mean-z of those) → P(snap-down) by quintile ===")
+    print("\n  === TUNED composite (mean-z of those) → P(snap-down) by quintile ===")
     qs = s['comp'].quantile([0, .2, .4, .6, .8, 1.0]).values
     for i in range(5):
         lo, hi = qs[i], qs[i + 1]

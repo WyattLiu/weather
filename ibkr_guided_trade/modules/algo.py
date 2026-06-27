@@ -149,12 +149,12 @@ def cmd_algo_add(args):
     # Calculate buy price
     buy_price = round(spot * (1 - buy_pct / 100), 2)
 
-    print(f"\n--- BUY CONFIGURATION ---")
+    print("\n--- BUY CONFIGURATION ---")
     print(f"  Buy {buy_pct}% below current: ${buy_price:.2f}")
     print(f"  Quantity per order: {qty} shares")
     print(f"  Max accumulation: {max_shares} shares")
 
-    print(f"\n--- SELL CONFIGURATION ---")
+    print("\n--- SELL CONFIGURATION ---")
     if sell_pct > 0:
         print(f"  Sell when {sell_pct}% above average cost")
     if sell_profit > 0:
@@ -182,7 +182,7 @@ def cmd_algo_add(args):
     conn.close()
 
     print(f"\n✅ Strategy #{strategy_id} created for {symbol}")
-    print(f"   Run 'algo run' to submit initial orders.")
+    print("   Run 'algo run' to submit initial orders.")
 
     ib.disconnect()
 
@@ -208,7 +208,7 @@ def cmd_algo_show(args):
     print(f"Status: {strategy['status']}")
     print(f"Created: {strategy['created_at']}")
 
-    print(f"\n--- CONFIG ---")
+    print("\n--- CONFIG ---")
     for k, v in config.items():
         print(f"  {k}: {v}")
 
@@ -219,7 +219,7 @@ def cmd_algo_show(args):
     ''', (args.id,)).fetchall()
 
     if orders:
-        print(f"\n--- ORDERS (last 20) ---")
+        print("\n--- ORDERS (last 20) ---")
         print(f"{'ID':>6} {'Side':<6} {'Qty':>6} {'Price':>10} {'Status':<12} {'Filled':>8}")
         print("-" * 55)
         for o in orders:
@@ -326,7 +326,7 @@ def cmd_algo_sync(args):
     open_trades = {t.order.orderId: t for t in ib.openTrades()}
 
     # Get executions/fills
-    executions = ib.executions()
+    ib.executions()
 
     for order in submitted:
         order_id = order['ibkr_order_id']

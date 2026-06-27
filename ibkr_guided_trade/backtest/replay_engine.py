@@ -28,7 +28,6 @@ from attribution import attribute_trades, print_attribution  # type: ignore
 from kelly_sizing import kelly_qty_short_put, kelly_qty_covered_call  # type: ignore
 from assignment_model import assignment_probability, expected_value_wait_vs_btc  # type: ignore
 from scenario_distribution import ScenarioDistribution  # type: ignore
-from quality_scorer import score_portfolio_quality  # type: ignore
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -5594,7 +5593,7 @@ except Exception:
 
 
 def compare_strategies():
-    print(f"=== Loading dataset ===")
+    print("=== Loading dataset ===")
     df_path = os.path.join(CACHE_DIR, 'master_dataset.csv')
     if not os.path.exists(df_path):
         print("Master dataset missing — run historical_data_pipeline.py first")

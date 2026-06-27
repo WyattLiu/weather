@@ -15,7 +15,6 @@ Run: venv/bin/python research/microstructure/timing_study.py
 import os
 import math
 import pandas as pd
-import numpy as np
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 

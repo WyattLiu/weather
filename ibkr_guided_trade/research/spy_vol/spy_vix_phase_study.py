@@ -80,7 +80,7 @@ def main():
             res[phase(d_ts)].append(tr['ret'])
     conn.close()
 
-    print(f"\n=== Part B: long ATM straddle (~45 DTE) vega-scrape by VOL PHASE at entry ===")
+    print("\n=== Part B: long ATM straddle (~45 DTE) vega-scrape by VOL PHASE at entry ===")
     hdr = f"{'phase':<28}{'n':>4}{'win%':>7}{'avg':>9}{'median':>9}{'total':>9}"
     print(hdr); print('-' * len(hdr))
     for name in ['CONSOLIDATED-LOW', 'LOW-unsettled', 'FALLING (still coming down)',

@@ -472,14 +472,14 @@ def full_summary(spot, dte, expiry, fwd, straddles, chain, rv_1d, rv_5d, iv,
     print('=' * 72)
 
     # Market
-    print(f'\n  MARKET')
+    print('\n  MARKET')
     print(f'    SPY Spot:       ${spot:.2f}')
     print(f'    DTE:            {dte:.1f} days{warn}')
     print(f'    Expiry:         {expiry}')
 
     # Forward ATM
     if fwd:
-        print(f'\n  FORWARD ATM')
+        print('\n  FORWARD ATM')
         print(f'    Forward Strike: ${fwd["strike"]:.0f}')
         print(f'    Forward Price:  ${fwd["forward_price"]:.2f}')
         print(f'    Straddle Mid:   ${fwd["straddle_mid"]:.2f}')
@@ -546,20 +546,20 @@ def full_summary(spot, dte, expiry, fwd, straddles, chain, rv_1d, rv_5d, iv,
     iv_pct = iv * 100 if iv else 0
     rv_1d_pct = rv_1d * 100 if rv_1d else None
     rv_5d_pct = rv_5d * 100 if rv_5d else None
-    print(f'\n  VOLATILITY')
+    print('\n  VOLATILITY')
     print(f'    ATM IV:       {iv_pct:.1f}%')
     if rv_1d_pct is not None:
         spread_1d = rv_1d_pct - iv_pct
         sig_1d = '[G>T]' if spread_1d > 0 else '[T>G]'
         print(f'    RV (1-day):   {rv_1d_pct:.1f}%  (RV-IV: {spread_1d:+.1f}% {sig_1d})')
     else:
-        print(f'    RV (1-day):   n/a (need more data)')
+        print('    RV (1-day):   n/a (need more data)')
     if rv_5d_pct is not None:
         spread_5d = rv_5d_pct - iv_pct
         sig_5d = '[G>T]' if spread_5d > 0 else '[T>G]'
         print(f'    RV (5-day):   {rv_5d_pct:.1f}%  (RV-IV: {spread_5d:+.1f}% {sig_5d})')
     else:
-        print(f'    RV (5-day):   n/a (need more data)')
+        print('    RV (5-day):   n/a (need more data)')
     print(f'    Prices in DB: {len(price_history)}')
 
     # Theta burn (aggregated)
@@ -583,7 +583,7 @@ def full_summary(spot, dte, expiry, fwd, straddles, chain, rv_1d, rv_5d, iv,
         else:
             breakeven_move = 0
 
-        print(f'\n  THETA BURN')
+        print('\n  THETA BURN')
         print(f'    Daily:          ${daily_theta:+,.0f}')
         print(f'    Weekly:         ${weekly_theta:+,.0f}')
         print(f'    To Expiry:      ${to_expiry_theta:+,.0f}')

@@ -11,7 +11,6 @@ expiries. Uses actual EOD quotes from research/gex/history/thetadata/:
 Run: venv/bin/python research/dba/real_chain_wheel.py --symbol DBA
 """
 import os
-import sys
 import glob
 import math
 import argparse

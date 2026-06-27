@@ -26,7 +26,6 @@ from __future__ import annotations
 import os
 import json
 from datetime import datetime, timezone
-from typing import Optional
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
 os.makedirs(LOG_DIR, exist_ok=True)

@@ -12,8 +12,6 @@
 Run: venv/bin/python research/dba/fundamentals_fetch.py
 """
 import os
-import io
-import re
 import zipfile
 import subprocess
 import pandas as pd

@@ -4,7 +4,6 @@ called-away bar (same-bar re-accum), compute the PURE theta it earns over the ga
 is exactly what live FORGOES if it waits to the next session. Sum, annualize, as % of NAV."""
 import sys
 import os
-import math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 from replay_engine import STRATEGIES, precompute_factor_z, run_strategy_simple, bs_put
@@ -48,5 +47,5 @@ print("=== Weekend-theta leakage closed by Friday re-accumulation ===")
 print(f"  same-bar re-accum put legs: {n_legs} over {yrs:.1f}y")
 print(f"  total pure theta forgone if sold next-session: ${leak:,.0f}")
 print(f"  = ${leak/yrs:,.0f}/yr = {leak/yrs/100000*100:.2f}% of NAV/yr (the live leakage now closed)")
-print(f"  NOTE: closes a live<->backtest gap; does NOT change the backtest frontier (already captured).")
+print("  NOTE: closes a live<->backtest gap; does NOT change the backtest frontier (already captured).")
 print("DONE", flush=True)

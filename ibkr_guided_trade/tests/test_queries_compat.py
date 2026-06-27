@@ -77,18 +77,7 @@ def test_ws_sdk_package_imports():
     from ws_sdk import (
         WSClient,
         Order,
-        Position,
-        Account,
-        Balance,
         OrderStatus,
-        OrderSide,
-        OpenClose,
-        AccountType,
-        wait_for_order,
-        fetch_extended_order,
-        get_margin_account_id,
-        KNOWN_SECURITIES,
-        DEFAULT_ACCOUNT_ID,
     )
     assert WSClient is not None
     assert Order is not None

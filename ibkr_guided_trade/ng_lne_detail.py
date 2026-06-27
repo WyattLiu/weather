@@ -108,7 +108,7 @@ def get_lne_chain(ib, fut_contract, spot, strikes):
                                 if any(abs(s - a) < 0.001 for a in avail_strikes)])
 
     if not valid_strikes:
-        print(f"    None of our requested strikes are available at IBKR")
+        print("    None of our requested strikes are available at IBKR")
         return []
 
     # Find the expiration matching the futures month
@@ -123,7 +123,7 @@ def get_lne_chain(ib, fut_contract, spot, strikes):
         matching_exps = sorted(all_exps)[-1:]
 
     if not matching_exps:
-        print(f"    No matching expirations found")
+        print("    No matching expirations found")
         return []
 
     # Use the last (latest) expiration in the matching month
@@ -298,7 +298,7 @@ def print_summary(all_month_data):
     """Print comparison summary: ATM vs 0.65 delta vs 0.75 delta for all months."""
     w = 130
     print(f"\n{'=' * w}")
-    print(f"  SUMMARY: ATM vs ITM (0.65 delta) vs Deep ITM (0.75 delta)")
+    print("  SUMMARY: ATM vs ITM (0.65 delta) vs Deep ITM (0.75 delta)")
     print(f"{'=' * w}")
 
     targets = [
@@ -337,7 +337,7 @@ def print_summary(all_month_data):
 
     # Cross-month comparison
     print(f"\n  {'=' * 60}")
-    print(f"  Cross-Month Comparison (same delta target)")
+    print("  Cross-Month Comparison (same delta target)")
     print(f"  {'=' * 60}")
 
     for cat_label, target_d in targets:
@@ -357,7 +357,7 @@ def print_summary(all_month_data):
 def main():
     print("=" * 80)
     print("  NG LNE Detailed Call Option Chains")
-    print(f"  Months: Jul 2026 (NGN6), Aug 2026 (NGQ6)")
+    print("  Months: Jul 2026 (NGN6), Aug 2026 (NGQ6)")
     print(f"  Strikes: ${STRIKE_LOW:.2f} - ${STRIKE_HIGH:.2f} "
           f"in ${STRIKE_STEP:.2f} increments")
     print(f"  Multiplier: {NG_MULTIPLIER:,} MMBtu/contract "
@@ -408,7 +408,7 @@ def main():
             sys.exit(1)
 
         # Step 2: Pull LNE call option chains
-        print(f"\n--- Fetching LNE Call Option Chains ---")
+        print("\n--- Fetching LNE Call Option Chains ---")
 
         for label, code, ym, fut, spot in futures_data:
             print(f"\n  Processing {code} ({label}), spot=${spot:.3f}...")

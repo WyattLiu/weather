@@ -10,10 +10,8 @@ Answers operational questions the daily engine is blind to:
 This is the foundation for an execution-aware engine: time entries/rolls into the
 tight-spread windows the data identifies, avoid the wide ones.
 """
-import os
 import psycopg2
 import pandas as pd
-import numpy as np
 
 DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',
       'user': 'postgres', 'password': 'shinobi2025'}

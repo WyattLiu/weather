@@ -485,7 +485,7 @@ def print_allocation(result):
               f'{a["delta"]:>+8.0f} {a["gamma"]:>+7.2f} '
               f'{a["vega"]:>+7.1f} {a["theta"]:>+7.1f}')
 
-    print(f'\n  PORTFOLIO GREEKS:')
+    print('\n  PORTFOLIO GREEKS:')
     print(f'    Net Delta:  ${result["total_delta"]:+,.0f}')
     print(f'    Net Gamma:  {result["total_gamma"]:+,.2f}')
     print(f'    Net Vega:   {result["total_vega"]:+,.1f}')

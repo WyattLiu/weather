@@ -27,10 +27,8 @@ FPI +2mo). Monthly rebalance. Weights by score: {0:0, 1:0.4, 2:0.8,
 Run: venv/bin/python research/dba/directional_blend.py
 """
 import os
-import sys
 import math
 import json
-import numpy as np
 import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

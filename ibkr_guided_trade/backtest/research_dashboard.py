@@ -15,7 +15,6 @@ Panels:
 Run: python backtest/research_dashboard.py
 """
 import os
-import sys
 import json
 import math
 import csv
@@ -188,7 +187,7 @@ def compute_insights(rows):
     """Generate research observations from current data."""
     if not rows:
         return []
-    recent = rows[-30:]  # last 30 days
+    rows[-30:]  # last 30 days
     insights = []
     latest = rows[-1]
 

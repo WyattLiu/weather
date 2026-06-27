@@ -4,7 +4,6 @@ Tests which gate-stacks lift the low-VIX straddle, and whether ANY high-VIX subs
   venv/bin/python research/spy_vol/spy_signal_stacks.py
 """
 import os
-import numpy as np
 import pandas as pd
 
 THIS = os.path.dirname(os.path.abspath(__file__))

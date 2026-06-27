@@ -24,7 +24,6 @@ Examples:
 from __future__ import annotations
 import os
 import sys
-import json
 import argparse
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,7 +33,7 @@ sys.path.insert(0, ROOT); sys.path.insert(0, THIS_DIR)
 
 def cmd_plan(args):
     """Show what the kernel would do — paper mode equivalent."""
-    from execute_kernel_plan import fetch_verdict, execute_best_play
+    from execute_kernel_plan import fetch_verdict
     v = fetch_verdict()
     if not v: print('fetch failed'); return 1
     verdict = v.get('verdict') or {}
@@ -116,7 +115,7 @@ def cmd_sell_put(args):
     if os.environ.get('KERNEL_LIVE') != '1':
         print('DRY-RUN: KERNEL_LIVE=1 not set; refusing to submit')
         return 0
-    ans = input(f'Submit? [y/N]: ').strip().lower()
+    ans = input('Submit? [y/N]: ').strip().lower()
     if ans not in ('y', 'yes'):
         print('declined'); return 0
     from ws_sdk import WSClient

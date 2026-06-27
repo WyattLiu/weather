@@ -22,14 +22,14 @@ import os
 import sys
 import json
 import time
-from typing import List, Dict, Optional
+from typing import List
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(THIS_DIR)
 sys.path.insert(0, ROOT); sys.path.insert(0, THIS_DIR)
 
 from trading_log import LOG_PATH, log_action
-from ws_safe import safe_call, cancel_order_safe, WSError
+from ws_safe import safe_call, cancel_order_safe
 
 ESCALATION_AGE_MIN = {0: 90, 1: 60, 2: 30}  # by tier
 ABANDON_AGE_MIN = 60  # tier 3 (cross) max age before abandoning

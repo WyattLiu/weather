@@ -111,6 +111,5 @@ def coverage_report():
 if __name__ == '__main__':
     print('UNG real-chain coverage:', coverage_report())
     # smoke: price a ~45d 5% OTM put on a sample date
-    import datetime
     b, a, m, real = price(pd.Timestamp('2023-06-15'), 6.5, 45, 'P', spot_adj=6.8)
     print(f'2023-06-15 ~P6.5 45d: bid {b} ask {a} mid {m} real={real}')

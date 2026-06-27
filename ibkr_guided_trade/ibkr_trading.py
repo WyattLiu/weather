@@ -62,7 +62,6 @@ Usage:
 """
 
 import argparse
-import sys
 
 from modules import trading, analysis, algo, scanner
 

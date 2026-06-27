@@ -148,7 +148,7 @@ def cmd_status(args):
     deposits = current.get('netDeposits', {})
     returns = current.get('simpleReturns', {})
 
-    print(f"\n--- COMBINED PORTFOLIO (USD) ---")
+    print("\n--- COMBINED PORTFOLIO (USD) ---")
 
     if nlv:
         print(f"  Net Liquidation:  ${float(nlv.get('amount', 0)):,.2f}")
@@ -303,11 +303,11 @@ def cmd_orders(args):
 
 def cmd_quote(args):
     """Get quote for a symbol - requires security ID"""
-    session = get_session()
+    get_session()
 
     # For now, we need the security ID. In a full implementation, we'd search first.
-    print(f"\nNote: Quote lookup requires a security ID.")
-    print(f"Use positions to see security IDs for your holdings.")
+    print("\nNote: Quote lookup requires a security ID.")
+    print("Use positions to see security IDs for your holdings.")
     print(f"\nTo look up {args.symbol}, you would need to search for its security ID first.")
 
 
@@ -354,12 +354,12 @@ def cmd_buy(args):
     print("=" * 60)
     print("ORDER CONFIRMATION")
     print("=" * 60)
-    print(f"  Action:      BUY")
+    print("  Action:      BUY")
     print(f"  Symbol:      {symbol}")
     print(f"  Quantity:    {quantity}")
     print(f"  Limit Price: ${limit_price:.2f}")
     print(f"  Total Cost:  ${total_cost:,.2f} (approx)")
-    print(f"  Time:        DAY order")
+    print("  Time:        DAY order")
     print("=" * 60)
 
     confirm = input("\nConfirm order? (yes/no): ").strip().lower()
@@ -380,7 +380,7 @@ def cmd_buy(args):
             print(f"  - {err.get('code')}: {err.get('message')}")
     else:
         order_info = order_data.get('order', {})
-        print(f"Order SUBMITTED!")
+        print("Order SUBMITTED!")
         print(f"  Order ID: {result.get('order_id')}")
         print(f"  Server ID: {order_info.get('orderId')}")
         print(f"  Created: {order_info.get('createdAt')}")
@@ -406,12 +406,12 @@ def cmd_sell(args):
     print("=" * 60)
     print("ORDER CONFIRMATION")
     print("=" * 60)
-    print(f"  Action:      SELL")
+    print("  Action:      SELL")
     print(f"  Symbol:      {symbol}")
     print(f"  Quantity:    {quantity}")
     print(f"  Limit Price: ${limit_price:.2f}")
     print(f"  Total Value: ${total_value:,.2f} (approx)")
-    print(f"  Time:        DAY order")
+    print("  Time:        DAY order")
     print("=" * 60)
 
     confirm = input("\nConfirm order? (yes/no): ").strip().lower()
@@ -432,7 +432,7 @@ def cmd_sell(args):
             print(f"  - {err.get('code')}: {err.get('message')}")
     else:
         order_info = order_data.get('order', {})
-        print(f"Order SUBMITTED!")
+        print("Order SUBMITTED!")
         print(f"  Order ID: {result.get('order_id')}")
         print(f"  Server ID: {order_info.get('orderId')}")
         print(f"  Created: {order_info.get('createdAt')}")
@@ -785,7 +785,7 @@ def cmd_buy_opt(args):
     print(f"  Quantity:    {quantity} contract(s)")
     print(f"  Limit Price: ${limit_price:.2f} per share")
     print(f"  Total Cost:  ${total_cost:,.2f} (approx)")
-    print(f"  Time:        DAY order")
+    print("  Time:        DAY order")
     print("=" * 60)
 
     confirm = input("\nConfirm order? (yes/no): ").strip().lower()
@@ -806,7 +806,7 @@ def cmd_buy_opt(args):
             print(f"  - {err.get('code')}: {err.get('message')}")
     else:
         order_info = order_data.get('order', {})
-        print(f"Order SUBMITTED!")
+        print("Order SUBMITTED!")
         print(f"  Order ID: {result.get('order_id')}")
         print(f"  Server ID: {order_info.get('orderId')}")
         print(f"  Created: {order_info.get('createdAt')}")
@@ -840,7 +840,7 @@ def cmd_sell_opt(args):
     print(f"  Quantity:    {quantity} contract(s)")
     print(f"  Limit Price: ${limit_price:.2f} per share")
     print(f"  Total Value: ${total_value:,.2f} (approx)")
-    print(f"  Time:        DAY order")
+    print("  Time:        DAY order")
     print("=" * 60)
 
     confirm = input("\nConfirm order? (yes/no): ").strip().lower()
@@ -861,7 +861,7 @@ def cmd_sell_opt(args):
             print(f"  - {err.get('code')}: {err.get('message')}")
     else:
         order_info = order_data.get('order', {})
-        print(f"Order SUBMITTED!")
+        print("Order SUBMITTED!")
         print(f"  Order ID: {result.get('order_id')}")
         print(f"  Server ID: {order_info.get('orderId')}")
         print(f"  Created: {order_info.get('createdAt')}")
@@ -1031,7 +1031,7 @@ def cmd_straddle_scan(args):
             best_exp = expiry_scores[0]['date']
             actual_dte = expiry_scores[0]['dte']
             print(f"\n  Selected: {best_exp} ({actual_dte} DTE)")
-            print(f"  Override with: --expiry YYYY-MM-DD")
+            print("  Override with: --expiry YYYY-MM-DD")
     print(f"\n{symbol} straddle scan — expiry {best_exp} ({actual_dte} DTE)")
 
     # Fetch both chains with greeks
@@ -1270,12 +1270,12 @@ query FetchSecurityQuoteV2($id: ID!) { security(id: $id) { quoteV2 { price } } }
                     mid_price = round(strad_mid, 2)
                     n_round = max(1, round(n_needed))
 
-                    print(f"\n  SCALING PLAN (delta neutralize):")
+                    print("\n  SCALING PLAN (delta neutralize):")
                     print(f"    Buy {n_round}x ${best_fwd['strike']:.0f} straddle (per-strad delta {per_strad_delta:+.0f})")
                     print(f"    New delta: {total_delta + per_strad_delta * n_round:+.0f}")
                     print(f"    Price approach: start ${start_price:.2f} → creep to ${mid_price:.2f}")
                     print(f"    Cost: ${strad_mid * n_round * 100:,.0f} at mid")
-                    print(f"\n    Command:")
+                    print("\n    Command:")
                     print(f"    python ws_trading.py straddle {symbol} {best_exp} "
                           f"{best_fwd['strike']:.0f} {start_price:.2f} --qty {n_round}")
                 elif n_needed < -0.5:
@@ -1296,18 +1296,18 @@ query FetchSecurityQuoteV2($id: ID!) { security(id: $id) { quoteV2 { price } } }
             strad_ask = fc.get('ask', 0) + fp.get('ask', 0)
             start_price = round(strad_bid + 0.01, 2)
 
-            print(f"\n  NO POSITION — Initial entry suggestion:")
+            print("\n  NO POSITION — Initial entry suggestion:")
             print(f"    Strike: ${best_fwd['strike']:.0f} (forward ATM)")
             print(f"    1x straddle = ${strad_mid * 100:,.0f} at mid")
             print(f"      Gamma: {per_gamma:+.1f}/strad  Vega: {per_vega:+.1f}/strad  Theta: {per_theta:+.1f}/day/strad")
-            print(f"    Pricing approach:")
+            print("    Pricing approach:")
             print(f"      Start:   ${start_price:.2f} (bid + $0.01)")
             print(f"      Mid:     ${strad_mid:.2f}")
             print(f"      Natural: ${strad_ask:.2f} (guaranteed fill)")
             for n in [1, 5, 10]:
                 print(f"    {n}x = ${strad_mid * n * 100:,.0f} | "
                       f"G {per_gamma * n:+.0f}  V {per_vega * n:+.0f}  Th {per_theta * n:+.0f}/day")
-            print(f"\n    Command (start near bid):")
+            print("\n    Command (start near bid):")
             print(f"    python ws_trading.py straddle {symbol} {best_exp} "
                   f"{best_fwd['strike']:.0f} {start_price:.2f}")
 
@@ -1400,12 +1400,12 @@ def cmd_straddle(args):
     print(f"    Bid/Ask:   ${put_bid:.2f} / ${put_ask:.2f} (mid: ${put_mid:.2f})")
     print(f"  Call:        {call_sec_id}")
     print(f"    Bid/Ask:   ${call_bid:.2f} / ${call_ask:.2f} (mid: ${call_mid:.2f})")
-    print(f"  ---")
+    print("  ---")
     print(f"  Mid debit:   ${mid_debit:.2f}")
     print(f"  Natural:     ${natural_debit:.2f}")
     print(f"  Your limit:  ${limit_price:.2f} {'(credit)' if args.close else '(debit)'}")
     print(f"  Total cost:  ${limit_price * qty * 100:,.2f}")
-    print(f"  Time:        DAY order")
+    print("  Time:        DAY order")
     print("=" * 60)
 
     if dry_run:
@@ -1442,7 +1442,7 @@ def cmd_straddle(args):
             print(f"  - {err.get('code')}: {err.get('message')}")
     else:
         orders = exec_data.get('orders', [])
-        print(f"Straddle order SUBMITTED!")
+        print("Straddle order SUBMITTED!")
         print(f"  External ID: {result.get('order_id')}")
         for o in orders:
             print(f"  Leg: {o.get('orderId')} (created: {o.get('createdAt')})")

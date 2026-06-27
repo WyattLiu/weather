@@ -64,11 +64,11 @@ def main():
     for _, x in r.iterrows():
         print(f"{x['start']}→{x['end'][:7]:11}{x['ung_ret']:+7.0f}{x['champ_sh']:9.2f}{x['boxx_sh']:9.2f}"
               f"{x['d_ann']:+7.1f}{x['d_sh']:+7.2f}{x['d_mdd']:+7.1f}{x['avg_regime']:+8.2f}")
-    print(f"\n=== ROBUSTNESS ===")
+    print("\n=== ROBUSTNESS ===")
     print(f"  windows boxx beats champ on Sharpe: {(r['d_sh']>0).mean()*100:.0f}%  on return: {(r['d_ann']>0).mean()*100:.0f}%  on MDD: {(r['d_mdd']>0).mean()*100:.0f}%")
     print(f"  median Δann {r['d_ann'].median():+.1f}pp  median ΔSharpe {r['d_sh'].median():+.2f}  median ΔMDD {r['d_mdd'].median():+.1f}pp")
     print(f"  worst window for boxx: Δann {r['d_ann'].min():+.1f}pp at {r.loc[r['d_ann'].idxmin(),'start']}")
-    print(f"\n=== EARLY SIGNS OF ALPHA (corr of relative outperformance with leading signals) ===")
+    print("\n=== EARLY SIGNS OF ALPHA (corr of relative outperformance with leading signals) ===")
     for sig in ['avg_regime', 'ssz_vol', 'avg_ivr', 'ung_ret']:
         if r[sig].notna().sum() > 5:
             c_ann = r['d_ann'].corr(r[sig]); c_sh = r['d_sh'].corr(r[sig])

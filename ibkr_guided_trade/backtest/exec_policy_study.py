@@ -122,7 +122,7 @@ def main(kernel, start, end, sample):
     if not len(r):
         print("no orders with minute paths"); return
     r.to_csv(os.path.join(THIS, 'results', 'exec_policy_costs.csv'), index=False)
-    print(f"\n=== IMPLEMENTATION SHORTFALL (cents vs arrival mid; LOWER=better, neg=beat mid) ===")
+    print("\n=== IMPLEMENTATION SHORTFALL (cents vs arrival mid; LOWER=better, neg=beat mid) ===")
     print(f"n={len(r)} order-fills\n")
     summ = r[POL].mean().sort_values()
     for p, v in summ.items():
@@ -131,7 +131,7 @@ def main(kernel, start, end, sample):
     print(f"\n  BEST overall: {best} ({summ.iloc[0]:+.2f}¢)  vs cross_now ({r['cross_now'].mean():+.2f}¢) "
           f"→ saves {r['cross_now'].mean()-summ.iloc[0]:.2f}¢/order")
     # state conditioning
-    print(f"\n=== BEST POLICY BY STATE (mean shortfall ¢) ===")
+    print("\n=== BEST POLICY BY STATE (mean shortfall ¢) ===")
     print("by DAY OF WEEK:")
     for dw, sub in r.groupby('dow'):
         m = sub[POL].mean(); b = m.idxmin()

@@ -17,7 +17,7 @@ real data gap to close if we want this signal. NOT wired (overfit risk on weak s
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'ibkr_guided_trade', 'backtest'))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backtest'))
-import pandas as pd, numpy as np
+import pandas as pd
 import replay_engine as R
 
 STEO = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'steo', 'apr26_base.xlsx')

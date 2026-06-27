@@ -7,8 +7,7 @@ Commands for analyzing portfolio risk and Greek exposures.
 # pyright: reportAttributeAccessIssue=false
 # pyright: reportPossiblyUnboundVariable=false
 
-from ib_insync import Stock, Option
-from datetime import datetime
+from ib_insync import Stock
 from collections import defaultdict
 
 from .common import connect, get_timestamp, DEFAULT_ACCOUNT
@@ -40,7 +39,7 @@ def cmd_greeks(args):
                 option_positions.append(p)
 
     if not option_positions:
-        msg = f"No option positions found"
+        msg = "No option positions found"
         if args.symbol:
             msg += f" for {args.symbol.upper()}"
         print(f"\n{msg}.")
@@ -159,33 +158,33 @@ def cmd_risk(args):
 
     net_liq = float(acct_values.get('NetLiquidation', 0))
     maint_margin = float(acct_values.get('MaintMarginReq', 0))
-    init_margin = float(acct_values.get('InitMarginReq', 0))
-    available = float(acct_values.get('AvailableFunds', 0))
+    float(acct_values.get('InitMarginReq', 0))
+    float(acct_values.get('AvailableFunds', 0))
 
     # Margin utilization
     margin_util = (maint_margin / net_liq * 100) if net_liq > 0 else 0
 
-    print(f"\n--- MARGIN UTILIZATION ---")
+    print("\n--- MARGIN UTILIZATION ---")
     print(f"  Net Liquidation:    ${net_liq:>12,.2f}")
     print(f"  Maintenance Margin: ${maint_margin:>12,.2f}")
     print(f"  Utilization:        {margin_util:>12.1f}%")
 
     # Warning levels
     if margin_util > 80:
-        print(f"  ⚠️  DANGER: Margin utilization very high!")
+        print("  ⚠️  DANGER: Margin utilization very high!")
     elif margin_util > 60:
-        print(f"  ⚠️  WARNING: Margin utilization elevated")
+        print("  ⚠️  WARNING: Margin utilization elevated")
     elif margin_util > 40:
-        print(f"  ℹ️  Margin utilization moderate")
+        print("  ℹ️  Margin utilization moderate")
     else:
-        print(f"  ✅ Margin utilization healthy")
+        print("  ✅ Margin utilization healthy")
 
     # Get positions for concentration analysis
     positions = ib.positions()
     option_positions = [p for p in positions if p.contract.secType == 'OPT']
 
     if option_positions:
-        print(f"\n--- POSITION CONCENTRATION ---")
+        print("\n--- POSITION CONCENTRATION ---")
 
         # Group by underlying
         by_underlying = defaultdict(list)
@@ -220,7 +219,7 @@ def cmd_risk(args):
 
         # Concentration warning
         if len(by_underlying) == 1:
-            print(f"\n  ⚠️  100% concentration in single underlying!")
+            print("\n  ⚠️  100% concentration in single underlying!")
         elif len(by_underlying) <= 3:
             print(f"\n  ℹ️  Concentrated in {len(by_underlying)} underlyings")
 
@@ -229,10 +228,10 @@ def cmd_risk(args):
             loss_ratio = total_max_loss / net_liq * 100
             print(f"\n  Max Loss / Net Liq: {loss_ratio:.0f}%")
             if loss_ratio > 100:
-                print(f"  ⚠️  Max loss exceeds account value!")
+                print("  ⚠️  Max loss exceeds account value!")
 
     # Summary warnings
-    print(f"\n--- WARNINGS ---")
+    print("\n--- WARNINGS ---")
     warnings = []
 
     if margin_util > 60:
@@ -246,7 +245,7 @@ def cmd_risk(args):
         for w in warnings:
             print(f"  ⚠️  {w}")
     else:
-        print(f"  ✅ No major risk warnings")
+        print("  ✅ No major risk warnings")
 
     ib.disconnect()
 
@@ -268,7 +267,7 @@ def cmd_whatif(args):
     current_margin = float(acct_values.get('MaintMarginReq', 0))
     available = float(acct_values.get('AvailableFunds', 0))
 
-    print(f"\nCurrent State:")
+    print("\nCurrent State:")
     print(f"  Net Liquidation: ${net_liq:,.2f}")
     print(f"  Current Margin:  ${current_margin:,.2f}")
     print(f"  Available Funds: ${available:,.2f}")
@@ -294,7 +293,7 @@ def cmd_whatif(args):
     est_margin = strike * 100 * qty * 0.25
     otm_pct = (spot - strike) / spot * 100 if spot > 0 else 0
 
-    print(f"\n--- PROJECTED IMPACT ---")
+    print("\n--- PROJECTED IMPACT ---")
     print(f"  Strike:            ${strike:.2f} ({otm_pct:.1f}% OTM)")
     print(f"  Est. Margin Req:   ${est_margin:,.0f}")
     print(f"  Max Loss if Assigned: ${strike * 100 * qty:,.0f}")
@@ -302,7 +301,7 @@ def cmd_whatif(args):
     new_margin = current_margin + est_margin
     new_margin_util = (new_margin / net_liq * 100) if net_liq > 0 else 0
 
-    print(f"\n--- AFTER POSITION ---")
+    print("\n--- AFTER POSITION ---")
     print(f"  New Margin Req:    ${new_margin:,.0f}")
     print(f"  New Margin Util:   {new_margin_util:.1f}%")
     print(f"  Remaining Avail:   ${available - est_margin:,.0f}")
@@ -312,6 +311,6 @@ def cmd_whatif(args):
     elif new_margin_util > 80:
         print(f"\n  ⚠️  WARNING: Would push margin utilization to {new_margin_util:.0f}%")
     else:
-        print(f"\n  ✅ Position appears feasible")
+        print("\n  ✅ Position appears feasible")
 
     ib.disconnect()

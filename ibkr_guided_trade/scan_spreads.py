@@ -199,7 +199,7 @@ def phase1_screen(ib, tickers, progress_cb=None):
                     'drop_5d': drop_5d,
                 }
 
-            except Exception as e:
+            except Exception:
                 # Skip stocks that error out
                 pass
 
@@ -618,7 +618,7 @@ def main():
 
         # Print phase 2 results
         print(f'\n{"=" * 100}')
-        print(f'PHASE 2 RESULTS — Ranked by IV-RV Edge (selling edge)')
+        print('PHASE 2 RESULTS — Ranked by IV-RV Edge (selling edge)')
         print(f'{"=" * 100}')
         print(f'{"#":>3} {"Ticker":>8} {"Spot":>8} {"RV30":>7} {"RV10":>7} {"ATM IV":>8} {"Edge":>7} {"Drop20":>8} {"DTE":>4} {"Expiry":>10}')
         print('-' * 90)
@@ -650,7 +650,7 @@ def main():
 
         # Final results
         print(f'\n{"=" * 100}')
-        print(f'FINAL RESULTS — Best Bull Put Spreads')
+        print('FINAL RESULTS — Best Bull Put Spreads')
         print(f'{"=" * 100}')
 
         # Collect all best spreads with stock context
@@ -714,7 +714,7 @@ def main():
                     writer.writerow({k: s.get(k, '') for k in writer.fieldnames})
             print(f'\nResults saved to {csv_file}')
 
-        print(f'\nNOTE: Analysis only — no orders placed')
+        print('\nNOTE: Analysis only — no orders placed')
 
     finally:
         ib.disconnect()

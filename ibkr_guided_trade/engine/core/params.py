@@ -5,8 +5,7 @@ over instances of this class to find the best configuration.
 
 Defaults match the live ung_visualizer.py settings as of cycle 200+.
 """
-from dataclasses import dataclass, asdict, field
-from typing import Optional
+from dataclasses import dataclass, asdict
 
 
 @dataclass

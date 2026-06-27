@@ -17,7 +17,7 @@ import math
 import os
 import sys
 import numpy as np
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from scipy.stats import norm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

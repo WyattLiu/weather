@@ -17,9 +17,7 @@ Usage:
     python research/gex/thetadata_backfill.py --symbol UNG --start-year 2018
 """
 import os
-import sys
 import csv
-import json
 import time
 import argparse
 from datetime import date, datetime, timedelta

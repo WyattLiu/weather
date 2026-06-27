@@ -29,13 +29,11 @@ Usage:
 """
 from __future__ import annotations
 import os
-import sys
 import json
 import math
 import argparse
 import pandas as pd
-import numpy as np
-from collections import defaultdict, Counter
+from collections import Counter
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(THIS_DIR, 'results')
@@ -86,7 +84,7 @@ def diagnose_strategy(name):
 
     # Group trades by day
     t['day'] = t['date'].dt.normalize()
-    by_day = t.groupby('day')
+    t.groupby('day')
 
     def trades_on(day_idx, prev=False):
         """Get trades on that day (or prior 5 days)."""
@@ -270,15 +268,15 @@ def main():
               f'Down/Up vol ratio: {diag["risk"]["downside_vol"]/(diag["risk"]["upside_vol"]+1e-9):.2f}')
         print(f'  best day: {diag["risk"]["best_day_pct"]:+.2f}%  worst day: {diag["risk"]["worst_day_pct"]:+.2f}%')
         print(f'  Downside days: {diag["risk"]["downside_freq"]*100:.1f}%  avg down: {diag["risk"]["avg_down_day"]:.2f}%')
-        print(f'  Worst 3 days by $:')
+        print('  Worst 3 days by $:')
         for d in diag['worst_10_days'][:3]:
             lt = ', '.join(f'{k}×{v}' for k, v in d['lead_types'].items())
             print(f'    {d["date"]} (spot ${d["spot"]:.2f}): ${d["daily_pnl"]:+,.0f} ({d["daily_pct"]:+.2f}%) [{lt}]')
-        print(f'  Best 3 days by $:')
+        print('  Best 3 days by $:')
         for d in diag['best_10_days'][:3]:
             lt = ', '.join(f'{k}×{v}' for k, v in d['lead_types'].items())
             print(f'    {d["date"]} (spot ${d["spot"]:.2f}): ${d["daily_pnl"]:+,.0f} ({d["daily_pct"]:+.2f}%) [{lt}]')
-        print(f'  Top contributing trade types:')
+        print('  Top contributing trade types:')
         for ttype, info in list(diag['trade_type_contribution'].items())[:5]:
             sign = '+' if info['total_pnl'] >= 0 else ''
             print(f'    {ttype}: {info["count"]} trades, total {sign}${info["total_pnl"]:,.0f}, avg ${info["avg_pnl"]:,.0f}')
@@ -301,7 +299,7 @@ def main():
         if 'regret' in it:
             print(f'    ⚠ REGRET: {it["regret"]}')
 
-    print(f'\n--- Regret pattern frequency ---')
+    print('\n--- Regret pattern frequency ---')
     for pattern, n in regret_patterns.most_common():
         print(f'  {n}× {pattern}')
 

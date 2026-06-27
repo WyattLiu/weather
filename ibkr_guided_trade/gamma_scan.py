@@ -18,7 +18,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import numpy as np
 import pandas as pd
 from datetime import datetime
 from ib_insync import IB, Future, FuturesOption, Stock, Option
@@ -461,7 +460,7 @@ def make_chart(df, output_path):
             f'Call GEX: ${call_gex.sum()/1e6:.1f}M  Put GEX: ${put_gex.sum()/1e6:.1f}M',
         ]
         if flip_points:
-            gex_lines.append(f'Flip point(s): ' + ', '.join(f'${f:.2f}' for f in flip_points))
+            gex_lines.append('Flip point(s): ' + ', '.join(f'${f:.2f}' for f in flip_points))
         gex_lines.append('')
         gex_lines.append('Green bars=Call GEX  Red bars=Put GEX')
         gex_lines.append('Blue line=Net GEX  Purple=Gamma flip')
@@ -473,7 +472,7 @@ def make_chart(df, output_path):
                               edgecolor=C_GRID, alpha=0.92))
 
         ax_gex.set_xlim(x_lo, x_hi)
-        ax_gex.set_title(f'Net Gamma Exposure (GEX) — Magnets & Squeeze Zones',
+        ax_gex.set_title('Net Gamma Exposure (GEX) — Magnets & Squeeze Zones',
                          color=C_TEXT, fontsize=13, fontweight='bold')
         ax_gex.set_xlabel('Strike', color=C_TEXT, fontsize=11)
         ax_gex.set_ylabel('GEX ($M)', color=C_TEXT, fontsize=11)

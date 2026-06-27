@@ -2,7 +2,7 @@
 
 Used identically by live engine and backtest. No I/O, no side effects.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from .params import Params
 from .state import PortfolioState
 

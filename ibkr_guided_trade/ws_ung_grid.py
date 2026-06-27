@@ -15,9 +15,8 @@ Usage:
 
 import argparse
 import time
-import math
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from ws_trading import (
     get_session, graphql_query, place_order, cancel_order,
@@ -25,7 +24,7 @@ from ws_trading import (
     extract_oauth_data, is_token_expired, refresh_access_token,
     update_cookies_with_new_token,
     QUERY_FETCH_POSITIONS, QUERY_FETCH_ACTIVITIES,
-    KNOWN_SECURITIES, DEFAULT_ACCOUNT_ID,
+    KNOWN_SECURITIES,
 )
 
 # ── Config ─────────────────────────────────────────────────────────────────────

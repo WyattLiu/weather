@@ -22,7 +22,7 @@ import math
 import pandas as pd
 import numpy as np
 from io import StringIO
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -72,7 +72,6 @@ def fetch_eia_historical(years=5):
       - NW2_EPG0_SWO_R48_BCF: weekly storage Lower 48 (Bcf)
     """
     import subprocess
-    from io import BytesIO
     EIA_BASE = 'https://www.eia.gov/dnav/ng/hist_xls/'
     files = {
         'production': 'N9070US2m.xls',
@@ -149,7 +148,7 @@ def build_master_dataset(years=5):
     df = df.join(iv)
 
     # EIA monthly — forward fill to daily
-    print(f"\n[data] EIA monthly data:")
+    print("\n[data] EIA monthly data:")
     eia = fetch_eia_historical(years)
     for name, series in eia.items():
         if series is None or series.empty:

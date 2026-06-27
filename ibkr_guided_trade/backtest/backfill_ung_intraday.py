@@ -21,7 +21,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetch_thetadata_iv import THETA_BASE, split_factor_on   # reuse v3 base + split map

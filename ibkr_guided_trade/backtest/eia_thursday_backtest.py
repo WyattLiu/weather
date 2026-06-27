@@ -15,10 +15,8 @@ Position sizing:
 """
 from __future__ import annotations
 import os
-import sys
 import math
 import pandas as pd
-import numpy as np
 import psycopg2
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -159,7 +157,7 @@ def run_backtest(nav_start=100000, max_pct_per_event=0.05):
     mdd = ((hist_df['nav'] - peak) / peak * 100).min()
 
     print()
-    print(f'═══════ EIA Thursday Vol-Crush Results (with pessimistic spread) ═══════')
+    print('═══════ EIA Thursday Vol-Crush Results (with pessimistic spread) ═══════')
     print(f'  Events: {len(events)}  Years: {years:.1f}')
     print(f'  NAV: ${nav_start:,.0f} → ${nav:,.0f}  (total {total_ret:+.1f}%)')
     print(f'  Annualized: {ann_ret:+.1f}%')
@@ -168,7 +166,7 @@ def run_backtest(nav_start=100000, max_pct_per_event=0.05):
     print(f'  Max DD: {mdd:+.1f}%')
     print()
     events_df = pd.DataFrame(events)
-    print(f'  P&L distribution:')
+    print('  P&L distribution:')
     print(f'    Best week: ${events_df["pnl"].max():+,.0f}')
     print(f'    Worst week: ${events_df["pnl"].min():+,.0f}')
     print(f'    Avg P&L: ${events_df["pnl"].mean():+,.0f}')
@@ -178,7 +176,7 @@ def run_backtest(nav_start=100000, max_pct_per_event=0.05):
     losers = events_df[events_df['pnl'] < -500]
     print(f'  Bad weeks (>$500 loss): {len(losers)} ({len(losers)/len(events_df)*100:.0f}%)')
     if not losers.empty:
-        print(f'    Sample worst:')
+        print('    Sample worst:')
         for _, r in losers.nsmallest(5, 'pnl').iterrows():
             print(f'      {r["wed"]} → {r["fri"]}: spot {r["spot"]:.2f}, qty {r["qty"]}, pnl ${r["pnl"]:+,.0f}')
     return hist_df, events_df

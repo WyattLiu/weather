@@ -258,4 +258,4 @@ plt.close()
 
 # Print summary
 print(summary)
-print(f"\nChart saved to: intc_ic_vs_rc.png")
+print("\nChart saved to: intc_ic_vs_rc.png")

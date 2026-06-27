@@ -33,13 +33,12 @@ Strategy:
 Output: backtest/cache/ung_iv_surface.csv
 """
 import os
-import sys
 import time
 import math
 import argparse
 import requests
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from scipy.stats import norm
 
 THETA_BASE = 'http://127.0.0.1:25503'
@@ -194,7 +193,7 @@ def fetch_iv_surface(symbol='UNG', start_date='2021-06-01', end_date=None,
 
         try:
             strikes = get_strikes(symbol, target_exp)
-        except Exception as e:
+        except Exception:
             continue
         if not strikes:
             continue

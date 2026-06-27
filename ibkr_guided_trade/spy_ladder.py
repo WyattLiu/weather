@@ -16,7 +16,6 @@ Usage:
 """
 
 import argparse
-import math
 import sys
 import time
 from datetime import datetime
@@ -218,8 +217,8 @@ def compute_ladder(analysis, qty):
     """Compute ladder prices based on observed fluctuations."""
     bid = analysis['bid_last']
     mid = analysis['mid_last']
-    ask = analysis['ask_last']
-    spread = analysis['spread']
+    analysis['ask_last']
+    analysis['spread']
     mid_vol = analysis['mid_volatility']
 
     # The spread tells us the market maker's edge
@@ -432,8 +431,8 @@ def main():
     if order_ids:
         print(f"  Order IDs: {', '.join(order_ids)}")
     print()
-    print(f"  Monitor: python ws_trading.py open-orders")
-    print(f"  Cancel:  python ws_trading.py cancel <order-id>")
+    print("  Monitor: python ws_trading.py open-orders")
+    print("  Cancel:  python ws_trading.py cancel <order-id>")
 
 
 if __name__ == '__main__':

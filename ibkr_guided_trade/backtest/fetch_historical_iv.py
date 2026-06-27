@@ -23,7 +23,7 @@ Notes:
 import os
 import sys
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
 try:
     from ib_insync import IB, Stock

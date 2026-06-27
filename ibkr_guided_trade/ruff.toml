@@ -1,0 +1,23 @@
+# Lint config: clean GENUINE issues (unused imports/vars, dead f-strings, redefinitions) while
+# RESPECTING the codebase's deliberate dense idiom rather than reformatting it:
+#   - semicolon/colon one-liners (`import sys; sys.path.insert(...)`, `if x: y`) are intentional
+#   - `sys.path.insert(...)` legitimately precedes imports in the backtest/research entrypoints
+#   - short names (l, I, O) appear in math code
+#   - bare `except:` are deliberate best-effort guards on live/network paths
+[lint]
+ignore = [
+    "E701",  # multiple statements on one line (colon) — deliberate
+    "E702",  # multiple statements on one line (semicolon) — deliberate
+    "E401",  # multiple imports on one line — deliberate
+    "E402",  # module import not at top of file — sys.path.insert precedes imports by design
+    "E741",  # ambiguous variable name — l/I/O used in math
+    "E722",  # bare except — best-effort live/network guards
+    "E731",  # lambda assignment
+]
+
+[lint.per-file-ignores]
+# Compatibility re-export shim: the "unused" imports ARE its public surface (downstream scripts do
+# `from ws_trading import ...`). Verified by tests/test_queries_compat.py. Never strip these.
+"ws_trading.py" = ["F401"]
+# __init__ re-exports
+"**/__init__.py" = ["F401"]

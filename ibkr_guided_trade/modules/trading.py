@@ -8,7 +8,7 @@ Commands for viewing status, placing orders, and scanning options.
 from ib_insync import Stock, Option, LimitOrder, Contract, ComboLeg
 from datetime import datetime, timedelta
 
-from .common import connect, get_timestamp, DEFAULT_ACCOUNT, ET
+from .common import connect, get_timestamp, DEFAULT_ACCOUNT
 
 
 def cmd_status(args):
@@ -709,18 +709,18 @@ def cmd_snapshot(args):
         # Get account values
         acct_values = {v.tag: v.value for v in ib.accountValues() if v.account == account}
 
-        print(f"\n--- BALANCES ---")
+        print("\n--- BALANCES ---")
         print(f"  Net Liquidation:    ${float(acct_values.get('NetLiquidation', 0)):>12,.2f}")
         print(f"  Total Cash:         ${float(acct_values.get('TotalCashValue', 0)):>12,.2f}")
         print(f"  Available Funds:    ${float(acct_values.get('AvailableFunds', 0)):>12,.2f}")
         print(f"  Buying Power:       ${float(acct_values.get('BuyingPower', 0)):>12,.2f}")
 
-        print(f"\n--- MARGIN ---")
+        print("\n--- MARGIN ---")
         print(f"  Init Margin Req:    ${float(acct_values.get('InitMarginReq', 0)):>12,.2f}")
         print(f"  Maint Margin Req:   ${float(acct_values.get('MaintMarginReq', 0)):>12,.2f}")
         print(f"  Excess Liquidity:   ${float(acct_values.get('ExcessLiquidity', 0)):>12,.2f}")
 
-        print(f"\n--- P&L ---")
+        print("\n--- P&L ---")
         print(f"  Unrealized P&L:     ${float(acct_values.get('UnrealizedPnL', 0)):>12,.2f}")
         print(f"  Realized P&L:       ${float(acct_values.get('RealizedPnL', 0)):>12,.2f}")
 
@@ -728,7 +728,7 @@ def cmd_snapshot(args):
         portfolio = [p for p in ib.portfolio() if p.account == account]
 
         if portfolio:
-            print(f"\n--- POSITIONS (with P&L) ---")
+            print("\n--- POSITIONS (with P&L) ---")
             total_unrealized = 0
             for item in portfolio:
                 symbol = item.contract.localSymbol or item.contract.symbol
@@ -752,7 +752,7 @@ def cmd_snapshot(args):
             # Fallback to positions() if portfolio() is empty
             positions = [p for p in ib.positions() if p.account == account]
             if positions:
-                print(f"\n--- POSITIONS ---")
+                print("\n--- POSITIONS ---")
                 for p in positions:
                     symbol = p.contract.localSymbol or p.contract.symbol
                     print(f"\n  {symbol}")
@@ -856,7 +856,7 @@ def cmd_spread(args):
             close_qty = min(abs(short_pos), abs(long_pos))
         else:
             print(f"WARNING: Unexpected position shape: short_strike={short_pos}, long_strike={long_pos}")
-            print(f"  Cannot auto-detect direction. Use explicit --open-debit or default credit mode.")
+            print("  Cannot auto-detect direction. Use explicit --open-debit or default credit mode.")
             ib.disconnect()
             return
 
@@ -891,7 +891,7 @@ def cmd_spread(args):
             mid_debit = short_mid - long_mid
             aggressive_debit = round(mid_debit - (natural_debit - mid_debit) * 0.5, 2)
 
-            print(f"\n  === CLOSING CREDIT SPREAD (buying back) ===")
+            print("\n  === CLOSING CREDIT SPREAD (buying back) ===")
             print(f"  Position: short {args.short_strike} / long {args.long_strike} × {args.qty}")
             print(f"  Natural debit: ${natural_debit:.2f} (guaranteed fill)")
             print(f"  Mid debit:     ${mid_debit:.2f}")
@@ -908,8 +908,8 @@ def cmd_spread(args):
             print(f"\n  Close at ${target_debit:.2f} debit")
 
             if args.dry_run:
-                print(f"\n  [DRY RUN - Order not placed]")
-                print(f"  To place: remove --dry-run flag")
+                print("\n  [DRY RUN - Order not placed]")
+                print("  To place: remove --dry-run flag")
                 ib.disconnect()
                 return
 
@@ -946,7 +946,7 @@ def cmd_spread(args):
             mid_credit = short_mid - long_mid
             aggressive_credit = round(mid_credit + (mid_credit - natural_credit) * 0.5, 2)
 
-            print(f"\n  === CLOSING DEBIT SPREAD (selling back) ===")
+            print("\n  === CLOSING DEBIT SPREAD (selling back) ===")
             print(f"  Position: long {args.short_strike} / short {args.long_strike} × {args.qty}")
             print(f"  Natural credit: ${natural_credit:.2f} (guaranteed fill)")
             print(f"  Mid credit:     ${mid_credit:.2f}")
@@ -963,8 +963,8 @@ def cmd_spread(args):
             print(f"\n  Close at ${target_credit:.2f} credit")
 
             if args.dry_run:
-                print(f"\n  [DRY RUN - Order not placed]")
-                print(f"  To place: remove --dry-run flag")
+                print("\n  [DRY RUN - Order not placed]")
+                print("  To place: remove --dry-run flag")
                 ib.disconnect()
                 return
 
@@ -1010,7 +1010,7 @@ def cmd_spread(args):
         mid_debit = short_mid - long_mid
         aggressive_debit = round(mid_debit - (natural_debit - mid_debit) * 0.5, 2)
 
-        print(f"\n  === OPENING DEBIT SPREAD ===")
+        print("\n  === OPENING DEBIT SPREAD ===")
         print(f"  Natural debit: ${natural_debit:.2f} (guaranteed fill)")
         print(f"  Mid debit:     ${mid_debit:.2f}")
         print(f"  Aggressive:    ${aggressive_debit:.2f} (lower = better)")
@@ -1039,8 +1039,8 @@ def cmd_spread(args):
         print(f"  Risk/Reward:    {max_loss/max_profit:.1f}:1" if max_profit > 0 else "")
 
         if args.dry_run:
-            print(f"\n  [DRY RUN - Order not placed]")
-            print(f"  To place: remove --dry-run flag")
+            print("\n  [DRY RUN - Order not placed]")
+            print("  To place: remove --dry-run flag")
             ib.disconnect()
             return
 
@@ -1117,8 +1117,8 @@ def cmd_spread(args):
     print(f"  Risk/Reward:    {max_loss/max_profit:.1f}:1")
 
     if args.dry_run:
-        print(f"\n  [DRY RUN - Order not placed]")
-        print(f"  To place: remove --dry-run flag")
+        print("\n  [DRY RUN - Order not placed]")
+        print("  To place: remove --dry-run flag")
         ib.disconnect()
         return
 
@@ -1253,7 +1253,7 @@ def cmd_reverse_calendar(args):
         quote_warnings.extend(validate_quote(lc_t, "Long Call"))
 
         if quote_warnings:
-            print(f"  ⚠️  QUOTE WARNINGS:")
+            print("  ⚠️  QUOTE WARNINGS:")
             for w in quote_warnings:
                 print(f"      {w}")
             print()
@@ -1274,14 +1274,14 @@ def cmd_reverse_calendar(args):
         call_mid_debit = sc_mid_valid - lc_mid
         mid_debit = -(put_mid_debit + call_mid_debit)
 
-        print(f"  === CLOSING POSITION ===")
+        print("  === CLOSING POSITION ===")
         print(f"  Natural debit: ${natural_debit:.2f} (guaranteed fill)")
         print(f"  Mid debit:     ${mid_debit:.2f}")
 
         # Sanity check - natural should be <= mid
         if natural_debit > mid_debit + 0.10:
-            print(f"  ⚠️  WARNING: Natural > Mid (bad quote data likely)")
-            print(f"      Using natural as reference instead of mid")
+            print("  ⚠️  WARNING: Natural > Mid (bad quote data likely)")
+            print("      Using natural as reference instead of mid")
             mid_debit = natural_debit + 0.30
 
         # Determine target debit
@@ -1300,10 +1300,10 @@ def cmd_reverse_calendar(args):
 
         # Dry run check
         if args.dry_run:
-            print(f"\n  [DRY RUN - Order not placed]")
-            print(f"  To place: remove --dry-run flag")
+            print("\n  [DRY RUN - Order not placed]")
+            print("  To place: remove --dry-run flag")
             if use_algo:
-                print(f"  Algo will raise $0.01 every 10s until filled")
+                print("  Algo will raise $0.01 every 10s until filled")
             ib.disconnect()
             return
 
@@ -1346,7 +1346,7 @@ def cmd_reverse_calendar(args):
 
         if use_algo and not debit_arg:
             # ASCENDING PRICE ALGO: Start low, work up
-            print(f"\n  Starting ascending price algo...")
+            print("\n  Starting ascending price algo...")
 
             max_debit = round(mid_debit + 0.10, 2)
             current_debit = target_debit
@@ -1381,7 +1381,7 @@ def cmd_reverse_calendar(args):
 
             if trade.orderStatus.status != 'Filled':
                 print(f"\n  Not filled at max ${max_debit:.2f}")
-                print(f"  Order still working - check status")
+                print("  Order still working - check status")
         else:
             # Single order at specified debit
             print(f"\n  Placing CLOSE order at ${target_debit:.2f}...")
@@ -1398,7 +1398,7 @@ def cmd_reverse_calendar(args):
 
             if trade.orderStatus.status in ['Submitted', 'PreSubmitted']:
                 print(f"\n  Close order submitted for ${target_debit:.2f} debit")
-                print(f"  Monitor with: python ibkr_trading.py status")
+                print("  Monitor with: python ibkr_trading.py status")
 
         ib.disconnect()
         return
@@ -1406,7 +1406,7 @@ def cmd_reverse_calendar(args):
     # OPENING position
     print(f"  Put calendar credit:  ${put_mid_credit:.2f}")
     print(f"  Call calendar credit: ${call_mid_credit:.2f}")
-    print(f"  ----------------------------")
+    print("  ----------------------------")
     print(f"  Natural credit: ${natural_credit:.2f}")
     print(f"  Mid credit:     ${mid_credit:.2f}")
 
@@ -1420,12 +1420,12 @@ def cmd_reverse_calendar(args):
 
     # Dry run check
     if args.dry_run:
-        print(f"\n  [DRY RUN - Order not placed]")
-        print(f"  To place: remove --dry-run flag")
+        print("\n  [DRY RUN - Order not placed]")
+        print("  To place: remove --dry-run flag")
         ib.disconnect()
         return
 
-    print(f"\n  Placing 4-leg combo order...")
+    print("\n  Placing 4-leg combo order...")
 
     # Create combo contract
     combo = Contract()
@@ -1477,7 +1477,7 @@ def cmd_reverse_calendar(args):
 
     if trade.orderStatus.status == 'Submitted':
         print(f"\n  Order submitted for ${target_credit:.2f} credit")
-        print(f"  Monitor with: python ibkr_trading.py status")
+        print("  Monitor with: python ibkr_trading.py status")
 
     ib.disconnect()
 
@@ -1739,7 +1739,7 @@ def cmd_straddle(args):
                 fair = 0.798 * best_fwd['forward'] * avg_iv * math.sqrt(actual_dte / 365)
                 print(f"\n  Fair value (B-S approx): ${fair:.2f} vs mid ${best_fwd['straddle_mid']:.2f}")
 
-            print(f"\n  SCALING SUGGESTION:")
+            print("\n  SCALING SUGGESTION:")
             per_gamma = ((fc.get('gamma') or 0) + (fp.get('gamma') or 0)) * 100
             per_vega = ((fc.get('vega') or 0) + (fp.get('vega') or 0)) * 100
             per_theta = ((fc.get('theta') or 0) + (fp.get('theta') or 0)) * 100
@@ -1750,13 +1750,12 @@ def cmd_straddle(args):
                 print(f"    {n}x = ${cost_1 * n:,.0f} cost | "
                       f"G {per_gamma * n:+.0f} V {per_vega * n:+.0f} Th {per_theta * n:+.0f}/day")
 
-    print(f"\n  Buy command:")
+    print("\n  Buy command:")
     if best_fwd:
-        strad_ask = 0
         fwd_sides = chain_data.get(best_fwd['strike'], {})
         fc = fwd_sides.get('call', {})
         fp = fwd_sides.get('put', {})
-        strad_ask = fc.get('ask', 0) + fp.get('ask', 0)
+        fc.get('ask', 0) + fp.get('ask', 0)
         strad_mid = best_fwd['straddle_mid']
         print(f"    python ibkr_trading.py buy-straddle {args.symbol} {best_exp} "
               f"{best_fwd['strike']:.0f} {strad_mid:.2f}")
@@ -1823,10 +1822,10 @@ def cmd_buy_straddle(args):
     if target > natural:
         print(f"  WARNING: Price ${target:.2f} > natural ${natural:.2f} (overpaying)")
     elif target < mid:
-        print(f"  Below mid — may take time to fill")
+        print("  Below mid — may take time to fill")
 
     if args.dry_run:
-        print(f"\n  [DRY RUN - Order not placed]")
+        print("\n  [DRY RUN - Order not placed]")
         ib.disconnect()
         return
 
@@ -1860,6 +1859,6 @@ def cmd_buy_straddle(args):
 
     print(f"\n  Order ID: {trade.order.orderId}")
     print(f"  Status: {trade.orderStatus.status}")
-    print(f"  Monitor: python ibkr_trading.py status")
+    print("  Monitor: python ibkr_trading.py status")
 
     ib.disconnect()

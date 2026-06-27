@@ -1063,7 +1063,7 @@ def list_topics():
 
 def print_all():
     print(f"\n{BOLD}{CYAN}{'━' * 60}")
-    print(f"  OPTIONS TRADING KNOWLEDGE BASE")
+    print("  OPTIONS TRADING KNOWLEDGE BASE")
     print(f"{'━' * 60}{RESET}")
     print(f"  {DIM}17 topics • Built from S&P 500 spread scanning")
     print(f"  IBKR + WealthSimple trading • Feb 2026{RESET}\n")

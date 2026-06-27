@@ -17,7 +17,6 @@ Run: venv/bin/python backtest/synthetic_rr_analysis.py
 import os
 import math
 import pandas as pd
-import numpy as np
 from scipy.stats import norm
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

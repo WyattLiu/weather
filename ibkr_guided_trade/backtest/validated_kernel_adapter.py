@@ -472,7 +472,6 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         if this_cycle != 0:
             action = 'BUY' if this_cycle > 0 else 'SELL'
             # Limit ladder: 50% at mid, 30% lower, 20% lower (or mirror for sells)
-            mid = spot
             l1 = round(spot * 1.005, 2)  # 0.5% above
             l2 = round(spot * 0.995, 2)  # 0.5% below
             l3 = round(spot * 0.985, 2)  # 1.5% below
@@ -684,7 +683,6 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
     cash_buffer = 5000  # keep this much liquid
     max_boxx_dollars = 0
     cash_available = 0
-    margin_available = real_buying_power if real_buying_power is not None else 0
     if real_cash is not None and real_buying_power is not None:
         # CASH-ONLY mode (avoid margin interest leakage):
         # Use only cash to buy BOXX. No leverage. Margin only acts as ceiling.
@@ -736,7 +734,6 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
         live_boxx_price = boxx_spot_est
         bid = round(boxx_spot_est - 0.02, 2)
         ask = round(boxx_spot_est + 0.02, 2)
-        last = boxx_spot_est
         try:
             import yfinance as _yf
             _t = _yf.Ticker('BOXX')
@@ -747,7 +744,7 @@ def validated_verdict(spot: float, positions: Optional[List[Dict[str, Any]]] = N
             if _bid_v > 0 and _ask_v > 0:
                 bid = round(_bid_v, 2)
                 ask = round(_ask_v, 2)
-                last = round(_bid_l or (_bid_v + _ask_v) / 2, 2)
+                round(_bid_l or (_bid_v + _ask_v) / 2, 2)
                 live_boxx_price = round((bid + ask) / 2, 2)
         except Exception:
             pass
@@ -1328,7 +1325,7 @@ def _query_live_chain(target_dte=45, right='P', tolerance_dte=14):
             return cached
     try:
         import yfinance as yf
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
         ung = yf.Ticker('UNG')
         expirations = ung.options
         # Pick expiry closest to target_dte
@@ -1386,7 +1383,7 @@ def _query_live_chain(target_dte=45, right='P', tolerance_dte=14):
         _LIVE_CHAIN_CACHE['data'][cache_key] = result
         _LIVE_CHAIN_CACHE['ts'] = now
         return result
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -1399,7 +1396,6 @@ def _query_real_listed_strikes(target_dte=45, right='P', tolerance_dte=14):
     """
     import time
     now = time.time()
-    cache_key = (target_dte, right)
     cached = _LISTED_STRIKE_CACHE
     if (cached['strikes'] is not None and now - cached['ts'] < 600
             and cached.get('dte') == target_dte):
@@ -1820,8 +1816,8 @@ def _build_actionable_orders(kernel_info, spot, nav, current_shares,
     d1 = (math.log(spot/K) + (0.045 + 0.5*iv**2)*T) / (iv*math.sqrt(T))
     d2 = d1 - iv*math.sqrt(T)
     bsm_prem = K*math.exp(-0.045*T)*norm.cdf(-d2) - spot*norm.cdf(-d1)
-    limit_low = round(bsm_prem * 0.90, 2)
-    limit_high = round(bsm_prem * 1.10, 2)
+    round(bsm_prem * 0.90, 2)
+    round(bsm_prem * 1.10, 2)
 
     # Qty sizing
     put_nav_pct = sp.get('put_qty_nav_pct')
@@ -2128,7 +2124,6 @@ def _greeks_full(S, K, T, r, sigma, right='C'):
 def _per_position_analysis(positions, spot, snap):
     """For each UNG option, recommend HOLD/CLOSE/ROLL with concrete details."""
     from datetime import date as _date
-    import math
     today = _date.today()
     results = []
     surf = _load_iv_surface()
@@ -2170,7 +2165,7 @@ def _per_position_analysis(positions, spot, snap):
                 action_detail = f'Near expiry ({dte}d) + ITM — assignment likely; shares called at ${K}'
             elif moneyness == 'ITM' and dte > 7 and snap['regime'] in ('CHEAP', 'EXTREME_CHEAP'):
                 action = 'CONSIDER_BUYBACK'
-                action_detail = f'ITM CC in cheap regime; closing locks loss but preserves upside'
+                action_detail = 'ITM CC in cheap regime; closing locks loss but preserves upside'
             elif moneyness == 'OTM' and dte > 30:
                 action = 'HOLD'
                 action_detail = f'Comfortably OTM; let theta decay work ({-theta*abs(qty)*100:.0f}/day collected)'
@@ -2216,9 +2211,8 @@ def _intrinsic_value(K, spot, right):
 
 def _pnl_curve(positions, spot_now):
     """P&L profile at expiration across UNG price range."""
-    import math
     from datetime import date as _date
-    today = _date.today()
+    _date.today()
     # Range: 70% to 130% of current spot
     prices = [spot_now * (0.70 + 0.01 * i) for i in range(61)]
     pnl = []
@@ -2253,7 +2247,6 @@ def _pnl_curve(positions, spot_now):
 
 def _delta_curve(positions, spot_now):
     """Total portfolio delta as UNG price varies."""
-    import math
     from datetime import date as _date
     surf = _load_iv_surface()
     latest_surf = max(surf.keys()) if surf else None
@@ -2289,7 +2282,6 @@ def _delta_curve(positions, spot_now):
 
 def _theta_by_expiry(positions, spot):
     """Daily theta collection grouped by expiration date."""
-    import math
     from datetime import date as _date
     surf = _load_iv_surface()
     latest_surf = max(surf.keys()) if surf else None
@@ -2323,7 +2315,6 @@ def _theta_by_expiry(positions, spot):
 
 def _theta_waterfall(positions, spot):
     """Cumulative theta projection over next 60 days + smoothness quality."""
-    import math
     from datetime import date as _date, timedelta
     surf = _load_iv_surface()
     latest_surf = max(surf.keys()) if surf else None
@@ -2389,7 +2380,7 @@ def _extrinsic_and_smoothness(positions, spot):
             if dte <= 0: continue
         except Exception:
             continue
-        avg_prem = float(p.get('average_price', 0) or 0)
+        float(p.get('average_price', 0) or 0)
         intrinsic = _intrinsic_value(K, spot, right)
         # Current premium estimate
         iv = None
@@ -2508,7 +2499,7 @@ def _roll_forward_plan(positions, spot, snap):
             else:
                 new_prem = new_K*math.exp(-0.045*T)*norm.cdf(-d2) - spot*norm.cdf(-d1)
             # Close cost of existing position (intrinsic + small extrinsic)
-            old_intrinsic = _intrinsic_value(K, spot, right)
+            _intrinsic_value(K, spot, right)
             old_iv = iv_from_surface(surf, latest_surf, K, max(1, dte), right) if (surf and latest_surf) else 0.50
             if old_iv is None: old_iv = 0.50
             T_old = max(1, dte) / 365
@@ -2594,7 +2585,6 @@ def _whatif_delta_matrix(positions, spot, current_greeks):
     delta_change, theta_change, theta_per_delta efficiency per cell.
     Also computes the AGGREGATE tendency: lean PUT or CALL.
     """
-    import math
     surf = _load_iv_surface()
     latest_surf = max(surf.keys()) if surf else None
     # Strike grid: -8% to +8% from spot, 7 levels

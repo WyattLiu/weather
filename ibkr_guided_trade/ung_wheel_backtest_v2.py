@@ -29,7 +29,6 @@ Position sizing:
 Benchmarks: buy-and-hold UNG, short UNG, risk-free only
 """
 
-import sys
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -37,7 +36,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from scipy.stats import norm
-from datetime import datetime, timedelta
+from datetime import timedelta
 from collections import defaultdict
 
 
@@ -640,7 +639,7 @@ def monthly_returns(nav_series):
 
 def annual_returns(nav_series):
     """Compute year-end returns."""
-    s = nav_series.resample('YE').last()
+    nav_series.resample('YE').last()
     # Compute from start of each year
     pct = []
     years = []
@@ -749,7 +748,7 @@ def main():
     z_scores, regimes, leverages = compute_regime(prices, lookback=60, window=252)
 
     regime_counts = regimes.value_counts()
-    print(f"    Regime distribution over backtest period:")
+    print("    Regime distribution over backtest period:")
     for r_label in ['cheap', 'fair', 'rich', 'expensive']:
         cnt = regime_counts.get(r_label, 0)
         pct = cnt / len(regimes) * 100
@@ -1018,7 +1017,7 @@ def main():
     print(f"  Open option pos:     {len(bt.options):>14,d}")
     opt_mtm = bt._option_mtm_liability(final_S)
     print(f"  Option MTM P&L:      ${opt_mtm:>+14,.2f}")
-    print(f"  ─────────────────────────────────────────")
+    print("  ─────────────────────────────────────────")
     print(f"  FINAL NAV:           ${final_nav:>14,.2f}")
     print(f"  UNG final price:     ${final_S:>14.2f}")
     print()

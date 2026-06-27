@@ -18,7 +18,6 @@ decisions where we don't yet have the path.
 import os
 import json
 import psycopg2
-import numpy as np
 
 DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',
       'user': 'postgres', 'password': 'shinobi2025'}

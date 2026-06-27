@@ -7,7 +7,7 @@ import pytest
 
 from tests.conftest import load_fixture
 from ws_sdk.errors import OrderNotFound, OrderTimeout
-from ws_sdk.models import Order, OrderStatus
+from ws_sdk.models import OrderStatus
 from ws_sdk.orders import (
     fetch_extended_order,
     generate_order_id,

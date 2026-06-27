@@ -14,7 +14,7 @@ tr, te = df.loc[TRAIN_START:TRAIN_END], df.loc[TEST_START:TEST_END]
 base = STRATEGIES['regime_wheel_boxx_greeks']
 variants = {'PROPORTIONAL 0.085·NAV (new)': dict(base),
             'FIXED per_strike=10 (old)': {**base, 'max_short_pct_nav': None}}
-print(f"=== CAP VALIDATION — champion walk-forward (cash $100k) ===")
+print("=== CAP VALIDATION — champion walk-forward (cash $100k) ===")
 print(f"  TRAIN {TRAIN_START}→{TRAIN_END} | TEST {TEST_START}→{TEST_END} (SEALED)\n")
 print(f"  {'variant':<30}{'window':<7}{'ann':>8}{'Sharpe':>8}{'MaxDD':>8}{'trades':>8}")
 print('  ' + '-'*69)

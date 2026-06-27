@@ -22,7 +22,7 @@ def main():
     dba_holdings = []
     for p in positions:
         sym = (getattr(p, 'symbol', '') or '').upper()
-        sec_type = getattr(p, 'security_type', '') or ''
+        getattr(p, 'security_type', '') or ''
         # DBA shares or DBA options
         if sym.startswith('DBA') or 'DBA' in (getattr(p, 'name', '') or '').upper():
             dba_holdings.append(p)

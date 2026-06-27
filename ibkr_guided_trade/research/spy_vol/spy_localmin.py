@@ -6,7 +6,6 @@ high-VIX entries?
   venv/bin/python research/spy_vol/spy_localmin.py
 """
 import os
-import numpy as np
 import pandas as pd
 
 THIS = os.path.dirname(os.path.abspath(__file__))

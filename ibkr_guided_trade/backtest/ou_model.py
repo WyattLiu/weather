@@ -87,14 +87,14 @@ def validate(start='2021-06-17', end='2026-06-16', window=90):
     print(f"  global half-life: {g['half_life']:.0f} days  (θ={g['theta']:.4f}/day, σ={g['sigma']:.4f}/day)")
     print(f"  rolling-{window}d OU z: range {np.nanmin(z):.2f}..{np.nanmax(z):.2f}, |z|>1.5 on {np.mean(np.abs(z)>1.5)*100:.0f}% of days")
     # VALIDATION: does OU z predict short-horizon MEAN REVERSION? (cheap→up, rich→down)
-    print(f"\n  forward return by OU-z bucket (the buy-low/sell-high edge):")
+    print("\n  forward return by OU-z bucket (the buy-low/sell-high edge):")
     for h in (5, 10, 21):
         fwd = (u.shift(-h) / u - 1) * 100
         al = pd.concat([z.rename('z'), fwd.rename('f')], axis=1).dropna()
         lo = al[al.z < -1.0]['f']; hi = al[al.z > 1.0]['f']
         print(f"    fwd-{h:2}d: z<-1 (cheap) {lo.mean():+5.2f}%   z>+1 (rich) {hi.mean():+5.2f}%   "
               f"spread {lo.mean()-hi.mean():+5.2f}pp   corr {al.z.corr(al.f):+.2f}")
-    print(f"\n  → negative corr / cheap>rich = mean reversion works; |z| sizes the buy-low/sell-high amount.")
+    print("\n  → negative corr / cheap>rich = mean reversion works; |z| sizes the buy-low/sell-high amount.")
 
 
 if __name__ == '__main__':

@@ -10,7 +10,6 @@ Separate from the live trading engine (port 9999). Serves:
 Run: python backtest/backtest_server.py
 """
 import os
-import sys
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 

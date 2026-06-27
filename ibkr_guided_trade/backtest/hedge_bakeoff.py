@@ -71,7 +71,7 @@ def main():
 
     idx = ung.index
     sh = pd.Series([is_shoulder(d) for d in idx], index=idx)
-    ung_r = ung.pct_change().fillna(0)
+    ung.pct_change().fillna(0)
     print(f'=== HEDGE BAKE-OFF (shoulder seasons, {sh.sum()} days) ===\n')
 
     # A: KOLD shares, 15% notional, held only in shoulder

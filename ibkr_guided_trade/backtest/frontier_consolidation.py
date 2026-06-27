@@ -8,7 +8,6 @@ Output: results/frontier_consolidated.csv + results/frontier.png
 import os
 import sys
 import math
-import numpy as np
 import pandas as pd
 
 THIS = os.path.dirname(os.path.abspath(__file__))

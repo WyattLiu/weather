@@ -10,7 +10,6 @@ Displays: strike, bid, ask, mid, IV, delta, OI, volume for each month.
 """
 
 from ib_insync import IB, Future, FuturesOption
-from datetime import datetime
 import sys
 
 # IBKR connection settings
@@ -107,7 +106,7 @@ def get_option_chain(ib, fut_contract, spot):
         matching_exps = sorted(all_exps)[-1:]
 
     if not matching_exps:
-        print(f"    No matching expirations found")
+        print("    No matching expirations found")
         return []
 
     # Use the last (latest) expiration in the matching month
@@ -306,7 +305,7 @@ def main():
             sys.exit(1)
 
         # Step 2: Pull LNE call option chains for each month
-        print(f"\n--- Fetching LNE Call Option Chains ---")
+        print("\n--- Fetching LNE Call Option Chains ---")
 
         for label, code, ym, fut, spot in futures_data:
             print(f"\n  Processing {code} ({label}), spot=${spot:.3f}...")
@@ -316,7 +315,7 @@ def main():
 
         # Summary table
         print(f"\n{'='*90}")
-        print(f"  SUMMARY: NG Futures Curve (May-Oct 2026)")
+        print("  SUMMARY: NG Futures Curve (May-Oct 2026)")
         print(f"{'='*90}")
         print(f"  {'Contract':>10} {'Month':>10} {'Price':>10}")
         print(f"  {'-'*32}")

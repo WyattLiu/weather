@@ -220,7 +220,7 @@ def main():
             interesting = [r for r in all_results if r['bid'] > 0 and r['otm_pct'] > 0]
             interesting.sort(key=lambda x: (x['bid'] / x['strike']) * (365 / x['dte']),
                              reverse=True)
-            print(f"\n  Best puts to SELL (by annualized yield):")
+            print("\n  Best puts to SELL (by annualized yield):")
             for r in interesting[:10]:
                 ann = (r['bid'] / r['strike']) * (365 / r['dte']) * 100
                 iv_s = f"IV={r['iv']*100:.1f}%" if r['iv'] else ""

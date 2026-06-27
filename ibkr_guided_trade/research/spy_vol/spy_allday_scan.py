@@ -90,7 +90,7 @@ def main():
     df = pd.DataFrame(rows)
     df.to_csv(os.path.join(THIS, 'spy_allday.csv'), index=False)
 
-    N = len(df); W = df[df['ret'] > 0]; BW = df[df['ret'] > 0.20]
+    N = len(df); df[df['ret'] > 0]; BW = df[df['ret'] > 0.20]
     print(f"=== BRUTE-FORCE ALL-DAY STRADDLE SCAN (every trading day, +30/-40/30d) — n={N} ===")
     print(f"  baseline: avg {df['ret'].mean():+.2%}  win {(df['ret']>0).mean():.0%}  "
           f">+20% days: {len(BW)} ({len(BW)/N:.0%})  >+50%: {(df['ret']>0.50).sum()}\n")

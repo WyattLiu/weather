@@ -8,11 +8,9 @@ from __future__ import annotations
 import os
 import sys
 import math
-import json
 import numpy as np
 import pandas as pd
 import psycopg2
-from collections import defaultdict
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS_DIR)
@@ -52,7 +50,7 @@ def idea_1_ensemble():
         return
     df = pd.DataFrame(histories).dropna()
     correlations = df.corr()
-    print(f'  Daily-return correlations:')
+    print('  Daily-return correlations:')
     for i, a in enumerate(df.columns):
         for j, b in enumerate(df.columns):
             if j > i:
@@ -67,7 +65,7 @@ def idea_1_ensemble():
     if ens_sharpe - avg_sharpe > 0.15:
         print(f'  ✅ VERDICT: real diversification edge ({ens_sharpe - avg_sharpe:+.2f} Sharpe)')
     else:
-        print(f'  ⚠️ VERDICT: marginal — strategies too correlated')
+        print('  ⚠️ VERDICT: marginal — strategies too correlated')
 
 
 # ───── IDEA 2: EIA event-driven IV crush ────────────────────────────────────
@@ -109,7 +107,7 @@ def idea_2_eia_event():
     print(f'  Median ATM IV change Wed→Thu: {paired_df["iv_change"].median():+.4f} ({paired_df["iv_change_pct"].median():+.2f}%)')
     print(f'  Mean: {paired_df["iv_change"].mean():+.4f} ({paired_df["iv_change_pct"].mean():+.2f}%)')
     iv_drops = paired_df[paired_df['iv_change'] < 0]
-    iv_pumps = paired_df[paired_df['iv_change'] > 0]
+    paired_df[paired_df['iv_change'] > 0]
     print(f'  Frequency of IV DROP (favorable for vol seller): {len(iv_drops)/len(paired_df)*100:.0f}%')
     print(f'  Avg drop when dropping: {iv_drops["iv_change_pct"].mean():.2f}%')
     if paired_df['iv_change_pct'].mean() < -2:
@@ -117,7 +115,7 @@ def idea_2_eia_event():
     elif paired_df['iv_change_pct'].mean() < 0:
         print(f'  🟡 VERDICT: small edge ({paired_df["iv_change_pct"].mean():.1f}% avg drop)')
     else:
-        print(f'  ⚠️ VERDICT: no clear edge — IV is symmetric around the event')
+        print('  ⚠️ VERDICT: no clear edge — IV is symmetric around the event')
 
 
 # ───── IDEA 3: Calendar spread term structure ───────────────────────────────
@@ -146,7 +144,7 @@ def idea_3_calendar():
     if len(bw_days) > 50:
         print(f'  ✅ VERDICT: backwardation occurs {len(bw_days)} days; calendar opportunities exist')
     else:
-        print(f'  ⚠️ VERDICT: mostly contango (long > short); calendars work but reversed (sell 60d / buy 30d)')
+        print('  ⚠️ VERDICT: mostly contango (long > short); calendars work but reversed (sell 60d / buy 30d)')
 
 
 # ───── IDEA 4: Cross-asset KOLD hedge ───────────────────────────────────────
@@ -171,9 +169,9 @@ def idea_4_kold_hedge():
     if peaks['kold_ret_20d'].mean() > 0.05:
         print(f'  ✅ VERDICT: KOLD averages {peaks["kold_ret_20d"].mean()*100:+.1f}% 20d after UNG peaks')
     elif peaks['kold_ret_20d'].mean() > 0:
-        print(f'  🟡 VERDICT: modest positive edge')
+        print('  🟡 VERDICT: modest positive edge')
     else:
-        print(f'  ⚠️ VERDICT: KOLD doesn\'t reliably rally after UNG peaks')
+        print('  ⚠️ VERDICT: KOLD doesn\'t reliably rally after UNG peaks')
 
 
 # ───── IDEA 5: NG contango carry (UNG bleed) ────────────────────────────────
@@ -196,9 +194,9 @@ def idea_5_contango():
     print(f'  Avg UNG bleed vs NG: {aligned["ung_bleed"].mean()*100:+.1f}% per year')
     if aligned['ung_bleed'].mean() < -0.05:
         print(f'  ✅ VERDICT: ~{abs(aligned["ung_bleed"].mean())*100:.0f}% structural bleed/yr')
-        print(f'     Strategy: short UNG / long NG futures = capture this bleed')
+        print('     Strategy: short UNG / long NG futures = capture this bleed')
     else:
-        print(f'  ⚠️ VERDICT: bleed exists but small')
+        print('  ⚠️ VERDICT: bleed exists but small')
 
 
 # ───── IDEA 6: Skew-rich vs flat ────────────────────────────────────────────
@@ -236,7 +234,7 @@ def idea_6_skew():
     if abs(high_skew_ret.mean() - normal_ret.mean()) > 0.005:
         print(f'  ✅ VERDICT: skew has predictive value ({(high_skew_ret.mean()-normal_ret.mean())*100:+.2f}pp differential)')
     else:
-        print(f'  🟡 VERDICT: skew may overprice, but spot doesn\'t respond strongly')
+        print('  🟡 VERDICT: skew may overprice, but spot doesn\'t respond strongly')
 
 
 # ───── IDEA 7: EIA storage surprise factor ──────────────────────────────────
@@ -268,7 +266,7 @@ def idea_7_eia_surprise():
     if abs(spread) > 0.02:
         print(f'  ✅ VERDICT: ~{spread*100:.1f}pp directional edge per surprise event')
     else:
-        print(f'  🟡 VERDICT: small directional edge')
+        print('  🟡 VERDICT: small directional edge')
 
 
 # ───── IDEA 8: Weather (use VIX as proxy for vol regime) ────────────────────
@@ -292,7 +290,7 @@ def idea_8_macro_vol():
     if ratio > 1.5:
         print(f'  ✅ VERDICT: UNG vol scales {ratio:.1f}× with VIX — vol-scaled sizing has real edge')
     else:
-        print(f'  ⚠️ VERDICT: UNG vol is mostly idiosyncratic; VIX overlay weak')
+        print('  ⚠️ VERDICT: UNG vol is mostly idiosyncratic; VIX overlay weak')
 
 
 # ───── IDEA 9: Regime-switching ensemble ────────────────────────────────────
@@ -309,8 +307,8 @@ def idea_9_regime_switch():
     for regime, group in df.groupby('regime', observed=True):
         if len(group) > 50:
             print(f'  {regime:10s}: n={len(group):4d}  daily vol={group["ung_ret"].std()*100:.2f}%  avg ret={group["ung_ret"].mean()*100:+.3f}%')
-    print(f'  📊 Premium harvest excels in NEUTRAL; smooth/dd_trim in extremes')
-    print(f'  ✅ VERDICT: vol regime-switching could match strategy to volatility')
+    print('  📊 Premium harvest excels in NEUTRAL; smooth/dd_trim in extremes')
+    print('  ✅ VERDICT: vol regime-switching could match strategy to volatility')
 
 
 # ───── IDEA 10: Auto-roll-up on rally (gap analysis) ────────────────────────
@@ -327,9 +325,9 @@ def idea_10_auto_rollup():
     print(f'  CALL_ASSIGN events: {len(assigned)}, total pnl: ${assigned["pnl"].sum():+,.0f} (avg ${assigned["pnl"].mean():+,.0f})')
     print(f'  CALL_ROLL_UP events: {len(rolled)}, total pnl: ${rolled["pnl"].sum():+,.0f} (avg ${rolled["pnl"].mean():+,.0f})')
     if assigned['pnl'].sum() < 0 and rolled['pnl'].mean() > assigned['pnl'].mean():
-        print(f'  ✅ VERDICT: rolling up beats letting assign — already implemented but could be more aggressive')
+        print('  ✅ VERDICT: rolling up beats letting assign — already implemented but could be more aggressive')
     else:
-        print(f'  🟡 VERDICT: current logic reasonable; assigned losses dominate')
+        print('  🟡 VERDICT: current logic reasonable; assigned losses dominate')
 
 
 def main():

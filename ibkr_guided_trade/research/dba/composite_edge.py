@@ -16,7 +16,6 @@ Run:
     venv/bin/python research/dba/composite_edge.py
 """
 import os
-import sys
 import json
 import numpy as np
 import pandas as pd

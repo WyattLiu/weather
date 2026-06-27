@@ -15,7 +15,6 @@ Run: venv/bin/python research/ng_fundamentals/steo_signal.py
 """
 import os
 import subprocess
-import math
 import json
 import pandas as pd
 

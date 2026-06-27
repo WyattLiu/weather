@@ -10,7 +10,6 @@ module models that: the achievable fill is between mid and the touch, scaled by 
 Used to (a) re-price the daily strategy's trades at realistic execution and (b) measure
 execution stability (fill rate, slippage-vs-mid, how often you can't fill near mid).
 """
-import os
 import psycopg2
 
 DB = {'host': '192.168.1.172', 'port': 5432, 'database': 'market_scanner',

@@ -11,7 +11,6 @@ Usage:
 import argparse
 import time
 from datetime import datetime
-from pathlib import Path
 
 # Try IBKR first, fall back to Wealthsimple
 try:

@@ -14,7 +14,7 @@ import pandas as pd
 
 THIS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS)
-from spy_vega_kernel import backtest, RF_D
+from spy_vega_kernel import backtest
 from spy_vega_study import _conn
 
 SPY_CSV = os.path.join(THIS, 'cache', 'spy_vix_daily.csv')
@@ -77,7 +77,7 @@ def main():
         print(f"\n  worst rolling-12mo NAV return: {wr:+.1%} (ending {wr_end.date() if pd.notna(wr_end) else 'n/a'})")
         # contribution: top-3 trades' share of total log-growth
         tl_sorted = tl.reindex(tl['ret'].abs().sort_values(ascending=False).index)
-        print(f"  biggest single trades: " + ", ".join(f"{x:+.0%}" for x in tl_sorted['ret'].head(5)))
+        print("  biggest single trades: " + ", ".join(f"{x:+.0%}" for x in tl_sorted['ret'].head(5)))
         pos_sum = tl[tl['ret'] > 0]['ret'].sum()
         top3 = tl.nlargest(3, 'ret')['ret'].sum()
         print(f"  top-3 winners = {top3/pos_sum*100:.0f}% of all positive trade-return (concentration check)")

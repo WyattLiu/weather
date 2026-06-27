@@ -12,7 +12,6 @@ Sources:
 Cron: daily 18:00 ET via refresh_dba_data.sh
 """
 import os
-import sys
 import json
 import subprocess
 import pandas as pd
@@ -156,7 +155,7 @@ def build_master_panel():
     df.to_csv(out)
     print(f'\nMaster panel: {df.shape} → {out}')
     print(f'Coverage: {df.index.min().date()} → {df.index.max().date()}')
-    print(f'Latest signals:')
+    print('Latest signals:')
     latest = df.dropna(subset=['oni', 'dsci']).iloc[-1]
     print(f'  ONI={latest["oni"]:+.2f}  phase={latest["enso_phase"]}  '
           f'DSCI={latest["dsci"]:.0f}  dsci_z={latest.get("dsci_z", float("nan")):+.2f}')

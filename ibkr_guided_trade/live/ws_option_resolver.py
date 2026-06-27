@@ -6,7 +6,6 @@ to the WS Trading API (which needs sec-o-... security_ids).
 from __future__ import annotations
 import os
 import sys
-import re
 from typing import Optional
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

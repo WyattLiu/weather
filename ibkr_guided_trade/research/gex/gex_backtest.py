@@ -20,7 +20,6 @@ Backtests:
 Run: venv/bin/python research/gex/gex_backtest.py --symbol UNG
 """
 import os
-import sys
 import math
 import glob
 import argparse
@@ -212,7 +211,7 @@ def backtest(symbol):
                         'call_wall_held': wk.max() <= r['wall'] * 1.02})
     if respect:
         rdf = pd.DataFrame(respect)
-        print(f'\n=== CALL WALL RESPECT (final week, +2% tolerance) ===')
+        print('\n=== CALL WALL RESPECT (final week, +2% tolerance) ===')
         print(f'  held: {rdf["call_wall_held"].mean():.1%} of {len(rdf)} expiries')
 
     # ── 3. GEX-FLIP vs FORWARD VOL ────────────────────────────────────
@@ -222,7 +221,7 @@ def backtest(symbol):
     if len(j) > 50:
         neg = j[j['net_gex'] < 0]['fwd_vol5d']
         pos = j[j['net_gex'] > 0]['fwd_vol5d']
-        print(f'\n=== GEX-FLIP vs FORWARD 5d REALIZED VOL ===')
+        print('\n=== GEX-FLIP vs FORWARD 5d REALIZED VOL ===')
         print(f'  net GEX < 0 ({len(neg)} days): fwd vol {neg.mean():.1%}')
         print(f'  net GEX > 0 ({len(pos)} days): fwd vol {pos.mean():.1%}')
         if len(neg) > 10:

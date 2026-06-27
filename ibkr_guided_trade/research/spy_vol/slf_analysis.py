@@ -5,7 +5,6 @@ GEX>0 = dealers long gamma (pin/dampen); GEX<0 = short gamma (moves amplify — 
 """
 import sys
 import math
-import numpy as np
 import pandas as pd
 import yfinance as yf
 

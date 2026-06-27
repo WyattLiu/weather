@@ -90,7 +90,7 @@ def main():
         ks = sorted(float(r[0]) for r in cur.fetchall())
         Kp7 = min(ks, key=lambda k: abs(k - S * 0.93)) if ks else None
         p7 = pth(exp, Kp7, 'P', d) if Kp7 else None
-        sm = float(spy.loc[pd.Timestamp(d)])
+        float(spy.loc[pd.Timestamp(d)])
         defs = {
             'straddle 1C1P': [(ca, 1, 1), (pa, 1, 1)],
             'put-tilt 1C2P': [(ca, 1, 1), (pa, 2, 1)],

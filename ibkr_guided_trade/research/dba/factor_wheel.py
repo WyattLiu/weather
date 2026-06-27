@@ -18,7 +18,6 @@ intact — we tilt exposure, never flip direction.
 """
 import os
 import sys
-import math
 import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -19,9 +19,7 @@ Tests (data from eia_release_study.py fetches):
 Run: venv/bin/python research/microstructure/spread_study.py
 """
 import os
-import math
 import pandas as pd
-import numpy as np
 from scipy import stats as sstats
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -73,14 +73,14 @@ def main():
     b, a = np.polyfit(d['z'].values, d['lr'].values, 1)
     sig = float(d['lr'].std())
     b0, a0 = np.polyfit(d0['z'].values, d0['lr'].values, 1); sig0 = float(d0['lr'].std())
-    print(f"=== Z-conditional UNG model (daily, 2021-2026, OUTLIERS REMOVED) ===")
+    print("=== Z-conditional UNG model (daily, 2021-2026, OUTLIERS REMOVED) ===")
     print(f"  trimmed {n_out}/{len(d0)} spike days (|r|>{4*rsig:.1%}); σ {sig0*math.sqrt(252):.0%}→{sig*math.sqrt(252):.0%}/yr")
     print(f"  RAW   μ(z)={a0:+.5f}{b0:+.5f}·z  σ={sig0:.4f}")
     print(f"  drift μ(z) = {a:+.5f} {b:+.5f}·z   |   σ_daily = {sig:.4f}  ({sig*math.sqrt(252):.0%} annual)")
     print(f"  → at z=0 drift {a*252:+.0%}/yr; at z=+1 {(a+b)*252:+.0%}/yr; at z=-1 {(a-b)*252:+.0%}/yr\n")
     # validate parametric vs empirical P(assign) at a couple (dte, moneyness) points
     print("  validate P(assign) param vs empirical (z near 0):")
-    znear = d[abs(d['z']) < 0.3]
+    d[abs(d['z']) < 0.3]
     for dte, mny in [(10, -0.05), (21, -0.05), (42, -0.05), (21, 0.0)]:
         K_S = 1 + mny
         idx = [i for i in range(len(df) - dte) if abs(z.iloc[i]) < 0.3]

@@ -58,7 +58,7 @@ def calc_rev_diag(spot):
     jan23_61c = bs_price(spot, 61, T_jan23_exit, r, iv_crush_short, 'call')
     jan30_59c = bs_price(spot, 59, T_jan30_exit, r, iv_crush_long, 'call')
 
-    entry_credit = (2.03 - 0.83) + (1.62 - 0.73)
+    (2.03 - 0.83) + (1.62 - 0.73)
     pnl_put = jan23_50p - 0.83 + 2.03 - jan30_52p
     pnl_call = jan23_61c - 0.73 + 1.62 - jan30_59c
     return pnl_put + pnl_call

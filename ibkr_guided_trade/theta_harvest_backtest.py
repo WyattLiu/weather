@@ -704,12 +704,12 @@ def plot_results(log_df, stats, save_path='theta_harvest_backtest.png'):
             f"Profit Factor:      {pf_str}",
             f"Sharpe Ratio:       {stats['sharpe']:.2f}",
             f"Max Drawdown:      ${stats['max_drawdown']:,.0f}",
-            f"",
+            "",
             f"Shoulder WR:        {stats['shoulder_wr']:.1f}% "
             f"({stats['shoulder_trades']} trades)",
             f"Non-Shoulder WR:    {stats['non_shoulder_wr']:.1f}% "
             f"({stats['non_shoulder_trades']} trades)",
-            f"",
+            "",
             f"Avg Net Delta:      {stats['avg_delta']:.1f}",
             f"Max |Delta|:        {stats['max_delta']:.1f}",
             f"Avg UNG VRP:        {stats['avg_ung_vrp']:.1f}pp",

@@ -83,7 +83,7 @@ def main():
             gap = info['iv_atm'] - rv20
             print(f"    ATM IV {info['iv_atm']:.0%} vs RV20 {rv20:.0%} → IV−RV {gap:+.0%}  cheap(IV<RV): {'✓' if gap < 0 else '✗'}")
         else:
-            gap = None; print(f"    IV: n/a (no fresh option data)")
+            gap = None; print("    IV: n/a (no fresh option data)")
         if info and info['skew'] is not None:
             print(f"    5% skew {info['skew']:.3f} → flat(<0.08): {'✓' if info['skew'] < 0.08 else '✗'}")
         flat = bool(info and info.get('skew') is not None and info['skew'] < 0.08)

@@ -1394,7 +1394,7 @@ def compute_portfolio_state(positions, spot, iv, today):
         weekly_theta[wk_label] = wk_theta * 7  # daily → weekly $
 
     # Smoothness from active weeks
-    max_wk = max(weekly_theta.values(), default=0)
+    max(weekly_theta.values(), default=0)
     # Cycle 186: removed 5% threshold — use ALL positive weeks for smoothness.
     # The threshold created cliff artifacts (smoothness +234 phantom when
     # late-week buckets crossed in/out of "active"). Same class of bug as
@@ -1821,7 +1821,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
             for av_exp, av_chain in available.items():
                 all_strikes_pool.extend(av_chain['puts'] if right == 'P' else av_chain['calls'])
             all_strikes_pool = sorted(set(all_strikes_pool)) if all_strikes_pool else [spot]
-            nearest_atm_strike = find_nearest_strike(spot, all_strikes_pool)
+            find_nearest_strike(spot, all_strikes_pool)
 
             candidates.append({
                 'type': 'CLOSE',
@@ -1997,7 +1997,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
         liq = chain_strikes.get('liquidity', {})
 
         atm_put = find_nearest_strike(spot, put_strikes)
-        atm_call = find_nearest_strike(spot * 1.05, call_strikes)
+        find_nearest_strike(spot * 1.05, call_strikes)
 
         # ── Generate covered-call candidates across MULTIPLE strikes ──
         # Cycle 151: same multi-strike treatment as puts got in cycle 144.
@@ -2370,7 +2370,7 @@ def generate_candidates(portfolio_state, spot, iv, today):
             share_qty = max(100, int(round(_max_sellable * _frac / 100) * 100))
             if share_qty > _max_sellable:
                 share_qty = _max_sellable
-            loss_per_share = SHARE_AVG - spot
+            SHARE_AVG - spot
             pct_label = f"{int(_frac*100)}%"
             candidates.append({
                 'type': 'SELL SHARES',
@@ -4375,7 +4375,7 @@ def evaluate_portfolio_quality(state, target_weekly_income=1500.0):
     # self-consistent after apply_trade_to_state adds/removes LEAPS.
     # Previously tail_hedge_qty was set once in compute_recommendations
     # and never updated when the beam applied BUY PUT trades.
-    tail_floor = int(state.get('tail_hedge_floor', 2) or 2)
+    int(state.get('tail_hedge_floor', 2) or 2)
     _TAIL_MIN_DTE = 180
     _positions = state.get('positions', []) or []
     try:
@@ -6525,7 +6525,7 @@ def compute_timeline(price, iv, excluded_indices, thesis_tilt=0.0):
 
     # Smoothness: first 4 weeks (cycle 188b). Matches compute_portfolio_state.
     thetas_list = list(weekly_theta.values())
-    max_theta = max(thetas_list) if thetas_list else 0
+    max(thetas_list) if thetas_list else 0
     active_thetas = [t for t in thetas_list[:6] if t > 0]
     if len(active_thetas) > 2 and np.mean(active_thetas) > 0:
         smoothness = 1 - (float(np.std(active_thetas)) / float(np.mean(active_thetas)))

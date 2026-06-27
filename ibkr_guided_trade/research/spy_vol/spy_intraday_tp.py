@@ -8,7 +8,6 @@ first minute the combo MID is ≥ entry·(1+TP); else exit at the close bid. Rea
 """
 import os
 import sys
-import math
 import numpy as np
 import pandas as pd
 

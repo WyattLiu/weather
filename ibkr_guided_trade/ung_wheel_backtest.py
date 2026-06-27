@@ -26,7 +26,6 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from datetime import datetime, timedelta
 
 import matplotlib
 matplotlib.use('Agg')
@@ -124,14 +123,12 @@ def run_backtest(hist_data, config_name, put_delta, call_delta, dte_target,
         print(f"  [SKIP] {config_name}: insufficient data ({len(data)} rows)")
         return None
 
-    MULT = 100  # shares per contract
     r = 0.04    # risk-free rate
     daily_rf = (1 + r) ** (1 / 252) - 1
 
     # State: track as NAV growth factor (start at 1.0)
     nav = 1.0
     shares_held = False    # whether we hold shares from put assignment
-    share_entry_price = 0  # price at which shares were assigned
     position = None
 
     trades = []
@@ -210,7 +207,7 @@ def run_backtest(hist_data, config_name, put_delta, call_delta, dte_target,
                         # P&L as % of capital at risk (K):
                         cycle_return = (position['premium'] - (K - S)) / K
                         shares_held = True
-                        share_entry_price = K - position['premium']  # net cost basis
+                        K - position['premium']  # net cost basis
                         n_assignments += 1
                         trades.append({
                             'date': dt, 'type': 'put_assigned',
@@ -237,7 +234,6 @@ def run_backtest(hist_data, config_name, put_delta, call_delta, dte_target,
                         # Total return: premium + (K - entry_spot) per share, as % of entry_spot
                         cycle_return = (position['premium'] + K - position['entry_spot']) / position['entry_spot']
                         shares_held = False
-                        share_entry_price = 0
                         n_assignments += 1
                         trades.append({
                             'date': dt, 'type': 'call_assigned',
@@ -466,7 +462,7 @@ def main():
     print("RESULTS COMPARISON (all returns are % of capital at risk per cycle, compounded)")
     first_valid = hist.dropna(subset=['iv_proxy'])
     print(f"Period: {first_valid['date'].iloc[0].date()} to {hist['date'].iloc[-1].date()}")
-    print(f"Method: 1 cash-secured contract per cycle | IV proxy = 1.15x realized vol")
+    print("Method: 1 cash-secured contract per cycle | IV proxy = 1.15x realized vol")
     print("=" * 145)
 
     header = (f"{'Strategy':<22} {'Total%':>9} {'Ann%':>7} {'B&H Ann':>8} {'Alpha':>7} "
@@ -526,7 +522,7 @@ def main():
         trade_types[tp]['total_ret'] += t['cycle_return_pct']
         trade_types[tp]['rets'].append(t['cycle_return_pct'])
 
-    print(f"\n  Trade Type Breakdown:")
+    print("\n  Trade Type Breakdown:")
     print(f"    {'Type':<22} {'Count':>6} {'AvgRet%':>9} {'WinRate':>8} {'BestCyc':>9} {'WorstCyc':>10}")
     for tp, info in sorted(trade_types.items()):
         avg_ret = info['total_ret'] / info['count'] if info['count'] > 0 else 0
@@ -537,7 +533,7 @@ def main():
         print(f"    {tp:<22} {info['count']:>6} {avg_ret:>+8.2f}% {wr:>6.0f}% {best_cycle:>+8.2f}% {worst_cycle:>+9.2f}%")
 
     # --- Year-by-year breakdown for best ---
-    print(f"\n  Year-by-Year Performance ($100k starting capital for illustration):")
+    print("\n  Year-by-Year Performance ($100k starting capital for illustration):")
     eq = best['equity_curve'].copy()
     eq['year'] = pd.to_datetime(eq['date']).dt.year
     eq['equity_100k'] = eq['nav'] * 100000
@@ -600,7 +596,7 @@ def main():
         print("  NOTE: IV proxy (1.15x realized vol) understates real IV; actual results would be better.")
 
     # Practical recommendation
-    print(f"\n  PRACTICAL RECOMMENDATION:")
+    print("\n  PRACTICAL RECOMMENDATION:")
     print(f"    Best risk-adjusted strategy: {best_sharpe['name']}")
     print(f"    - {best_sharpe['ann_return']:+.1f}% annualized, {best_sharpe['sharpe']:.2f} Sharpe, {best_sharpe['max_dd']:+.1f}% max DD")
     print(f"    - {best_sharpe['win_rate']:.0f}% win rate, avg {best_sharpe['avg_prem_pct']:.1f}% premium per cycle")

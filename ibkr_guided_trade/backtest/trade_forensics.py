@@ -144,7 +144,7 @@ def main(strategy):
     stale = (h['spot'].diff() == 0).rolling(5).sum()
     if (stale >= 5).any():
         flags += 1
-        print(f'  ⚠ STALE SPOT: 5+ consecutive unchanged closes detected — check data feed')
+        print('  ⚠ STALE SPOT: 5+ consecutive unchanged closes detected — check data feed')
     else:
         print('  ✓ no stale-price runs')
     print(f'  → integrity flags: {flags}')

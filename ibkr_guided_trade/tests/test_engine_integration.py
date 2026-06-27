@@ -8,16 +8,13 @@ Run: python -m pytest tests/test_engine_integration.py -v
 """
 import sys
 import pytest
-from datetime import date, timedelta, datetime
-from copy import deepcopy
+from datetime import date, timedelta
 
 sys.path.insert(0, '.')
 
 from ung_visualizer import (
-    OPTIONS, UNG_PRICE, SHARES,
-    compute_portfolio_state, evaluate_portfolio_quality,
+    OPTIONS, UNG_PRICE, compute_portfolio_state, evaluate_portfolio_quality,
     apply_trade_to_state, generate_candidates,
-    bs_delta, bs_theta, bs_gamma,
 )
 
 

@@ -1,7 +1,7 @@
 """Re-quote the champion under the honest WS cost model: $0 commission + spread-in-engine + MODELED
 early assignment (deep-ITM |delta|>0.99 + extrinsic<$0.02). Isolate the early-assign impact and count
 how often it fires for UNG."""
-import sys, os, math
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 from honest_walkforward import measure_period, TRAIN_START, TRAIN_END, TEST_START, TEST_END
@@ -16,7 +16,7 @@ t = pd.DataFrame(tr)
 ea_p = (t['type']=='PUT_EARLY_ASSIGN').sum() if 'type' in t else 0
 ea_c = (t['type']=='CALL_EARLY_ASSIGN').sum() if 'type' in t else 0
 ap = (t['type']=='PUT_ASSIGN').sum(); ac = (t['type']=='CALL_ASSIGN').sum()
-print(f"=== Early-assignment events (full sample, champion) ===")
+print("=== Early-assignment events (full sample, champion) ===")
 print(f"  PUT_EARLY_ASSIGN {ea_p} (vs {ap} at-expiry PUT_ASSIGN) | CALL_EARLY_ASSIGN {ea_c} (vs {ac} CALL_ASSIGN)")
 print()
 trd, ted = df.loc[TRAIN_START:TRAIN_END], df.loc[TEST_START:TEST_END]

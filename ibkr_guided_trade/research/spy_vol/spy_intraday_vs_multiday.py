@@ -16,7 +16,6 @@ Then for the best horizon, bucket forward return by candidate SIGNALS to see wha
 import os
 import sys
 import math
-from collections import defaultdict
 import numpy as np
 import pandas as pd
 
@@ -143,7 +142,7 @@ def main():
         pi = pos[d_ts] - 1
         rec['gap'] = abs(float(op[0]) / float(spy.iloc[pi]) - 1) if (op and pi >= 0) else None
         rec['intra_rv'] = intraday_rv(cur, d)
-        ks_q = cur.execute("SELECT DISTINCT strike FROM spy_options_history WHERE trade_date=%s AND expiration=%s", (d, exp))
+        cur.execute("SELECT DISTINCT strike FROM spy_options_history WHERE trade_date=%s AND expiration=%s", (d, exp))
         ks = [float(r[0]) for r in cur.fetchall()]
         rec['skew'] = wing_skew(cur, exp, d, S, dte, ks) if ks else None
         rec['dow'] = d_ts.weekday()

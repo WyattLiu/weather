@@ -11,7 +11,6 @@ SPY ATM spreads are pennies, so net≈mid, but we cross anyway to be honest.
   venv/bin/python research/spy_vol/spy_vega_study.py
 """
 import os
-import sys
 from collections import defaultdict
 import numpy as np
 import pandas as pd

@@ -20,11 +20,7 @@ Hypothesis: Strong El Niño → coffee/cocoa/sugar supply shock
   on current ENSO phase.
 """
 import os
-import sys
-import urllib.request
-from io import StringIO
 import pandas as pd
-import numpy as np
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(ROOT, 'cache')

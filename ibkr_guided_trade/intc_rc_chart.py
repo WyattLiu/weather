@@ -189,8 +189,8 @@ plt.tight_layout()
 plt.savefig('/home/wyatt/ibkr_guided_trade/intc_rc_calibrated.png', dpi=150, bbox_inches='tight')
 plt.close()
 
-print(f"\nChart saved to: intc_rc_calibrated.png")
-print(f"\nP&L Summary:")
+print("\nChart saved to: intc_rc_calibrated.png")
+print("\nP&L Summary:")
 for move in [-12, -8, -5, 0, 5, 8, 12, 20]:
     spot = SPOT * (1 + move/100)
     pnl = calc_rc_pnl(spot, 0.50)

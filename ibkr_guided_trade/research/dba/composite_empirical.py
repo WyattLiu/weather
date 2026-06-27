@@ -21,7 +21,6 @@ import sys
 import math
 import json
 import argparse
-import numpy as np
 import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

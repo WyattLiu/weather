@@ -24,7 +24,6 @@ import sys
 import numpy as np
 from datetime import date, datetime, timedelta
 from scipy.stats import norm
-from copy import deepcopy
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -188,7 +187,6 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
         surviving_theta_weekly = surviving_theta_daily * 7
 
         # Share delta (always present)
-        share_income = 0  # shares don't produce theta
 
         # Monte Carlo: simulate spot paths to this week
         scenarios = {'down': [], 'flat': [], 'up': []}
@@ -238,7 +236,7 @@ def project_forward(positions=None, spot=None, iv=None, shares=None):
         p_loss = sum(1 for p in all_pnls if p < 0) / len(all_pnls) if all_pnls else 0
         median_pnl = float(np.median(all_pnls))
         # Delta-at-CVaR: portfolio delta in the worst-5% scenarios
-        worst_5_idx = sorted(range(len(all_pnls)), key=lambda i: all_pnls[i])[:max(1, len(all_pnls)//20)]
+        sorted(range(len(all_pnls)), key=lambda i: all_pnls[i])[:max(1, len(all_pnls)//20)]
 
         week_data = {
             'week': week_num,

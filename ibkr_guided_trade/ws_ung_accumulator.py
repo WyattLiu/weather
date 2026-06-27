@@ -13,7 +13,6 @@ Usage:
 """
 
 import argparse
-import json
 import time
 import random
 import requests
@@ -25,8 +24,7 @@ from pathlib import Path
 from ws_trading import (
     get_session, graphql_query, load_cookies, extract_oauth_data,
     is_token_expired, refresh_access_token, update_cookies_with_new_token,
-    place_order, KNOWN_SECURITIES, DEFAULT_ACCOUNT_ID,
-    QUERY_FETCH_POSITIONS
+    place_order, KNOWN_SECURITIES, QUERY_FETCH_POSITIONS
 )
 
 # Configuration
@@ -517,7 +515,7 @@ class UNGAccumulator:
             self.total_cost = current_qty * current_avg
 
         # Bootstrap RSI with Yahoo Finance extended hours data
-        self.log(f"Fetching extended hours history from Yahoo Finance...")
+        self.log("Fetching extended hours history from Yahoo Finance...")
         history = fetch_yahoo_history_extended(YAHOO_SYMBOL, period=RSI_PERIOD + 10)
 
         if history:

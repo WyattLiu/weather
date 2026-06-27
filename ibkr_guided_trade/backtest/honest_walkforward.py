@@ -131,8 +131,8 @@ def main():
     for name, tr, te in rows:
         # Degradation: how much did TEST drop vs TRAIN
         deg_ret = te['ann'] - tr['ann']
-        deg_sh = te['sharpe'] - tr['sharpe']
-        deg_mdd = te['mdd'] - tr['mdd']
+        te['sharpe'] - tr['sharpe']
+        te['mdd'] - tr['mdd']
         print(f'{name:<46} {tr["ann"]:>+5.1f}%/{tr["sharpe"]:>+4.2f}/{tr["mdd"]:>+5.1f}% '
               f'{te["ann"]:>+5.1f}%/{te["sharpe"]:>+4.2f}/{te["mdd"]:>+5.1f}% '
               f'{deg_ret:>+5.1f}pp')

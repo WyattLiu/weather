@@ -25,7 +25,7 @@ import sys
 import json
 import argparse
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -93,8 +93,7 @@ def check_existing_order(ws_orders: list, expected_symbol: str, side: str) -> Op
 
 def count_recent_submissions(hours: int = 24) -> int:
     """Count distinct submitted orders in the trading log over last N hours."""
-    import json, time
-    from datetime import datetime
+    import json
     if not os.path.exists(os.path.join(os.path.dirname(__file__), 'log', 'trading_actions.jsonl')):
         return 0
     log_path = os.path.join(os.path.dirname(__file__), 'log', 'trading_actions.jsonl')

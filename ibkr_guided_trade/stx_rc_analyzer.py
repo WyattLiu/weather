@@ -16,10 +16,7 @@ Usage:
 """
 
 import argparse
-import json
-import sys
 from datetime import datetime, timedelta
-from typing import Optional
 import numpy as np
 from scipy.stats import norm
 
@@ -400,7 +397,7 @@ class STXReverseCalendarAnalyzer:
         print(f"  Max Profit (big move): ${best['max_profit']:.2f}")
 
         # P&L table
-        print(f"\n  P&L BY SPOT MOVE:")
+        print("\n  P&L BY SPOT MOVE:")
         print(f"  {'-'*60}")
         for move in sorted(best['pnl_by_move'].keys()):
             spot_at = self.spot * (1 + move / 100)
@@ -414,7 +411,7 @@ class STXReverseCalendarAnalyzer:
 def cmd_analyze(args):
     """Analyze reverse calendar combinations"""
     print(f"\n{'='*120}")
-    print(f"STX REVERSE CALENDAR ANALYZER")
+    print("STX REVERSE CALENDAR ANALYZER")
     print(f"{'='*120}")
 
     analyzer = STXReverseCalendarAnalyzer('STX')
@@ -499,7 +496,7 @@ def cmd_analyze(args):
         short_fmt = short_expiry.replace('-', '')
         long_fmt = long_expiry.replace('-', '')
         print(f"\n  python ibkr_trading.py rc STX {short_fmt} {long_fmt} {int(best['put_strike'])} {int(best['call_strike'])} --dry-run")
-        print(f"\n  # Or with specific credit:")
+        print("\n  # Or with specific credit:")
         print(f"  python ibkr_trading.py rc STX {short_fmt} {long_fmt} {int(best['put_strike'])} {int(best['call_strike'])} --credit {best['net_credit']:.2f}")
 
     return best
@@ -594,7 +591,7 @@ def cmd_place(args):
     # Show IBKR command
     short_fmt = selected['short_expiry'].replace('-', '')
     long_fmt = selected['long_expiry'].replace('-', '')
-    print(f"\nIBKR Command:")
+    print("\nIBKR Command:")
     print(f"  python ibkr_trading.py rc STX {short_fmt} {long_fmt} {int(selected['put_strike'])} {int(selected['call_strike'])} --credit {selected['net_credit']:.2f}")
 
 
@@ -614,7 +611,7 @@ def main():
                                help='Minimum open interest (default: 10)')
 
     # Place command
-    place_parser = subparsers.add_parser('place', help='Place trade interactively')
+    subparsers.add_parser('place', help='Place trade interactively')
 
     args = parser.parse_args()
 

@@ -19,8 +19,6 @@ Run: venv/bin/python research/dba/allocation_sweep.py
 import os
 import sys
 import math
-import json
-import numpy as np
 import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

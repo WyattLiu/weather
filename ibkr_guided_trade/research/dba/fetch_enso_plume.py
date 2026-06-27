@@ -16,7 +16,7 @@ import re
 import json
 import subprocess
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(ROOT, 'cache')
@@ -126,7 +126,7 @@ def fetch_discussion():
 
 
 def build_outlook():
-    print(f'[plume] fetching CPC ENSO outlook...')
+    print('[plume] fetching CPC ENSO outlook...')
     disc = fetch_discussion()
     issue_dt = _parse_issue_date(disc['issue_date'] or '')
     probs = fetch_probabilities(issue_dt=issue_dt)
@@ -186,18 +186,18 @@ def main():
     out = build_outlook()
     print(f'\n=== CPC ENSO Outlook (issued {out["issue_date"]}) ===')
     print(f'Status: {out["status"]}')
-    print(f'\nForecast plume (El Niño probability by season):')
+    print('\nForecast plume (El Niño probability by season):')
     for r in out['forecast']:
         bar = '█' * (r['el_nino_pct'] // 5)
         print(f'  {r["season_label"]:>11s}  {r["el_nino_pct"]:>3d}%  {bar}')
     s = out['summary']
-    print(f'\nSummary:')
+    print('\nSummary:')
     print(f'  Peak El Niño: {s["peak_el_nino_pct"]}% in {s["peak_window"]}')
     print(f'  DJF 2026/27 (winter): {s["djf_el_nino_pct"]}% El Niño')
     print(f'  Months ≥80%: {s["months_above_80pct"]} / 9')
     print(f'  Months ≥95%: {s["months_above_95pct"]} / 9')
     if out['discussion_headlines']:
-        print(f'\nText discussion headlines:')
+        print('\nText discussion headlines:')
         for h in out['discussion_headlines']:
             print(f'  {h["pct"]}% — {h["window"]}')
 

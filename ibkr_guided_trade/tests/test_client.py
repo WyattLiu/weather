@@ -7,14 +7,13 @@ view.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from tests.conftest import load_fixture
 from ws_sdk.accounts import reset_margin_cache
 from ws_sdk.client import WSClient
-from ws_sdk.models import OrderStatus
 
 
 @pytest.fixture(autouse=True)

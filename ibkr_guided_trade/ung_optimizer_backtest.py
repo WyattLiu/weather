@@ -448,7 +448,7 @@ class WheelBacktest:
         dd = (eq_pos - peak) / peak
         max_dd = dd.min()
 
-        bnh_ret = prices[-1] / prices[0] - 1
+        prices[-1] / prices[0] - 1
         bnh_ann = (prices[-1] / prices[0]) ** (1 / max(n_years, 0.1)) - 1 if prices[-1] > 0 else -1
         alpha = ann_ret - bnh_ann
 
@@ -740,7 +740,7 @@ def main():
             print(f"     PutA={result['n_put_assigns']}, CallA={result['n_call_assigns']}, "
                   f"Rolls={result['n_rolls']}, Trades={result['n_trades']}")
         else:
-            print(f"  -> FAILED")
+            print("  -> FAILED")
 
     if not results:
         print("ERROR: No configs completed"); sys.exit(1)
@@ -815,7 +815,7 @@ def main():
     print(f"    Weights: {cfg['weights']}")
     print(f"    Dynamic delta: {cfg.get('dynamic_delta')}, DTE: {cfg['target_dte']}")
 
-    print(f"\n  Composite ranking:")
+    print("\n  Composite ranking:")
     for rank, (idx, sc) in enumerate(sorted(enumerate(composite), key=lambda x: -x[1]), 1):
         r = results[idx]
         print(f"    {rank}. {r['name']:<30s}  score={sc:.2f}  "

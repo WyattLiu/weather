@@ -12,7 +12,6 @@ fundamentals LEAD declines (sizing-down candidates are banned per
 upsize-only law, but warnings can cap the upsize at 1.0x).
 """
 import os
-import sys
 import pandas as pd
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))

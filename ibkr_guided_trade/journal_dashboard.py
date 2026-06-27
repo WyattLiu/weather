@@ -5,8 +5,7 @@ WHY, the regime, and stand-down signals. Filter by regime / flagged days / date 
 
   venv/bin/python journal_dashboard.py            # serves http://0.0.0.0:10002
 """
-import os, sys, json, math, threading
-from collections import defaultdict
+import os, sys, json, math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pandas as pd
 
