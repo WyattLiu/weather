@@ -5496,7 +5496,12 @@ STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
 # gamma_weighted_ladder engine code remains, param-gated OFF, for any future wider-strike asset.
 # FAST live variant of the promoted champion (model fills; advisor supplies real exec).
 STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_greeks'],
-    'intraday_exec': False, 'real_chain_pricing': False}
+    'intraday_exec': False, 'real_chain_pricing': False,
+    # LIVE multi-currency reality: the operator parks CAD as the collateral/margin reserve (for
+    # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
+    # against the CAD. So the USD-cash buffer is 0 (CAD is the buffer): sweep positive USD cash to
+    # BOXX, but with real (possibly-negative) USD cash fed in, the sweep can NEVER buy into margin.
+    'boxx_cash_buffer': 0}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],

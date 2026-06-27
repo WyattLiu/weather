@@ -44,6 +44,29 @@ _LIVE_CACHE = {'ts': 0.0, 'data': None}
 _LIVE_TTL = 180.0
 
 
+def _real_usd_cash_bp():
+    """EXACT settled USD cash + buying power from the broker's FetchTradingBalanceBuyingPower query.
+    NOT net_liq − Σ MV — that is WRONG for a MULTI-CURRENCY margin account: it blends the CAD side and
+    ignores a USD margin LOAN, so the BOXX sweep oversized the buy into ~$9.5k of USD margin. Cash can
+    be NEGATIVE here (= margin loan); the engine must see that so it never buys more into margin."""
+    try:
+        from ws_sdk import WSClient, get_session, graphql_query
+        from ws_sdk.queries import QUERY_TRADING_BALANCE
+        _c = WSClient(); _s = get_session()
+        for _a in _c.list_accounts():
+            if 'non-registered' in _a.id and 'MARGIN' in str(_a.type).upper():
+                _d = graphql_query(_s, 'FetchTradingBalanceBuyingPower', QUERY_TRADING_BALANCE,
+                                   {'accountCanonicalId': _a.id, 'currency': 'USD'})
+                _v = ((_d or {}).get('account') or {}).get('financials', {}).get('current', {}).get('tradingBalanceView') or {}
+                _cash = (_v.get('cash') or {}).get('quantity')
+                _bp = (_v.get('buyingPower') or {}).get('quantity')
+                if _cash is not None:
+                    return float(_cash), (float(_bp) if _bp is not None else None)
+    except Exception:
+        pass
+    return None, None
+
+
 def _compute_live():
     try:
         from live_kernel import get_live_recommendation
@@ -51,17 +74,19 @@ def _compute_live():
             spot = _STATE_CACHE.get('spot')
             pos = _STATE_CACHE.get('positions', [])
             bal = _STATE_CACHE.get('balance') or {}
-            # REAL CASH. The broker exposes only net_liquidation (no cash field), so the old
-            # fallback passed net_liq AS cash — on top of the positions — doubling the engine's
-            # NAV (~$251k vs the real ~$133k) and oversizing every order. Derive true cash:
-            #   net_liq = cash + Σ(position market_value)  →  cash = net_liq − Σ MV.
-            _cash = bal.get('cash') or bal.get('total_cash')
-            if not _cash:
-                _nl = bal.get('net_liquidation')
-                if _nl:
-                    _pos_mv = sum(float(p.get('market_value') or 0) for p in pos)
-                    _cash = float(_nl) - _pos_mv      # = real settled cash
-            cash = _cash or 100000
+            # REAL USD CASH from the broker's exact query (can be NEGATIVE = margin loan). The old
+            # `cash = net_liq − Σ MV` was WRONG for this multi-currency margin account — it blended the
+            # CAD side and hid the USD margin, so the BOXX sweep over-bought ~$9.5k into USD margin.
+            # Fall back to the derivation ONLY if the query fails.
+            _cash, _bp = _real_usd_cash_bp()
+            if _cash is None:
+                _cash = bal.get('cash') or bal.get('total_cash')
+                if not _cash:
+                    _nl = bal.get('net_liquidation')
+                    if _nl:
+                        _pos_mv = sum(float(p.get('market_value') or 0) for p in pos)
+                        _cash = float(_nl) - _pos_mv
+            cash = _cash if _cash is not None else 100000
         data = get_live_recommendation(pos, cash=cash, spot=spot,
                                        kernel_key='regime_wheel_boxx_greeks_live')  # PROMOTED champion (greeks-managed)
         # EXECUTION ADVISOR: annotate each order with a manual-execution plan
