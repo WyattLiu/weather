@@ -1384,13 +1384,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # operator's ALREADY-OPEN positions in the live seed — not just this engine's own sells.
             # Matches the delta_compass framing (net_delta vs target) the operator steers by; without it
             # the live engine ignores the puts you've already sold and over-accumulates.
+            # Count ALL short-put delta toward `current` (the synthetic long from puts) so the arm
+            # self-limits AND sees the operator's already-open puts. Do NOT subtract the covered calls:
+            # they're sold against the shares (an income overlay), they don't reduce share OWNERSHIP, so
+            # the accumulation target shouldn't sell extra puts to offset them (that over-piles short vol
+            # — it dropped the arm to 13.9% vs 16.7%). Net book delta naturally stays under the ownership
+            # target by the covered-call drag, which is intentional.
             if p.get('reaccum_via_puts'):
                 for _sp in s.get('short_puts', []):
                     _Tsp = max(1, _sp['dte'] - (idx - _sp['entry']).days) / 365.0
                     current += int(-bs_greeks_pt(spot_u, _sp['K'], _Tsp, iv_at(_sp['K'], int(_Tsp * 365), 'P'), 'P')[0] * _sp['qty'] * 100)
-                for _scl in s.get('short_calls', []):
-                    _Tsc = max(1, _scl['dte'] - (idx - _scl['entry']).days) / 365.0
-                    current -= int(bs_greeks_pt(spot_u, _scl['K'], _Tsc, iv_at(_scl['K'], int(_Tsc * 365), 'C'), 'C')[0] * _scl['qty'] * 100)
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
@@ -5584,12 +5587,13 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
     # against the CAD. So the USD-cash buffer is 0 (CAD is the buffer): sweep positive USD cash to
     # BOXX, but with real (possibly-negative) USD cash fed in, the sweep can NEVER buy into margin.
-    'boxx_cash_buffer': 0,
-    # ACCUMULATE TO TARGET DELTA VIA SLIGHTLY-ITM PUTS (not shares). Validated comparable to shares on
-    # the sealed TEST (+5% ITM 30d: 17.0% vs 16.7%) while KEEPING BOXX (margin-financed against CAD) and
-    # collecting premium — and it IS the buy-shares-sell-call wheel position by put-call parity. Lower
-    # Sharpe than shares (bumpier) is the accepted cost of BOXX preservation.
-    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
+    'boxx_cash_buffer': 0}
+# reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
+# ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
+# shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
+# all-cash-to-BOXX sweep churns against the (simulated USD) assignments. Engine default stays SHARES
+# (the only cleanly-validated method); the operator fills the gap with CAD-financed ITM puts by hand
+# (~parity, BOXX-preserving) using the dashboard's put-ladder execution aid. Code kept, param-gated off.
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
