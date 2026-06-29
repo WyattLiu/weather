@@ -86,6 +86,18 @@ def bs_greeks_pt(S, K, T, sig, right, r=0.045):
     return delta, gamma
 
 
+def long_calls_mtm(long_calls, spot, idx, iv_fn):
+    """Mark-to-market value of long calls. The NAV is otherwise cash-basis (cash+shares+boxx+kold)
+    and would NOT count a held long-call asset until it settles — penalizing any long-call strategy
+    (premium leaves cash now, value realized only at expiry). Mark it so the calls-accumulation arm
+    is valued fairly against the shares arm."""
+    v = 0.0
+    for lc in (long_calls or []):
+        T = max(1, lc['dte'] - (idx - lc['entry']).days) / 365.0
+        v += bs_call(spot, lc['K'], T, iv_fn(lc['K'], int(T * 365), 'C')) * lc['qty'] * 100
+    return v
+
+
 def book_greeks(s, spot, iv_at):
     """Aggregate book net DELTA and GAMMA (in share-equivalents) across shares + all
     short/long puts & calls. Long delta = bullish exposure. Short put adds +delta,
@@ -999,7 +1011,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # DD-aware risk dial — generic protection against any adverse
         # regime (sharp crash or slow decline). Track NAV peak; if
         # current NAV is significantly below peak, scale down all sizing.
-        cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + s['kold'] * spot_k
+        cur_nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + s['kold'] * spot_k + long_calls_mtm(s.get('long_calls'), spot_u, idx, iv_at)
         if cur_nav > nav_peak:
             nav_peak = cur_nav
         dd_pct = (cur_nav - nav_peak) / nav_peak * 100 if nav_peak > 0 else 0
@@ -1359,6 +1371,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 current = int(round(book_greeks_stat(
                     s, spot_u, z, p.get('scenario_mu_a', -0.000797),
                     p.get('scenario_mu_b', -0.000009), p.get('scenario_sigma', 0.0390))))
+            # LONG-CALL ACCUMULATION arm: count long-call delta toward the share target so the calls
+            # self-limit the gap (otherwise the engine re-buys calls every bar, never "seeing" the
+            # delta it already added). Only when the arm is on, to leave baseline behaviour untouched.
+            if p.get('reaccum_via_calls') and s.get('long_calls'):
+                for _lc in s['long_calls']:
+                    _Tlc = max(1, _lc['dte'] - (idx - _lc['entry']).days) / 365.0
+                    _d_lc = bs_greeks_pt(spot_u, _lc['K'], _Tlc, iv_at(_lc['K'], int(_Tlc * 365), 'C'), 'C')[0]
+                    current += int(_d_lc * _lc['qty'] * 100)
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
@@ -1505,16 +1525,42 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                'pnl': 0.0, 'credit': credit, 'K': Kp,
                                                'qty': put_qty_rebuild, 'spot': spot_u, 'z': z})
             elif adjust >= 100 and not p.get('gap_to_wheel'):  # buying (direct; OFF when gap_to_wheel → acquire via puts)
-                max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
-                max_afford = (max_afford // 100) * 100
-                adjust = min(adjust, max_afford)
-                if adjust >= 100:
-                    cost = adjust * (spot_u + SPREAD_SHARE)
-                    s['cash'] -= cost
-                    s['shares'] += adjust
-                    trades.append({'date': idx, 'type': 'Z_TARGET_ADD',
-                                   'pnl': 0.0, 'qty': adjust, 'spot': spot_u,
-                                   'z': z, 'target': target, 'shares_after': s['shares']})
+                _ivr_now = row.get('iv_rank')
+                _use_calls = (p.get('reaccum_via_calls')
+                              and _ivr_now == _ivr_now and _ivr_now is not None
+                              and _ivr_now < p.get('reaccum_calls_iv_max', 0.30))
+                if _use_calls:
+                    # LOW-IV ACCUMULATION VIA LONG CALLS: add the target delta with a fraction of the
+                    # capital (keep BOXX rather than liquidate it for shares) AND go long cheap vol.
+                    # Buy ~ATM calls for the delta-equivalent of `adjust` shares.
+                    _dte_c = int(p.get('reaccum_call_dte', 90))
+                    _Kc = round(spot_u * (1 + p.get('reaccum_call_moneyness', 0.0)))
+                    _ivc = iv_at(_Kc, _dte_c, 'C')
+                    _cdelta = bs_greeks_pt(spot_u, _Kc, _dte_c / 365, _ivc, 'C')[0]
+                    _cost_c = bs_call(spot_u, _Kc, _dte_c / 365, _ivc)
+                    if _cdelta > 0.05 and _cost_c > 0.01:
+                        _qty_c = int(round(adjust / (_cdelta * 100)))   # delta-equivalent contracts
+                        _afford_c = int((s['cash'] - 2000) / (_cost_c * 100 + SPREAD_OPTION * 100)) if s['cash'] > 2000 else 0
+                        _qty_c = min(_qty_c, _afford_c)
+                        if _qty_c >= 1:
+                            _debit = _qty_c * _cost_c * 100 + _qty_c * SPREAD_OPTION * 100
+                            s['cash'] -= _debit
+                            s.setdefault('long_calls', []).append({'entry': idx, 'K': _Kc, 'dte': _dte_c,
+                                                                   'qty': _qty_c, 'cost': _cost_c})
+                            trades.append({'date': idx, 'type': 'Z_TARGET_ADD_CALLS', 'pnl': -_debit,
+                                           'K': _Kc, 'qty': _qty_c, 'spot': spot_u, 'z': z,
+                                           'cdelta': round(_cdelta, 2)})
+                else:
+                    max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
+                    max_afford = (max_afford // 100) * 100
+                    adjust = min(adjust, max_afford)
+                    if adjust >= 100:
+                        cost = adjust * (spot_u + SPREAD_SHARE)
+                        s['cash'] -= cost
+                        s['shares'] += adjust
+                        trades.append({'date': idx, 'type': 'Z_TARGET_ADD',
+                                       'pnl': 0.0, 'qty': adjust, 'spot': spot_u,
+                                       'z': z, 'target': target, 'shares_after': s['shares']})
 
         # SMART RE-ENTRY — when we've trimmed shares and conditions turn
         # favorable, buy back. Recovers upside that pure-trim variants miss.
@@ -3138,7 +3184,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
 
                 # Guard against NaN spot_k or NaN nav
                 if s['kold'] == 0 and spot_k > 0 and pd.notna(spot_k):
-                    nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0))
+                    nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + long_calls_mtm(s.get('long_calls'), spot_u, idx, iv_at)
                     if pd.isna(nav) or nav <= 0:
                         tq = 0
                     else:
@@ -3208,7 +3254,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             if len(recent_premium) > 12:
                 recent_premium.pop(0)
         # NAV uses real BOXX price now
-        nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + s['kold'] * spot_k
+        nav = s['cash'] + s['shares'] * spot_u + s['boxx'] * float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0)) + s['kold'] * spot_k + long_calls_mtm(s.get('long_calls'), spot_u, idx, iv_at)
         def _book(_legs):   # real strike→contracts tally (no reconstruction leak)
             _b = {}
             for _x in _legs:
