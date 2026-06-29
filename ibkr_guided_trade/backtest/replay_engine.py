@@ -1579,6 +1579,8 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     _ivp = iv_at(_Kp, _dte_p, 'P')
                     _pdelta = -bs_greeks_pt(spot_u, _Kp, _dte_p / 365, _ivp, 'P')[0]   # short-put delta
                     _prem = bs_put(spot_u, _Kp, _dte_p / 365, _ivp)
+                    if p.get('real_fill_model'):
+                        _prem *= fill_factor('P', _dte_p, 1 - _Kp / spot_u)
                     if _pdelta > 0.05 and _prem > 0.02:
                         _qty_p = max(0, min(int(round(adjust / (_pdelta * 100))), 60))
                         if _qty_p >= 1:
@@ -1618,6 +1620,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         _n_puts = 0
                     if _n_puts >= 1:
                         _prem = bs_put(spot_u, _Kp, _dte_p / 365, _ivp)
+                        # PERFECT THE FILL: same empirical fill_factor (8yr real UNG NBBO) the engine's
+                        # normal puts use — not a fixed haircut — so the ITM credit is modelled exactly
+                        # like every other short put in the book. Keep SPREAD_OPTION as a small extra buffer.
+                        if p.get('real_fill_model'):
+                            _prem *= fill_factor('P', _dte_p, 1 - _Kp / spot_u)
                         if _prem > 0.02:
                             _credit = _n_puts * _prem * 100 - _n_puts * SPREAD_OPTION * 100
                             s['cash'] += _credit
@@ -5638,7 +5645,14 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
     # against the CAD. So the USD-cash buffer is 0 (CAD is the buffer): sweep positive USD cash to
     # BOXX, but with real (possibly-negative) USD cash fed in, the sweep can NEVER buy into margin.
-    'boxx_cash_buffer': 0}
+    'boxx_cash_buffer': 0,
+    # DELTA+GAMMA TARGETED ACCUMULATION (the proper framing — not "target shares"). Accumulate to the
+    # net-delta target while steering book gamma toward the TARGET-DELTA-CURVE SLOPE (γ=-0.03·NAV/spot).
+    # Backtest TEST: 17.5% (vs pure shares 16.7%, pure puts ~13-16%) — the puts+shares blend earns its
+    # negative gamma. Higher return + keeps more BOXX (puts margin-financed); cost is lower Sharpe (1.76
+    # vs 2.01, bumpier). Short puts carry the gamma budget; shares carry the rest.
+    'reaccum_delta_gamma': True, 'target_gamma_per_nav': -0.03,
+    'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
