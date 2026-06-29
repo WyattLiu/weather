@@ -430,3 +430,32 @@ class TestSeededInvariantsHold:
         assert book['shares'] >= 0
         assert lots <= book['shares'] // 100, \
             f"seeded live decision produced naked calls: {lots} lots vs {book['shares']} shares"
+
+
+# Live champion: USD-cash-only BOXX sweep with buffer 0 (CAD is the collateral, not a BOXX source).
+LIVE = 'regime_wheel_boxx_greeks_live'
+
+
+class TestBoxxUsdCashOnly:
+    """Regression guards for the multi-currency USD-margin bug (see memory
+    feedback_boxx_usd_cash_multicurrency). BOXX is filled from USD CASH ONLY: the live path sources
+    real USD cash from the broker (not net_liq − Σ MV, which blended the CAD side, fed phantom +cash,
+    and drew ~$9.5k of USD margin), and the sweep runs with buffer 0 yet can never push USD cash
+    negative."""
+
+    def test_live_variant_usd_buffer_is_zero(self):
+        # CAD is the collateral/no-FX reserve; BOXX is filled with USD cash only → USD buffer == 0.
+        assert R.STRATEGIES[LIVE].get('boxx_cash_buffer') == 0
+
+    def test_dashboard_sources_real_usd_cash_not_nav_derivation(self):
+        # The fix: live cash comes from the exact broker query (can be negative = margin), not net_liq−ΣMV.
+        import kernel_dashboard as KD
+        assert hasattr(KD, '_real_usd_cash_bp'), \
+            "live path must source USD cash from FetchTradingBalanceBuyingPower, not net_liq − Σ MV"
+
+    def test_positive_usd_cash_sweep_leaves_no_margin(self, win40):
+        # Given positive USD cash, the sweep buys BOXX but leaves cash >= buffer — never negative.
+        seed = _empty_book(cash=40000.0, boxx=0.0, nav_peak=40000.0)
+        _, book = _live(win40, dict(R.STRATEGIES[LIVE]), seed)
+        assert book['cash'] >= -1.0, \
+            f"sweep bought BOXX into USD margin: post cash {book['cash']:.0f}"
