@@ -9,10 +9,11 @@ from replay_engine import STRATEGIES, precompute_factor_z, run_strategy_simple
 
 BASE = STRATEGIES['regime_wheel_boxx_greeks']
 VARIANTS = {
-    'shares (sells BOXX)':      dict(BASE),
-    'calls when IV<0.30':       {**BASE, 'reaccum_via_calls': True, 'reaccum_calls_iv_max': 0.30, 'reaccum_call_dte': 90},
-    'sell ATM puts (45d)':      {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 45},
-    'sell ATM puts (30d)':      {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30},
+    'shares (sells BOXX)':   dict(BASE),
+    'ATM puts 30d (m=0)':    {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.0},
+    'ITM puts 30d (+5%)':    {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05},
+    'ITM puts 30d (+10%)':   {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.10},
+    'ITM puts 30d (+15%)':   {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15},
 }
 
 

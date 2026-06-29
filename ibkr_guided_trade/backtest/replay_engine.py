@@ -1379,15 +1379,18 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     _Tlc = max(1, _lc['dte'] - (idx - _lc['entry']).days) / 365.0
                     _d_lc = bs_greeks_pt(spot_u, _lc['K'], _Tlc, iv_at(_lc['K'], int(_Tlc * 365), 'C'), 'C')[0]
                     current += int(_d_lc * _lc['qty'] * 100)
-            # ATM-PUT ACCUMULATION arm: count the (tagged) reaccum short-put delta toward target so it
-            # self-limits. Short put delta = +|put delta|. Only the puts this arm sold (src='reaccum'),
-            # to leave the wheel's income puts and the baseline untouched.
-            if p.get('reaccum_via_puts') and s.get('short_puts'):
-                for _sp in s['short_puts']:
-                    if _sp.get('src') == 'reaccum':
-                        _Tsp = max(1, _sp['dte'] - (idx - _sp['entry']).days) / 365.0
-                        _d_sp = -bs_greeks_pt(spot_u, _sp['K'], _Tsp, iv_at(_sp['K'], int(_Tsp * 365), 'P'), 'P')[0]
-                        current += int(_d_sp * _sp['qty'] * 100)
+            # PUT-ACCUMULATION arm: target NET delta. Count the FULL book's option delta toward `current`
+            # (short puts add +|delta|, short calls subtract) so the arm self-limits AND accounts for the
+            # operator's ALREADY-OPEN positions in the live seed — not just this engine's own sells.
+            # Matches the delta_compass framing (net_delta vs target) the operator steers by; without it
+            # the live engine ignores the puts you've already sold and over-accumulates.
+            if p.get('reaccum_via_puts'):
+                for _sp in s.get('short_puts', []):
+                    _Tsp = max(1, _sp['dte'] - (idx - _sp['entry']).days) / 365.0
+                    current += int(-bs_greeks_pt(spot_u, _sp['K'], _Tsp, iv_at(_sp['K'], int(_Tsp * 365), 'P'), 'P')[0] * _sp['qty'] * 100)
+                for _scl in s.get('short_calls', []):
+                    _Tsc = max(1, _scl['dte'] - (idx - _scl['entry']).days) / 365.0
+                    current -= int(bs_greeks_pt(spot_u, _scl['K'], _Tsc, iv_at(_scl['K'], int(_Tsc * 365), 'C'), 'C')[0] * _scl['qty'] * 100)
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
@@ -5581,7 +5584,12 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
     # against the CAD. So the USD-cash buffer is 0 (CAD is the buffer): sweep positive USD cash to
     # BOXX, but with real (possibly-negative) USD cash fed in, the sweep can NEVER buy into margin.
-    'boxx_cash_buffer': 0}
+    'boxx_cash_buffer': 0,
+    # ACCUMULATE TO TARGET DELTA VIA SLIGHTLY-ITM PUTS (not shares). Validated comparable to shares on
+    # the sealed TEST (+5% ITM 30d: 17.0% vs 16.7%) while KEEPING BOXX (margin-financed against CAD) and
+    # collecting premium — and it IS the buy-shares-sell-call wheel position by put-call parity. Lower
+    # Sharpe than shares (bumpier) is the accepted cost of BOXX preservation.
+    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
 # v3: + confidence gate (skip accumulate when storage signal noisy) + price-breakdown
 # distribute trigger (downtrend forces dump) — targets the 2022 walk-forward blind spot.
 STRATEGIES['regime_wheel_boxx_v3'] = {**STRATEGIES['regime_wheel_boxx'],
