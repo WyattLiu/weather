@@ -1390,10 +1390,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             # the accumulation target shouldn't sell extra puts to offset them (that over-piles short vol
             # — it dropped the arm to 13.9% vs 16.7%). Net book delta naturally stays under the ownership
             # target by the covered-call drag, which is intentional.
-            if p.get('reaccum_via_puts'):
+            if p.get('reaccum_via_puts') or p.get('reaccum_delta_gamma'):
                 for _sp in s.get('short_puts', []):
                     _Tsp = max(1, _sp['dte'] - (idx - _sp['entry']).days) / 365.0
                     current += int(-bs_greeks_pt(spot_u, _sp['K'], _Tsp, iv_at(_sp['K'], int(_Tsp * 365), 'P'), 'P')[0] * _sp['qty'] * 100)
+                # delta+gamma mode targets TRUE net delta → also subtract the short calls' (negative) delta.
+                if p.get('reaccum_delta_gamma'):
+                    for _scl in s.get('short_calls', []):
+                        _Tsc = max(1, _scl['dte'] - (idx - _scl['entry']).days) / 365.0
+                        current -= int(bs_greeks_pt(spot_u, _scl['K'], _Tsc, iv_at(_scl['K'], int(_Tsc * 365), 'C'), 'C')[0] * _scl['qty'] * 100)
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
@@ -1583,6 +1588,52 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                                     'entry_prem': _prem, 'src': 'reaccum'})
                             trades.append({'date': idx, 'type': 'Z_TARGET_ADD_PUTS', 'pnl': 0.0,
                                            'credit': _credit, 'K': _Kp, 'qty': _qty_p, 'spot': spot_u, 'z': z})
+                elif p.get('reaccum_delta_gamma'):
+                    # DELTA+GAMMA TARGETED: close the delta gap `adjust` while steering book gamma toward a
+                    # target (target_gamma_per_nav × NAV/spot, scale-invariant). Short puts carry the
+                    # negative-gamma BUDGET (+premium); shares carry the rest (delta 1, gamma 0). With the
+                    # book already past the gamma target it's ALL SHARES — which is the whole point: when
+                    # the put book is over-gamma'd (like now, −1,553), the gamma target dilutes it with flat
+                    # share delta instead of piling on more puts. target_gamma=0 ⇒ pure shares.
+                    _Kp = round(spot_u * (1 + p.get('reaccum_put_moneyness', 0.05)))
+                    _dte_p = int(p.get('reaccum_put_dte', 30))
+                    _ivp = iv_at(_Kp, _dte_p, 'P')
+                    _pd, _pg = bs_greeks_pt(spot_u, _Kp, _dte_p / 365, _ivp, 'P')
+                    _put_d = -_pd * 100              # short-put delta / contract (+)
+                    _put_g = -_pg * 100              # short-put gamma / contract (−)
+                    _cg = 0.0
+                    for _x in s.get('short_puts', []):
+                        _T = max(1, _x['dte'] - (idx - _x['entry']).days) / 365.0
+                        _cg -= bs_greeks_pt(spot_u, _x['K'], _T, iv_at(_x['K'], int(_T * 365), 'P'), 'P')[1] * _x['qty'] * 100
+                    for _x in s.get('short_calls', []):
+                        _T = max(1, _x['dte'] - (idx - _x['entry']).days) / 365.0
+                        _cg -= bs_greeks_pt(spot_u, _x['K'], _T, iv_at(_x['K'], int(_T * 365), 'C'), 'C')[1] * _x['qty'] * 100
+                    _tgt_g = p.get('target_gamma_per_nav', 0.0) * cur_nav / spot_u
+                    _n_puts = 0
+                    if _put_g < 0 and _cg > _tgt_g:                       # room for more negative gamma
+                        _n_puts = int((_tgt_g - _cg) / _put_g)
+                    if _put_d > 0:
+                        _n_puts = max(0, min(_n_puts, int(adjust / _put_d)))
+                    else:
+                        _n_puts = 0
+                    if _n_puts >= 1:
+                        _prem = bs_put(spot_u, _Kp, _dte_p / 365, _ivp)
+                        if _prem > 0.02:
+                            _credit = _n_puts * _prem * 100 - _n_puts * SPREAD_OPTION * 100
+                            s['cash'] += _credit
+                            s['short_puts'].append({'entry': idx, 'K': _Kp, 'dte': _dte_p, 'qty': _n_puts,
+                                                    'entry_prem': _prem, 'src': 'reaccum'})
+                            trades.append({'date': idx, 'type': 'Z_TARGET_ADD_PUTS', 'pnl': 0.0, 'credit': _credit,
+                                           'K': _Kp, 'qty': _n_puts, 'spot': spot_u, 'z': z})
+                        adjust -= int(_n_puts * _put_d)
+                    _n_sh = (max(0, int(adjust)) // 100) * 100
+                    _maff = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
+                    _n_sh = min(_n_sh, (_maff // 100) * 100)
+                    if _n_sh >= 100:
+                        s['cash'] -= _n_sh * (spot_u + SPREAD_SHARE)
+                        s['shares'] += _n_sh
+                        trades.append({'date': idx, 'type': 'Z_TARGET_ADD', 'pnl': 0.0, 'qty': _n_sh,
+                                       'spot': spot_u, 'z': z, 'target': target, 'shares_after': s['shares']})
                 else:
                     max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
                     max_afford = (max_afford // 100) * 100
