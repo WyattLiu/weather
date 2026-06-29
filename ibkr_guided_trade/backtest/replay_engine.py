@@ -1222,7 +1222,11 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         # expensive. Maintain shares = base × z_multiplier. Avoids the
         # reactive-trim trap where we sell into noise pullbacks.
         z_target_enabled = p.get('z_share_target_enabled', False)
-        if z_target_enabled and i % p.get('z_target_cadence_days', 5) == 0:
+        # EVENT-DRIVEN RE-ACCUM: after a large called-away strips shares well below target, re-evaluate
+        # the share-target off-cadence (for a short window) so the book glides back to the desired delta
+        # instead of waiting up to a full cadence period. Armed in the CALL_ASSIGN handler below.
+        _reaccum_now = bool(p.get('reaccum_on_called_away')) and i <= s.get('_reaccum_until', -1)
+        if z_target_enabled and (i % p.get('z_target_cadence_days', 5) == 0 or _reaccum_now):
             # SCALE-INVARIANT base: if z_share_target_pct_nav set, compute base
             # shares as (NAV * pct / spot) so base scales with account size.
             # Falls back to hardcoded z_share_target_base for legacy strategies.
@@ -2044,6 +2048,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     pnl = sc['entry_prem'] * 100 * sc['qty'] - lost
                     s['shares'] -= sc['qty'] * 100
                     s['cash'] += sc['qty'] * 100 * sc['K']
+                    # arm event-driven re-accumulation when a LARGE block is called away (the share
+                    # book just dropped well below target — glide it back over the next few bars).
+                    if p.get('reaccum_on_called_away') and sc['qty'] >= p.get('reaccum_lots_threshold', 5):
+                        s['_reaccum_until'] = i + int(p.get('reaccum_window', 5))
                     trades.append({'date': idx, 'type': 'CALL_EARLY_ASSIGN' if _early_c else 'CALL_ASSIGN',
                                    'qty': sc['qty'], 'pnl': pnl, 'K': sc['K']})
                 else:
