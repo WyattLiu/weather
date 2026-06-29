@@ -11,7 +11,8 @@ BASE = STRATEGIES['regime_wheel_boxx_greeks']
 VARIANTS = {
     'shares (sells BOXX)':      dict(BASE),
     'calls when IV<0.30':       {**BASE, 'reaccum_via_calls': True, 'reaccum_calls_iv_max': 0.30, 'reaccum_call_dte': 90},
-    'calls always':             {**BASE, 'reaccum_via_calls': True, 'reaccum_calls_iv_max': 1.01, 'reaccum_call_dte': 90},
+    'sell ATM puts (45d)':      {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 45},
+    'sell ATM puts (30d)':      {**BASE, 'reaccum_via_puts': True, 'reaccum_put_dte': 30},
 }
 
 
@@ -30,10 +31,8 @@ def metrics(strat, df, nav0=100000):
     t = trades['type'].astype(str)
     n_sh = int((t == 'Z_TARGET_ADD').sum())
     n_ca = int((t == 'Z_TARGET_ADD_CALLS').sum())
-    # capital deployed: shares cost ~ qty*spot*100 ; calls cost = -pnl debit
-    sh_cap = float(trades[t == 'Z_TARGET_ADD']['qty'].abs().mul(trades[t == 'Z_TARGET_ADD']['spot']).sum()) if n_sh else 0.0
-    ca_cap = float(-trades[t == 'Z_TARGET_ADD_CALLS']['pnl'].sum()) if n_ca else 0.0
-    return ann, sh, mdd, n_sh, n_ca, sh_cap, ca_cap
+    n_pa = int((t == 'Z_TARGET_ADD_PUTS').sum())
+    return ann, sh, mdd, n_sh, n_ca, n_pa
 
 
 def _job(a):
@@ -46,7 +45,7 @@ if __name__ == '__main__':
     jobs = [(w, n, s) for n, s in VARIANTS.items() for w in ('TRAIN', 'TEST')]
     with mp.Pool(6) as pool: res = pool.map(_job, jobs)
     res.sort(key=lambda r: (list(VARIANTS).index(r[0]), 0 if r[1] == 'TRAIN' else 1))
-    print(f"  {'method':<22}{'win':<7}{'ann':>7}{'Sh':>6}{'MaxDD':>7}{'shAdd':>7}{'caAdd':>7}{'$sh-dep':>10}{'$ca-dep':>10}")
-    for n, w, a, s, m, nsh, nca, shc, cac in res:
-        print(f"  {n:<22}{w:<7}{a:>6.1f}%{s:>6.2f}{m:>6.1f}%{nsh:>7d}{nca:>7d}{shc:>10,.0f}{cac:>10,.0f}")
+    print(f"  {'method':<22}{'win':<7}{'ann':>7}{'Sh':>6}{'MaxDD':>7}{'shAdd':>7}{'caAdd':>7}{'puAdd':>7}")
+    for n, w, a, s, m, nsh, nca, npa in res:
+        print(f"  {n:<22}{w:<7}{a:>6.1f}%{s:>6.2f}{m:>6.1f}%{nsh:>7d}{nca:>7d}{npa:>7d}")
     print("DONE", flush=True)

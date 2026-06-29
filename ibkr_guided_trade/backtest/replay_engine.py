@@ -1379,6 +1379,15 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     _Tlc = max(1, _lc['dte'] - (idx - _lc['entry']).days) / 365.0
                     _d_lc = bs_greeks_pt(spot_u, _lc['K'], _Tlc, iv_at(_lc['K'], int(_Tlc * 365), 'C'), 'C')[0]
                     current += int(_d_lc * _lc['qty'] * 100)
+            # ATM-PUT ACCUMULATION arm: count the (tagged) reaccum short-put delta toward target so it
+            # self-limits. Short put delta = +|put delta|. Only the puts this arm sold (src='reaccum'),
+            # to leave the wheel's income puts and the baseline untouched.
+            if p.get('reaccum_via_puts') and s.get('short_puts'):
+                for _sp in s['short_puts']:
+                    if _sp.get('src') == 'reaccum':
+                        _Tsp = max(1, _sp['dte'] - (idx - _sp['entry']).days) / 365.0
+                        _d_sp = -bs_greeks_pt(spot_u, _sp['K'], _Tsp, iv_at(_sp['K'], int(_Tsp * 365), 'P'), 'P')[0]
+                        current += int(_d_sp * _sp['qty'] * 100)
             # ── DISTRIBUTIONAL DELTA BAND (gen-5: the rigidity fix) ──────
             # The point target is μ. σ comes from SIGNAL DISAGREEMENT: when
             # z, iv_rank, and momentum point the same way → tight band (act
@@ -1550,6 +1559,24 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                             trades.append({'date': idx, 'type': 'Z_TARGET_ADD_CALLS', 'pnl': -_debit,
                                            'K': _Kc, 'qty': _qty_c, 'spot': spot_u, 'z': z,
                                            'cdelta': round(_cdelta, 2)})
+                elif p.get('reaccum_via_puts'):
+                    # ACCUMULATE VIA SELLING ATM PUTS: add delta (~+0.5/put) + collect premium, and
+                    # acquire shares at strike IF assigned. Short vol — pays thin in low IV and the
+                    # accumulation is contingent on the put going ITM.
+                    _Kp = round(spot_u * (1 + p.get('reaccum_put_moneyness', 0.0)))   # 0.0 = ATM
+                    _dte_p = int(p.get('reaccum_put_dte', 45))
+                    _ivp = iv_at(_Kp, _dte_p, 'P')
+                    _pdelta = -bs_greeks_pt(spot_u, _Kp, _dte_p / 365, _ivp, 'P')[0]   # short-put delta
+                    _prem = bs_put(spot_u, _Kp, _dte_p / 365, _ivp)
+                    if _pdelta > 0.05 and _prem > 0.02:
+                        _qty_p = max(0, min(int(round(adjust / (_pdelta * 100))), 60))
+                        if _qty_p >= 1:
+                            _credit = _qty_p * _prem * 100 - _qty_p * SPREAD_OPTION * 100
+                            s['cash'] += _credit
+                            s['short_puts'].append({'entry': idx, 'K': _Kp, 'dte': _dte_p, 'qty': _qty_p,
+                                                    'entry_prem': _prem, 'src': 'reaccum'})
+                            trades.append({'date': idx, 'type': 'Z_TARGET_ADD_PUTS', 'pnl': 0.0,
+                                           'credit': _credit, 'K': _Kp, 'qty': _qty_p, 'spot': spot_u, 'z': z})
                 else:
                     max_afford = int((s['cash'] - 5000) / (spot_u + SPREAD_SHARE)) if s['cash'] > 5000 else 0
                     max_afford = (max_afford // 100) * 100
