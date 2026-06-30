@@ -1610,7 +1610,16 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                     for _x in s.get('short_calls', []):
                         _T = max(1, _x['dte'] - (idx - _x['entry']).days) / 365.0
                         _cg -= bs_greeks_pt(spot_u, _x['K'], _T, iv_at(_x['K'], int(_T * 365), 'C'), 'C')[1] * _x['qty'] * 100
-                    _tgt_g = p.get('target_gamma_per_nav', 0.0) * cur_nav / spot_u
+                    # TARGET-GAMMA FORMULA. 'curve': γ = d(target_Δ)/d(spot) ≈ −target/spot — the slope
+                    # of the target-delta curve itself, so book delta self-TRACKS the target as price
+                    # moves (no over/under-shoot). 'curve_k': scaled version. else: constant × NAV/spot.
+                    _gmode = p.get('gamma_target_mode')
+                    if _gmode == 'curve':
+                        _tgt_g = -target / spot_u
+                    elif _gmode == 'curve_k':
+                        _tgt_g = -target / spot_u * p.get('gamma_curve_k', 1.0)
+                    else:
+                        _tgt_g = p.get('target_gamma_per_nav', 0.0) * cur_nav / spot_u
                     _n_puts = 0
                     if _put_g < 0 and _cg > _tgt_g:                       # room for more negative gamma
                         _n_puts = int((_tgt_g - _cg) / _put_g)
