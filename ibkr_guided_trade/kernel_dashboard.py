@@ -67,6 +67,35 @@ def _real_usd_cash_bp():
     return None, None
 
 
+# Approx USD-per-CAD. The deployable reserve is parked in CAD (collateral, no-FX); the engine models
+# it as deployable 'cash' (the backtest's boxx_cash_buffer == this CAD reserve). FX moves slowly and the
+# reserve is sized in round numbers, so a constant is adequate here (avoids a yfinance call in the live path).
+_USD_PER_CAD = 0.73
+
+
+def _real_cad_reserve_usd():
+    """CAD cash parked as the deployable reserve/collateral, in USD. In the multi-currency margin account
+    the operator funds put-sells / assignments / share accumulation from CAD with NO FX. The engine treats
+    this reserve as deployable cash — the backtest's boxx_cash_buffer (15000) STANDS IN for exactly this CAD.
+    Seed it alongside USD cash; otherwise the buffer:15k sweep wrongly recommends SELLING BOXX to raise idle
+    USD (the operator holds the reserve in CAD, not USD). Returns 0.0 on failure (safe: no phantom reserve)."""
+    try:
+        from ws_sdk import WSClient, get_session, graphql_query
+        from ws_sdk.queries import QUERY_TRADING_BALANCE
+        _c = WSClient(); _s = get_session()
+        for _a in _c.list_accounts():
+            if 'non-registered' in _a.id and 'MARGIN' in str(_a.type).upper():
+                _d = graphql_query(_s, 'FetchTradingBalanceBuyingPower', QUERY_TRADING_BALANCE,
+                                   {'accountCanonicalId': _a.id, 'currency': 'CAD'})
+                _v = ((_d or {}).get('account') or {}).get('financials', {}).get('current', {}).get('tradingBalanceView') or {}
+                _cad = (_v.get('cash') or {}).get('quantity')
+                if _cad is not None and float(_cad) > 0:
+                    return float(_cad) * _USD_PER_CAD
+    except Exception:
+        pass
+    return 0.0
+
+
 def _compute_live():
     try:
         from live_kernel import get_live_recommendation
@@ -86,7 +115,12 @@ def _compute_live():
                     if _nl:
                         _pos_mv = sum(float(p.get('market_value') or 0) for p in pos)
                         _cash = float(_nl) - _pos_mv
-            cash = _cash if _cash is not None else 100000
+            # Add the CAD reserve (USD-equiv) to deployable cash. The live strategy runs buffer:15000,
+            # where that buffer REPRESENTS the CAD collateral — so the reserve must be visible to the
+            # engine as cash, else the sweep recommends selling BOXX to raise idle USD (the operator
+            # holds the reserve in CAD). This keeps live == backtest: all USD swept to BOXX, CAD = buffer.
+            _cad_resv = _real_cad_reserve_usd()
+            cash = (_cash if _cash is not None else 100000) + _cad_resv
         data = get_live_recommendation(pos, cash=cash, spot=spot,
                                        kernel_key='regime_wheel_boxx_greeks_live')  # PROMOTED champion (greeks-managed)
         # EXECUTION ADVISOR: annotate each order with a manual-execution plan

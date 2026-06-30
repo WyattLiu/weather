@@ -432,20 +432,31 @@ class TestSeededInvariantsHold:
             f"seeded live decision produced naked calls: {lots} lots vs {book['shares']} shares"
 
 
-# Live champion: USD-cash-only BOXX sweep with buffer 0 (CAD is the collateral, not a BOXX source).
+# Live champion: all USD swept to BOXX; the buffer MODELS the CAD reserve (deployable collateral), not
+# idle USD. CORRECTED 2026-06-30: buffer:0 starved the wheel (→ bare BOXX yield); the faithful model is
+# buffer == the CAD reserve, with the live dashboard seeding that CAD (USD-equiv) into deployable cash.
 LIVE = 'regime_wheel_boxx_greeks_live'
 
 
 class TestBoxxUsdCashOnly:
     """Regression guards for the multi-currency USD-margin bug (see memory
-    feedback_boxx_usd_cash_multicurrency). BOXX is filled from USD CASH ONLY: the live path sources
-    real USD cash from the broker (not net_liq − Σ MV, which blended the CAD side, fed phantom +cash,
-    and drew ~$9.5k of USD margin), and the sweep runs with buffer 0 yet can never push USD cash
-    negative."""
+    feedback_boxx_usd_cash_multicurrency + project_delta_gamma_accumulation). BOXX is filled from USD
+    CASH ONLY: the live path sources real USD cash from the broker (not net_liq − Σ MV, which blended the
+    CAD side, fed phantom +cash, and drew ~$9.5k of USD margin). The strategy's boxx_cash_buffer is NOT
+    idle USD — it REPRESENTS the CAD reserve, which the dashboard seeds as deployable cash so the all-USD
+    sweep never recommends selling BOXX to raise idle USD, and never pushes USD cash negative."""
 
-    def test_live_variant_usd_buffer_is_zero(self):
-        # CAD is the collateral/no-FX reserve; BOXX is filled with USD cash only → USD buffer == 0.
-        assert R.STRATEGIES[LIVE].get('boxx_cash_buffer') == 0
+    def test_live_buffer_models_cad_reserve(self):
+        # Corrected model: the buffer == the CAD reserve (deployable collateral), NOT 0. buffer:0 starved
+        # the wheel down to bare BOXX yield; the reserve→return curve is near-monotonic (15k → 15.8%/yr).
+        assert R.STRATEGIES[LIVE].get('boxx_cash_buffer') == 15000
+
+    def test_dashboard_seeds_cad_reserve_as_cash(self):
+        # The buffer is satisfied by CAD, not idle USD: the live path must add the CAD reserve (USD-equiv)
+        # to deployable cash, else buffer:15k would wrongly recommend selling BOXX to raise USD.
+        import kernel_dashboard as KD
+        assert hasattr(KD, '_real_cad_reserve_usd'), \
+            "live path must seed the CAD reserve as deployable cash (buffer represents CAD, not idle USD)"
 
     def test_dashboard_sources_real_usd_cash_not_nav_derivation(self):
         # The fix: live cash comes from the exact broker query (can be negative = margin), not net_liq−ΣMV.

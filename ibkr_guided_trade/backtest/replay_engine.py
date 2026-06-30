@@ -3316,15 +3316,6 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             spot_boxx = float((row.get('BOXX') if (row.get('BOXX') == row.get('BOXX') and row.get('BOXX') is not None) else 117.0))
             if p.get('boxx'):
                 cash_buffer = p.get('boxx_cash_buffer', 20000)  # keep this much liquid
-                # CAD-collateral USD financing: in the real (multi-currency) account a put
-                # assignment draws a USD margin debit against parked CAD collateral rather than
-                # force-selling BOXX. Model that here so buffer:0 ("all USD swept to BOXX") reads
-                # the TRUE CAD-funded performance instead of the BOXX sell→rebuy churn ARTIFACT.
-                # Interest is charged on the debit so the leverage is not free. cad_fin=0 (the
-                # champion) leaves every path below byte-identical to the pre-financing engine.
-                cad_fin = p.get('cad_financing_usd', 0)
-                if cad_fin > 0 and s['cash'] < 0:
-                    s['cash'] -= (-s['cash']) * p.get('cad_financing_apr', 0.05) / 252.0
                 if p.get('boxx_sweep_full'):
                     # OOS fix: T-bills/BOXX ARE the put collateral (marginable), so don't
                     # double-reserve cash for puts — sweep idle cash above the buffer to
@@ -3354,16 +3345,6 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         if delta >= 10:
                             s['boxx'] += delta
                             s['cash'] -= delta * spot_boxx + delta * SPREAD_SHARE
-                elif cad_fin > 0:
-                    # CAD financing absorbs the cash dip down to -cad_fin (no BOXX churn). Only
-                    # when the CAD line is exhausted do we sell BOXX, and only enough to restore
-                    # cash to the -cad_fin floor — modelling the real account, which sells the box
-                    # ETF only as a last resort after the CAD margin reserve is fully drawn.
-                    if s['cash'] < -cad_fin - 1000 and s['boxx'] > 0:
-                        short = (-cad_fin) - s['cash']
-                        needed = min(s['boxx'], int(short / spot_boxx) + 10)
-                        s['boxx'] -= needed
-                        s['cash'] += needed * spot_boxx - needed * SPREAD_SHARE
                 elif excess < -1000 and s['boxx'] > 0:
                     # Need cash for puts — sell BOXX
                     needed = min(s['boxx'], int(abs(excess) / spot_boxx) + 10)
@@ -5684,14 +5665,17 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     'intraday_exec': False, 'real_chain_pricing': False,
     # LIVE multi-currency reality: the operator parks CAD as the collateral/margin reserve (for
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
-    # OPERATOR CHOICE: ALL-BOXX (buffer:0) + ITM put accumulation, CAD margin funds assignments.
-    # The low buffer:0 backtest Sharpe (1.37) is a USD-MODEL ARTIFACT: with no CAD in the model, the
-    # engine fakes assignment funding by CHURNING BOXX (sell→rebuy, paying the spread each cycle) — and
-    # THAT churn, not the BOXX holding, is the ~0.6 Sharpe drag. In the real account CAD margin funds
-    # assignments, BOXX is never sold, so there is no churn. The buffer:15k run (hold USD instead of
-    # churning BOXX) = Sharpe 2.0 — the correct proxy for the CAD-funded reality. So real all-BOXX Sharpe
-    # ≈ 2.0. Puts at +15% ITM (more share-like → less short-vol → higher Sharpe; buf15k proxy = 2.04).
-    'boxx_cash_buffer': 0,
+    # OPERATOR REALITY: all USD swept to BOXX + a ~CAD$20k (~US$15k) reserve held as collateral. That CAD
+    # reserve IS the deployable buffer — it funds put-sells, assignments, and share accumulation with no FX.
+    # CORRECTED MODEL (2026-06-30): buffer:0 was the WRONG model of this account — it represents an account
+    # with NO reserve at all, which DEGENERATES to bare BOXX yield (~5%/yr) because the wheel's opening buys
+    # are cash-gated (`s['cash']>5000`) and an all-USD-in-BOXX sweep starves them. The earlier "churn
+    # artifact" story was wrong: +28%/5yr ≈ BOXX's ~5% yield = the wheel simply never ran. The FAITHFUL
+    # model of "all-USD-in-BOXX + CAD reserve" is buffer:15000, where the $15k 'cash' STANDS IN for the CAD
+    # collateral (NOT idle USD — the operator still holds zero idle USD). This reads the true performance:
+    # +108% / 15.8%/yr / Sharpe 1.41 / MDD -17%. A CAD-financing engine model (sweep CAD to BOXX too, draw a
+    # margin debit) was tried and REJECTED — it left the opening buys starved and scored WORSE (4.6%/yr).
+    'boxx_cash_buffer': 15000,
     # FRONTIER CONFIG D (definitive walk-forward winner for the all-BOXX vehicle): ITM +15% puts +
     # the two VALIDATED tunes — cadence 14 (beat 21 on TRAIN+TEST+FULL) and slow glide cut_speed 0.3
     # (best Sharpe + worst-window). D = best Sharpe of all (TEST 2.54 / FULL 1.83, CAD-funded proxy),
@@ -5702,14 +5686,7 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # AND return 17.9%). The look-ahead bug had biased the optimum to 14 (faster = front-run storage);
     # on honest data slightly slower wins. cut 0.3 still best glide.
     'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15,
-    'z_target_cadence_days': 18, 'cut_speed': 0.3,
-    # CAD-funded reality, modelled honestly (2026-06-30): the operator parks ~CAD$20k (~US$15k) as
-    # collateral; assignments draw a USD margin debit against it instead of selling BOXX. cad_financing_usd
-    # lets the buffer:0 backtest reproduce that — no sell→rebuy churn — so the reported number is the TRUE
-    # ~18%/yr (Sharpe ~2.5), NOT the +28%/5.1% churn artifact the unfinanced buffer:0 used to print. The
-    # debit is charged 5%/yr (cad_financing_apr) so the leverage is not free. This decouples the LIVE
-    # recommendation (still all-BOXX, buffer:0) from the funding model — both now agree at ~18%.
-    'cad_financing_usd': 15000, 'cad_financing_apr': 0.05}
+    'z_target_cadence_days': 18, 'cut_speed': 0.3}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
