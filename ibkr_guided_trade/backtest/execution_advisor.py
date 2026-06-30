@@ -323,6 +323,7 @@ def plan_for_recs(recs, spot=None):
     """Annotate live engine recommendations with execution plans (options only)."""
     grid = load_grid()
     out = []
+    n_suppressed = 0
     for r in recs or []:
         rt = _RIGHT.get((r.get('right') or '').upper())
         K, dte = r.get('strike'), r.get('dte')
@@ -334,9 +335,17 @@ def plan_for_recs(recs, spot=None):
             plan = execution_plan(K, dte, rt, side, spot, grid=grid, expiry=r.get('expiry'))
             rr = {**r, 'exec_plan': plan}
             _reconcile_economics(rr, plan)   # model price vs REAL quote — accuracy guard
+            if (rr.get('reconcile') or {}).get('suppress'):
+                n_suppressed += 1            # stale-model fake TP (real close is a loss) — drop it
+                continue
             out.append(rr)
         except Exception as e:
             out.append({**r, 'exec_plan': {'error': repr(e)[:120]}})
+    if n_suppressed:
+        out.append({'action': (f"⛔ {n_suppressed} stale-model order(s) suppressed — the IV feed is frozen, "
+                               f"so those 'take-profits' are fake (real close = a loss). Trust real quotes; "
+                               f"refresh the options feed."),
+                    'info_only': True, 'suppressed_count': n_suppressed})
     return out
 
 
@@ -373,11 +382,20 @@ def _reconcile_economics(rec, plan):
             rc.update(model_buyback=mbb, model_pnl=round(mpnl, 0),
                       real_buyback=round(real_fill, 2), real_pnl=round(real_pnl, 0),
                       entry_prem=round(entry_prem, 2))
-            # ACCURACY ONLY — never advise deviating from the engine's decision. The engine
-            # emitted this order, so the backtest executed it; the operator must too (live =
-            # backtest). When the real fill differs materially from the model, report the REAL
-            # price so the order is FILLED accurately — not to suggest skipping or waiting.
-            if abs(real_fill - mbb) >= 0.03:
+            # STALE-FEED GUARD vs ACCURACY GUARD:
+            #  • If the quote is STALE *and* closing at the REAL price is a LOSS, the modeled
+            #    'take-profit' is a frozen-IV ARTIFACT, not a real decision (the engine priced off a
+            #    stale surface — root cause: IV feed frozen, see surface_stale_days). SUPPRESS it so the
+            #    operator is never told to fill a losing 'take-profit'. This is correcting bad INPUT
+            #    DATA, not second-guessing the strategy — the only sanctioned suppression.
+            #  • Otherwise (fresh quote, real profit), ACCURACY ONLY: report the real price to fill
+            #    accurately; never skip a valid decision (live = backtest).
+            if qstale >= 1 and real_pnl < 0:
+                rc['suppress'] = True
+                rc['flag'] = (f"⛔ SUPPRESSED — stale-model fake TP: closing at the real ${real_fill:.2f} "
+                              f"is a ${-real_pnl:,.0f} LOSS, not the modeled +${mpnl:,.0f}. IV feed is "
+                              f"{qstale}d stale — this order is a data artifact, not a profit.")
+            elif abs(real_fill - mbb) >= 0.03:
                 rc['flag'] = (f"EXECUTE at the real market: fill ≈${real_fill:.2f} "
                               f"(bid ${q['bid']:.2f}/ask ${q['ask']:.2f}); engine modeled ${mbb:.2f}. "
                               f"Realistic P&L +${real_pnl:,.0f}. This is a validated decision — fill it "
