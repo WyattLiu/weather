@@ -229,6 +229,19 @@ def precompute_factor_z(df):
     silently NaN-ing all trend signals (50d MA, 200d MA, uptrend)."""
     if 'UNG' in df.columns:
         df = df[df['UNG'].notna()].copy()
+    # LOOK-AHEAD FIX (cycle 20260630): the master_dataset merges EIA fundamentals on their REPORT-PERIOD
+    # date — weekly storage on the report-week FRIDAY, monthly prod/cons on the report month — but EIA
+    # RELEASES them later (storage Thursday ≈5 trading days after that Friday; monthly ≈1 month after).
+    # Without this shift, storage_surprise_z (the ONLY validated factor) front-ran each storage print by
+    # ~6 calendar days — pure look-ahead. Shift each series to its release so no signal uses data before
+    # it was public. Consistent for backtest AND live (the dataset is uniformly report-period-aligned);
+    # impact was small on the sealed TEST (config D 17.7→17.1%, Sharpe 2.54→2.38) but real in the spike.
+    for _lc in ('eia_storage_weekly', 'days_supply'):
+        if _lc in df.columns:
+            df[_lc] = df[_lc].shift(5)
+    for _lc in ('eia_production', 'eia_consumption'):
+        if _lc in df.columns:
+            df[_lc] = df[_lc].shift(21)
     if 'eia_storage_weekly' in df.columns:
         s = df['eia_storage_weekly']
         df['storage_z'] = ((s - s.rolling(252).mean()) / (s.rolling(252).std() + 1e-9))
