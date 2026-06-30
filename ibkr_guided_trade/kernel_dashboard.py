@@ -1868,10 +1868,19 @@ async function drawSOT(){
           (dc.headroom!=null?('<b style="color:#2e7d32">'+fmt(dc.headroom,0)+' headroom below</b>'):'gap '+fmt(dc.gap,0))+
           ' · regime '+dc.regime_strength+' vs '+dc.rs_min+
           ' · <b style="color:'+col+'">'+(dc.hedge_active?'HEDGE ACTIVE (trimming)':'hedge dormant')+'</b></div>'+
-          (dc.share_pct_nav!=null?('<div style="font-size:.82rem;color:var(--text-dim);margin-top:1px">exposure set by the share target — shares ≈ '+dc.share_pct_nav+'% NAV (regime posture); the ceiling is a one-sided risk cap, not a goal to reach</div>'):'')+
+          (dc.share_pct_nav!=null?('<div style="font-size:.82rem;color:var(--text-dim);margin-top:1px">target is net <b>DELTA</b> (≈ '+dc.share_pct_nav+'% NAV in share-equiv at this regime) — accumulated via the Δ+Γ method below, NOT a raw share count; the ceiling is a one-sided risk cap, not a goal</div>'):'')+
           (Math.abs(kold)>=1?('<div style="font-size:.84rem;margin-top:2px">true net Δ <b style="color:#58a6ff">'+fmt(dc.net_delta,0)+
             '</b> = '+fmt(gate,0)+' options+shares '+(kold<0?'−':'+')+' '+fmt(Math.abs(kold),0)+' KOLD hedge '+
             '<span class="sub">(inverse-ETF, now counted — was a blind spot)</span></div>'):'')+
+        // ── DELTA+GAMMA: book gamma vs the target-curve slope (the control "target shares" hides) ──
+        (dc.book_gamma!=null?('<div style="font-size:.84rem;margin-top:4px;border-top:1px solid var(--border,rgba(128,128,128,.2));padding-top:3px">'+
+          'Γ book gamma <b style="color:'+(dc.book_gamma<dc.target_gamma?'#e08a00':'#2e7d32')+'">'+fmt(dc.book_gamma,0)+'</b>'+
+          ' vs target <b>'+fmt(dc.target_gamma,0)+'</b> Δ/$1'+
+          (dc.gamma_mode?' <span class="sub">(Δ+Γ accumulation: puts carry the Γ budget, shares the rest)</span>':'')+
+          (dc.book_gamma<dc.target_gamma
+            ? '<div style="color:#e08a00;margin-top:1px">↳ OVER-negative by '+fmt(dc.target_gamma-dc.book_gamma,0)+': Δ collapses ~'+fmt(-dc.book_gamma,0)+'/$1 on a rally — far faster than the target curve shrinks (~'+fmt(-dc.target_gamma,0)+'/$1), so you slip below target on bounces. Dilute with shares, not more puts.</div>'
+            : '<div style="color:#2e7d32;margin-top:1px">↳ within the gamma budget — delta tracks the target curve as price moves.</div>')+
+          '</div>'):'')+
         '<div style="font-size:.82rem;color:var(--text-dim);border-left:2px solid '+col+';padding-left:10px;margin-top:4px">↳ '+dc.status+'</div>';
     }
     // ── PER-STRIKE CONCENTRATION: short clusters vs the gamma-cap (forward-only, so legacy

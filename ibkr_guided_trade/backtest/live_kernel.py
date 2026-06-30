@@ -688,6 +688,11 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
         'regime_strength': round(_rs, 2), 'rs_min': _rsmin, 'hedge_active': _active,
         'glide': 'one-sided trim ceiling — engine cuts Δ when ABOVE it in a bear regime; never adds Δ to reach it',
         'status': _dstatus,
+        # DELTA+GAMMA framing: the proper controls (not "target shares"). book gamma vs the target-curve
+        # slope (target_gamma_per_nav · NAV/spot). Over-negative gamma = delta collapses on rallies.
+        'book_gamma': round(greeks['now'].get('gamma', 0.0), 1),
+        'target_gamma': round(params.get('target_gamma_per_nav', 0.0) * nav / spot, 1),
+        'gamma_mode': bool(params.get('reaccum_delta_gamma')),
     }
 
     # ── PER-STRIKE CONCENTRATION — short-option clusters by strike×expiry vs the gamma-cap
