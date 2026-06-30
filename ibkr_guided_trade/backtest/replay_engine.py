@@ -5643,20 +5643,15 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     'intraday_exec': False, 'real_chain_pricing': False,
     # LIVE multi-currency reality: the operator parks CAD as the collateral/margin reserve (for
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
-    # USD-cash buffer: $15k. The Δ+γ accumulation is a puts+shares BLEND — the share leg needs USD to
-    # buy, so buffer:0 ("sweep every dollar to BOXX") churns against it and collapsed the walk-forward to
-    # 8.9% FULL. A modest buffer funds the share leg and restores the validated 20.4%. The real-USD-cash
-    # source (FetchTradingBalanceBuyingPower) still prevents any margin over-buy; this only sets how much
-    # USD to hold back before sweeping the rest to BOXX. (Pure-puts BOXX-preservation would need buffer:0
-    # but underperforms ~13% — the trade-off the operator chooses.)
-    'boxx_cash_buffer': 15000,
-    # DELTA+GAMMA TARGETED ACCUMULATION (the proper framing — not "target shares"). Accumulate to the
-    # net-delta target while steering book gamma toward the TARGET-DELTA-CURVE SLOPE (γ=-0.03·NAV/spot).
-    # Backtest TEST: 17.5% (vs pure shares 16.7%, pure puts ~13-16%) — the puts+shares blend earns its
-    # negative gamma. Higher return + keeps more BOXX (puts margin-financed); cost is lower Sharpe (1.76
-    # vs 2.01, bumpier). Short puts carry the gamma budget; shares carry the rest.
-    'reaccum_delta_gamma': True, 'target_gamma_per_nav': -0.03,
-    'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
+    # OPERATOR CHOICE: ALL-BOXX (buffer:0, CAD is the buffer) + PURE slightly-ITM PUT accumulation.
+    # The Δ+γ puts+shares blend backtests higher (20.4% FULL) but its share leg needs a USD buffer, which
+    # conflicts with all-BOXX (buffer:0 churns it to 8.9%). So the live kernel keeps EVERY dollar of BOXX
+    # and accumulates via ITM puts ONLY — no share leg, so no buffer churn. Backtest ~13% (below shares'
+    # 16.7%), but that is partly a USD-MODEL ARTIFACT: the model can't represent CAD-financed puts, and
+    # the standalone puts run is ~16%. Slightly-ITM (+5%) 30d puts = buy-shares-sell-call by parity,
+    # margin-financed against CAD, BOXX fully preserved. Real-USD-cash source still blocks margin over-buy.
+    'boxx_cash_buffer': 0,
+    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
