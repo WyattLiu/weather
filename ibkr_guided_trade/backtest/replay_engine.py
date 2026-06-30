@@ -5660,7 +5660,14 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # churning BOXX) = Sharpe 2.0 — the correct proxy for the CAD-funded reality. So real all-BOXX Sharpe
     # ≈ 2.0. Puts at +15% ITM (more share-like → less short-vol → higher Sharpe; buf15k proxy = 2.04).
     'boxx_cash_buffer': 0,
-    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15}
+    # FRONTIER CONFIG D (definitive walk-forward winner for the all-BOXX vehicle): ITM +15% puts +
+    # the two VALIDATED tunes — cadence 14 (beat 21 on TRAIN+TEST+FULL) and slow glide cut_speed 0.3
+    # (best Sharpe + worst-window). D = best Sharpe of all (TEST 2.54 / FULL 1.83, CAD-funded proxy),
+    # keeps BOXX. Honest caveat: weaker in a spike (worst-12mo +4.6% — puts can't load fast enough for a
+    # 2022-style run; shares-cfg C is more spike-robust at the cost of selling BOXX). Gamma-targeting,
+    # the continuous window, and the puts+shares blend all FAILED the rolling worst-window — simple wins.
+    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15,
+    'z_target_cadence_days': 14, 'cut_speed': 0.3}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
