@@ -5643,9 +5643,13 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     'intraday_exec': False, 'real_chain_pricing': False,
     # LIVE multi-currency reality: the operator parks CAD as the collateral/margin reserve (for
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
-    # against the CAD. So the USD-cash buffer is 0 (CAD is the buffer): sweep positive USD cash to
-    # BOXX, but with real (possibly-negative) USD cash fed in, the sweep can NEVER buy into margin.
-    'boxx_cash_buffer': 0,
+    # USD-cash buffer: $15k. The Δ+γ accumulation is a puts+shares BLEND — the share leg needs USD to
+    # buy, so buffer:0 ("sweep every dollar to BOXX") churns against it and collapsed the walk-forward to
+    # 8.9% FULL. A modest buffer funds the share leg and restores the validated 20.4%. The real-USD-cash
+    # source (FetchTradingBalanceBuyingPower) still prevents any margin over-buy; this only sets how much
+    # USD to hold back before sweeping the rest to BOXX. (Pure-puts BOXX-preservation would need buffer:0
+    # but underperforms ~13% — the trade-off the operator chooses.)
+    'boxx_cash_buffer': 15000,
     # DELTA+GAMMA TARGETED ACCUMULATION (the proper framing — not "target shares"). Accumulate to the
     # net-delta target while steering book gamma toward the TARGET-DELTA-CURVE SLOPE (γ=-0.03·NAV/spot).
     # Backtest TEST: 17.5% (vs pure shares 16.7%, pure puts ~13-16%) — the puts+shares blend earns its
