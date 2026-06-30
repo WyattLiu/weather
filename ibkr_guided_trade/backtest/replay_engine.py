@@ -5679,8 +5679,11 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # keeps BOXX. Honest caveat: weaker in a spike (worst-12mo +4.6% — puts can't load fast enough for a
     # 2022-style run; shares-cfg C is more spike-robust at the cost of selling BOXX). Gamma-targeting,
     # the continuous window, and the puts+shares blend all FAILED the rolling worst-window — simple wins.
+    # cadence 18 (fine-tuned on LAG-CORRECTED data — beats cadence 14 on Sharpe 2.48, worst-12mo 7.4%,
+    # AND return 17.9%). The look-ahead bug had biased the optimum to 14 (faster = front-run storage);
+    # on honest data slightly slower wins. cut 0.3 still best glide.
     'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15,
-    'z_target_cadence_days': 14, 'cut_speed': 0.3}
+    'z_target_cadence_days': 18, 'cut_speed': 0.3}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
