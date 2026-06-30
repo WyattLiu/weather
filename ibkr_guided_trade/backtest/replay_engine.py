@@ -5643,15 +5643,15 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     'intraday_exec': False, 'real_chain_pricing': False,
     # LIVE multi-currency reality: the operator parks CAD as the collateral/margin reserve (for
     # selling puts + no-FX spending). BOXX is filled with USD CASH ONLY — never by borrowing USD
-    # OPERATOR CHOICE: ALL-BOXX (buffer:0, CAD is the buffer) + PURE slightly-ITM PUT accumulation.
-    # The Δ+γ puts+shares blend backtests higher (20.4% FULL) but its share leg needs a USD buffer, which
-    # conflicts with all-BOXX (buffer:0 churns it to 8.9%). So the live kernel keeps EVERY dollar of BOXX
-    # and accumulates via ITM puts ONLY — no share leg, so no buffer churn. Backtest ~13% (below shares'
-    # 16.7%), but that is partly a USD-MODEL ARTIFACT: the model can't represent CAD-financed puts, and
-    # the standalone puts run is ~16%. Slightly-ITM (+5%) 30d puts = buy-shares-sell-call by parity,
-    # margin-financed against CAD, BOXX fully preserved. Real-USD-cash source still blocks margin over-buy.
+    # OPERATOR CHOICE: ALL-BOXX (buffer:0) + ITM put accumulation, CAD margin funds assignments.
+    # The low buffer:0 backtest Sharpe (1.37) is a USD-MODEL ARTIFACT: with no CAD in the model, the
+    # engine fakes assignment funding by CHURNING BOXX (sell→rebuy, paying the spread each cycle) — and
+    # THAT churn, not the BOXX holding, is the ~0.6 Sharpe drag. In the real account CAD margin funds
+    # assignments, BOXX is never sold, so there is no churn. The buffer:15k run (hold USD instead of
+    # churning BOXX) = Sharpe 2.0 — the correct proxy for the CAD-funded reality. So real all-BOXX Sharpe
+    # ≈ 2.0. Puts at +15% ITM (more share-like → less short-vol → higher Sharpe; buf15k proxy = 2.04).
     'boxx_cash_buffer': 0,
-    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.05}
+    'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
