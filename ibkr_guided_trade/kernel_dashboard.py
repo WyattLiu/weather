@@ -825,6 +825,9 @@ td.neutral { color: var(--blue); }
     </div>
   </div>
 
+  <!-- R1: data-pipeline health banner (hidden when GREEN; shows stale/RED feeds from the watchdog) -->
+  <div id="pipeline-health-banner" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;font-weight:600;color:#fff;"></div>
+
   <!-- Top summary cards -->
   <div class="summary-row">
     <div class="card">
@@ -2092,6 +2095,21 @@ async function drawSpyVega(){
 }
 drawSpyVega();
 setInterval(drawSpyVega, 600000); // 10 min
+
+// R1: surface the data-pipeline health status (from the 15-min watchdog) — banner only on WARN/RED.
+async function drawPipelineHealth(){
+  try{
+    const h = await (await fetch('/api/pipeline_health')).json();
+    const el = document.getElementById('pipeline-health-banner'); if(!el) return;
+    const v = (h.verdict||'UNKNOWN');
+    if(v==='GREEN'){ el.style.display='none'; return; }
+    el.style.background = {WARN:'#b8860b',RED:'#c0392b'}[v] || '#555';
+    el.style.display='block';
+    el.textContent = '🩺 DATA PIPELINE '+v+' — '+((h.issues||[]).slice(0,3).join('  ·  ')||'see watchdog log');
+  }catch(e){}
+}
+drawPipelineHealth();
+setInterval(drawPipelineHealth, 300000); // 5 min
 
 // ── SCRATCH NOISE PANELS — keep only the genuinely useful ones ──
 (function scrubNoise(){
