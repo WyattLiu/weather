@@ -242,6 +242,14 @@ def precompute_factor_z(df):
     for _lc in ('eia_production', 'eia_consumption'):
         if _lc in df.columns:
             df[_lc] = df[_lc].shift(21)
+    # LNG export demand signal — ORTHOGONAL to storage (structural demand-side; signal-eval 2026-07:
+    # IC +0.14 vs fwd-63d, +9-18pp Q5-Q1 spread). Release-lagged (~21 trading days, EIA monthly) then a
+    # 252d z-score; positive = high exports = bullish. Folded into z ONLY when lng_z_weight>0 (default off,
+    # champion byte-identical). The prior "adding factors dilutes" finding was for days_supply/ng_trend/rv30,
+    # NOT for LNG — this is the one untested orthogonal fundamental.
+    if 'eia_lng_exports' in df.columns:
+        _lng = df['eia_lng_exports'].shift(21)
+        df['lng_export_z'] = (_lng - _lng.rolling(252).mean()) / (_lng.rolling(252).std() + 1e-9)
     if 'eia_storage_weekly' in df.columns:
         s = df['eia_storage_weekly']
         df['storage_z'] = ((s - s.rolling(252).mean()) / (s.rolling(252).std() + 1e-9))
