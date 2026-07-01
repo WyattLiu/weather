@@ -65,13 +65,20 @@ def process(args):
     rows = [(dt, exp, float(strike), right, int(oi)) for dt, oi in fetch_oi(exp, strike, right, d0, d1)]
     if not rows:
         return 0
-    conn = psycopg2.connect(**DB); cur = conn.cursor()
-    execute_values(cur, """INSERT INTO spy_options_oi
-        (trade_date, expiration, strike, option_right, open_interest)
-        VALUES %s ON CONFLICT (trade_date, expiration, strike, option_right)
-        DO UPDATE SET open_interest=EXCLUDED.open_interest""", rows)
-    conn.commit(); n = cur.rowcount; conn.close()
-    return n
+    # try/finally so the connection is ALWAYS released — previously any exception in execute_values/commit
+    # skipped conn.close(), and over thousands of parallel contracts the leaked connections exhausted PG
+    # ("sorry, too many clients already"), silently forcing real_chain fills to the model (2026-07 incident).
+    conn = psycopg2.connect(**DB)
+    try:
+        cur = conn.cursor()
+        execute_values(cur, """INSERT INTO spy_options_oi
+            (trade_date, expiration, strike, option_right, open_interest)
+            VALUES %s ON CONFLICT (trade_date, expiration, strike, option_right)
+            DO UPDATE SET open_interest=EXCLUDED.open_interest""", rows)
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
 
 
 def main(workers=2):

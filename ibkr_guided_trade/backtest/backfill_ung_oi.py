@@ -78,13 +78,19 @@ def process(args):
             for dt, oi in fetch_oi(exp, strike, right, d0, d1)]
     if not rows:
         return 0
-    conn = psycopg2.connect(**DB); cur = conn.cursor()
-    execute_values(cur, """INSERT INTO ung_options_oi
-        (trade_date, expiration, strike, option_right, open_interest)
-        VALUES %s ON CONFLICT (trade_date, expiration, strike, option_right)
-        DO UPDATE SET open_interest=EXCLUDED.open_interest""", rows)
-    conn.commit(); n = cur.rowcount; conn.close()
-    return n
+    # try/finally: ALWAYS release the connection (same per-contract leak class as spy_oi — an exception
+    # in execute_values/commit skipped conn.close(), exhausting PG under parallel workers).
+    conn = psycopg2.connect(**DB)
+    try:
+        cur = conn.cursor()
+        execute_values(cur, """INSERT INTO ung_options_oi
+            (trade_date, expiration, strike, option_right, open_interest)
+            VALUES %s ON CONFLICT (trade_date, expiration, strike, option_right)
+            DO UPDATE SET open_interest=EXCLUDED.open_interest""", rows)
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
 
 
 def main(workers=6):
