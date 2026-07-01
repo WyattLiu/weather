@@ -104,3 +104,40 @@ def test_storage_print_not_visible_before_1030_et():
     assert decide_1031 >= rel, "storage should be visible after 10:30 ET"
     # and a decision the day BEFORE never sees it
     assert dt.datetime(2026, 7, 1, 16, 0, tzinfo=ET) < rel
+
+
+# ── FiC: intraday event-moment spot reconstruction (feeds the minute-reactive engine) ──
+def test_intraday_event_spot_is_reliable_and_causal():
+    """The minute-reactive engine reacts at the 10:30 print using the UNG spot AT THAT MINUTE. PG has no
+    intraday UNG spot, so intraday_spot.reconstruct_spot() recovers it from near-ATM put-call parity. This
+    asserts two things the reactive path depends on:
+      (1) FIDELITY — near-ATM strikes AGREE (cross-strike rel_std small), so the number is a real price;
+      (2) CAUSALITY — a spot stamped 10:30 is a strict function of the 10:30 tape: it is deterministic and,
+          on a day that moved, DIFFERS from the 16:00 reconstruction (never front-runs the close).
+    Skips (does not fail) when PG/minute data is unavailable so the suite stays green offline."""
+    import datetime as dt
+    import intraday_spot as I
+    conn = I._connect()
+    if conn is None:
+        import pytest
+        pytest.skip("PG unavailable — intraday reconstruction not testable offline")
+    try:
+        day = dt.date(2024, 6, 20)                      # a storage-release Thursday with full minute coverage
+        r1030a = I.reconstruct_spot(day, dt.time(10, 30), conn)
+        r1030b = I.reconstruct_spot(day, dt.time(10, 30), conn)
+        r1600 = I.reconstruct_spot(day, dt.time(16, 0), conn)
+        if r1030a is None:
+            import pytest
+            pytest.skip("no minute quotes for the sample day — cannot test reconstruction")
+        # (1) reliability: strikes agree to well under 2% of spot
+        assert r1030a['rel_std'] is not None and r1030a['rel_std'] < 0.02, \
+            f"intraday reconstruction unreliable: rel_std={r1030a['rel_std']} (strikes disagree → not a price)"
+        assert r1030a['n'] >= 3, "too few strikes to trust the reconstruction"
+        # (2a) determinism: same minute → identical spot (pure function of that minute's quotes)
+        assert abs(r1030a['spot'] - r1030b['spot']) < 1e-9, "reconstruction is not deterministic on its minute"
+        # (2b) event-exactness: the 10:30 value is NOT the 16:00 value on a day the tape moved → no EOD leak
+        if r1600 is not None:
+            assert abs(r1030a['spot'] - r1600['spot']) > 1e-6, \
+                "10:30 and 16:00 reconstructions are identical — reconstruction is not minute-specific (leak risk)"
+    finally:
+        conn.close()
