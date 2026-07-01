@@ -918,6 +918,19 @@ def exec_fill(idx, K, dte, right, side, spot, p, model_price):
                 return a['price'], a
         except Exception:
             pass
+    # REAL HISTORICAL CHAIN (PG bid/ask) — the accurate fill when available. The BS model
+    # SYSTEMATICALLY under-prices put buybacks (diag 2026-07: model $2.55 vs real ask $2.88, too cheap
+    # 75% of the time by ~$0.33/sh), which overstated take-profit P&L AND over-triggered TPs. When
+    # use_real_chain_fills is set, price every fill at the real expected-fill (mid→touch) from PG,
+    # falling back to the BS model only off-grid (no data / pre-2021). Default off = byte-identical.
+    if p.get('use_real_chain_fills'):
+        try:
+            rc = real_chain_price(idx, K, dte, right, spot, side=side)
+            if rc and rc > 0:
+                return float(rc), {'price': round(float(rc), 4), 'exec_time': eod_str,
+                                   'bid': None, 'ask': None, 'spread_pct': None, 'source': 'real_chain'}
+        except Exception:
+            pass
     # EOD-real fill RETIRED (we never execute EOD). Gap fallback = BS model only.
     return model_price, {'price': round(model_price, 4), 'exec_time': eod_str,
                          'bid': None, 'ask': None, 'spread_pct': None, 'source': 'model'}
@@ -5706,7 +5719,13 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # cash beat sitting in cash in every regime; the anti-trap machinery (bearish_cut + falling_knife + TP)
     # keeps drawdown regime-capped. Revert to 0.3 if you prefer risk-adjusted quality over ~+1.3pp/yr.
     'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15,
-    'z_target_cadence_days': 18, 'cut_speed': 0.5}
+    'z_target_cadence_days': 18, 'cut_speed': 0.5,
+    # HONEST FILLS (2026-07): price every option fill at the REAL PG bid/ask, not the BS model. The model
+    # systematically under-priced put buybacks ($2.55 vs real $2.88, too cheap 75% of the time) which
+    # OVERSTATED take-profit P&L and over-triggered TPs. Corrected number: FULL 20.4/1.70 -> 18.4/1.55,
+    # TEST 16.4 -> 11.2 (recent low-vol regime relied most on the inflated buybacks). Off-grid (pre-2021 /
+    # today's not-yet-ingested bar) falls back to the model; the live reconcile still corrects today's bar.
+    'use_real_chain_fills': True}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
