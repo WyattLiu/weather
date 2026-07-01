@@ -135,7 +135,7 @@ def book_greeks_stat(s, spot, z, a=-0.000797, b=-0.000009, sig=0.0390):
     return nd
 
 
-def compute_historical_z(row, use_surprise=False):
+def compute_historical_z(row, use_surprise=False, lng_weight=0.0):
     """Composite z-score (CLEANED 20260603).
 
     Honest finding: of 5 candidate factors, only storage_surprise_z has
@@ -166,6 +166,12 @@ def compute_historical_z(row, use_surprise=False):
     # Other fundamental signals NOT in z directly (would dilute) but used
     # via compute_fundamental_health() for sizing modulation + dashboard.
     # See [[project_z_audit]].
+
+    # OPTIONAL orthogonal LNG-export demand tilt (default off; lng_z_weight>0 to enable). Positive
+    # lng_export_z = high exports = bullish → adds to the (bullish-positive) z. Weighted-averaged in.
+    if lng_weight and 'lng_export_z' in row and not pd.isna(row.get('lng_export_z')):
+        z_components.append(float(row['lng_export_z']))
+        weights.append(float(lng_weight))
 
     if not z_components:
         return 0.0
@@ -1028,7 +1034,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             return iv_for_quote(row, K, spot_u, dte, right)
         # Per-day IV shape features (term + skew). None if no surface coverage.
         iv_shape = iv_shape_features(iv_surface, d_str, spot_u) if iv_surface else None
-        z = compute_historical_z(row, use_surprise=use_surprise)
+        z = compute_historical_z(row, use_surprise=use_surprise, lng_weight=p.get('lng_z_weight', 0.0))
         # DD-aware risk dial — generic protection against any adverse
         # regime (sharp crash or slow decline). Track NAV peak; if
         # current NAV is significantly below peak, scale down all sizing.
@@ -1776,7 +1782,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             _nd, _ng = book_greeks(s, spot_u, iv_at)
             if p.get('stat_delta_hedge'):
                 # GAMMA→DELTA: hedge the statistical FORWARD delta (real drift), not BS instantaneous.
-                _z_sd = compute_historical_z(row, use_surprise=p.get('use_surprise', False))
+                _z_sd = compute_historical_z(row, use_surprise=p.get('use_surprise', False), lng_weight=p.get('lng_z_weight', 0.0))
                 _nd = book_greeks_stat(s, spot_u, _z_sd, p.get('scenario_mu_a', -0.000797),
                                        p.get('scenario_mu_b', -0.000009), p.get('scenario_sigma', 0.0390))
             _rsd = row.get('regime_strength'); _rsd = _rsd if (_rsd == _rsd and _rsd is not None) else 0.0
@@ -2890,7 +2896,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                                 # (Σ P(assign|z,dte)·qty·100) to a fraction of NAV-equiv shares.
                                 # Probability-weighted + DTE-aware → tightens in bearish-z / long-dte,
                                 # loosens in calm-z / short-dte. Replaces the flat notional cap.
-                                _z = compute_historical_z(row, use_surprise=p.get('use_surprise', False))
+                                _z = compute_historical_z(row, use_surprise=p.get('use_surprise', False), lng_weight=p.get('lng_z_weight', 0.0))
                                 _A = p.get('scenario_mu_a', -0.001205)
                                 _B = p.get('scenario_mu_b', -0.000112)
                                 _Sg = p.get('scenario_sigma', 0.04066)
