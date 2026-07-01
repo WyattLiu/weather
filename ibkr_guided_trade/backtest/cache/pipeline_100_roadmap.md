@@ -2,12 +2,12 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 70/100
-  · data-correctness      17/20
+CURRENT SCORE: 75/100
+  · data-correctness      18/20
   · refresh/monitoring    18/20
   · fill-fidelity         14/20
   · live==backtest parity 13/20
-  · FIDELITY (no-leak + minute accuracy)  8/20   <-- NEW gating criterion (raised the bar; see below)
+  · FIDELITY (no-leak + minute accuracy)  12/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
 - Do ONE `[ ] AUTO` item per fire: implement → validate (safety suite `pytest backtest/test_engine_safety.py
@@ -23,12 +23,13 @@ Rules for the cron worker:
   release datetime. Minute-level execution fidelity (real bid/ask path). NEVER leak the future.
 
 ## ============ FIDELITY: NO-LEAK + MINUTE ACCURACY (8 → 20) — THE GATE ============
-- [ ] AUTO  Fi1  NO-LOOK-AHEAD ASSERTION TEST (test_no_lookahead.py, add to safety suite): for each series,
+- [x] DONE Fi1  NO-LOOK-AHEAD ASSERTION TEST (test_no_lookahead.py, add to safety suite): for each series,
        assert its value is never used before its real release timestamp — storage effective only >= Thu
        10:30 ET of release week (daily proxy: .shift(5) verified correct), monthly only >= its release date.
        Fails the build if any signal front-runs a print. This is the no-leak backbone; earn it first. (+4)
-- [ ] AUTO  Fi4  Make minute-path execution the DEFAULT where data exists (intraday_exec / real minute
-       bid/ask via intraday_fill), model fallback only off-grid — so backtest fills == live fills. (+2)
+- [!] PROJECT Fi4  (was AUTO; reclassified 2026-07-01) Minute-path execution default — EVAL showed it is
+       too slow standalone (>200s/backtest) AND only consistent once decisions are minute-reactive. Folded
+       into the Fi2/Fi3 minute-reactive project. Daily backtest correctly stays on real_chain EOD fills. (+2)
 - [!] PROJECT Fi2  EVENT-EXACT release placement at MINUTE granularity: storage value becomes visible at the
        exact 10:30 ET print (not day-open), monthly at exact release datetime; timestamp-gate all series. (+3)
 - [!] PROJECT Fi3  MINUTE-REACTIVE decision loop on event/exec windows (react to the real post-print minute
@@ -47,7 +48,7 @@ Rules for the cron worker:
 - [ ] AUTO  F3  Route CALL_GAMMA_CLOSE through exec_fill; extend reconcile to SELL opens + roll legs. (+2)
 
 ## ============ DATA CORRECTNESS (17 → 20) ============
-- [ ] AUTO  D2  EIA monthly release lag: `.shift(21)` under-lags EIA-914 (~2mo). Fix to ~`.shift(42)` (or
+- [x] DONE D2  EIA monthly release lag: `.shift(21)` under-lags EIA-914 (~2mo). Fix to ~`.shift(42)` (or
        index by release date). Re-validate champion unchanged. (Overlaps Fi1's monthly assertion.) (+1)
 - [ ] AUTO  D4  Health check: staleness by LAST-CHANGE not last-row (carried-forward EIA masks a freeze). (+1)
 - [ ] AUTO  D3  Remove/populate dead columns (ng_ma200/ng_trend all-NaN, iv_*d proxy, dead COT fetch). (+1)

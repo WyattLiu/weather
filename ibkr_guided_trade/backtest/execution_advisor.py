@@ -335,17 +335,21 @@ def plan_for_recs(recs, spot=None):
             plan = execution_plan(K, dte, rt, side, spot, grid=grid, expiry=r.get('expiry'))
             rr = {**r, 'exec_plan': plan}
             _reconcile_economics(rr, plan)   # model price vs REAL quote — accuracy guard
+            # P4 ACCURACY-ONLY (2026-07): NEVER drop an order based on feed state. Dropping made the live
+            # order SET flicker (orders appearing/disappearing between pulls — the operator's "inconsistent
+            # suggestions"). Keep every order in the set (deterministic); just FLAG a stale-model fake-TP
+            # inline so the operator sees "don't fill" without the set changing.
             if (rr.get('reconcile') or {}).get('suppress'):
-                n_suppressed += 1            # stale-model fake TP (real close is a loss) — drop it
-                continue
+                n_suppressed += 1
+                rr['flag'] = "⛔ STALE-MODEL — real close is a loss; do NOT fill (options IV feed frozen)"
+                rr['stale_warning'] = True
             out.append(rr)
         except Exception as e:
             out.append({**r, 'exec_plan': {'error': repr(e)[:120]}})
     if n_suppressed:
-        out.append({'action': (f"⛔ {n_suppressed} stale-model order(s) suppressed — the IV feed is frozen, "
-                               f"so those 'take-profits' are fake (real close = a loss). Trust real quotes; "
-                               f"refresh the options feed."),
-                    'info_only': True, 'suppressed_count': n_suppressed})
+        out.append({'action': (f"⚠ {n_suppressed} order(s) FLAGGED stale-model (real close = a loss) — kept in "
+                               f"the list but marked do-not-fill. Trust real quotes; refresh the options feed."),
+                    'info_only': True, 'flagged_count': n_suppressed})
     return out
 
 
