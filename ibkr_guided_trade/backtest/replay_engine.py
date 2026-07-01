@@ -1322,6 +1322,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         mult *= 0.8
                     elif _ivr < 0.2:
                         mult *= 1.3
+            # MEAN-REVERSION ACCUM TIMER (2026-07): UNG mean-reverts (momentum LOSES). Time the
+            # accumulation to the reversion — boost when price is OVERSOLD vs its 252d mean, trim when
+            # overbought. Orthogonal-ish to storage_z (price vs fundamentals). Clamped; default off.
+            if p.get('mr_accum_scale'):
+                _m = row.get('ung_252d_mean'); _sd = row.get('ung_252d_std')
+                if _m and _sd and _sd > 0:
+                    _pz = (spot_u - _m) / _sd
+                    mult *= max(0.5, min(1.6, 1.0 - p.get('mr_accum_scale') * _pz))
             # GEN-9 CONVICTION AMPLIFIER (return lever): when BOTH signals
             # scream — extreme-cheap z AND bottom-quintile IV-rank (the
             # validated +23% fwd-63d zone) — size the share book UP harder.
