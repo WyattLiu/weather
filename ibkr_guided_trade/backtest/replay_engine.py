@@ -935,9 +935,20 @@ def exec_fill(idx, K, dte, right, side, spot, p, model_price):
                                    'bid': None, 'ask': None, 'spread_pct': None, 'source': 'real_chain'}
         except Exception:
             pass
-    # EOD-real fill RETIRED (we never execute EOD). Gap fallback = BS model only.
-    return model_price, {'price': round(model_price, 4), 'exec_time': eod_str,
-                         'bid': None, 'ask': None, 'spread_pct': None, 'source': 'model'}
+    # EOD-real fill RETIRED. Gap fallback = BS model. F2 (2026-07): remove the open/close asymmetry on this
+    # fallback path. Opens received a fill_factor haircut (ff*mid, sold near bid); a fallback BUYBACK at raw
+    # model mid was therefore optimistically cheap (the "$2.55 vs $2.88" bias, on off-grid bars real_chain
+    # can't cover). Mark buy-to-close UP by the same ff so a round trip costs a realistic proportional
+    # spread. Buy-side only — opens apply their own fill_factor inline (marking sells here would double it).
+    px = model_price
+    if p.get('real_fill_model') and side == 'buy':
+        try:
+            px = model_price * (2.0 - fill_factor(right, dte, abs(1 - K / spot) if spot else 0.0))
+        except Exception:
+            px = model_price
+    return px, {'price': round(px, 4), 'exec_time': eod_str,
+                'bid': None, 'ask': None, 'spread_pct': None,
+                'source': 'model_ff' if px != model_price else 'model'}
 
 
 def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=6200,
