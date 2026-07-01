@@ -70,3 +70,37 @@ def test_storage_signal_is_causal():
     if len(both):
         assert (both.iloc[:, 0] - both.iloc[:, 1]).abs().max() < 1e-6, \
             "storage_surprise_z on past dates CHANGED when future storage was blinded — LOOK-AHEAD"
+
+
+# ── FiA: release_calendar unit tests ──────────────────────────────────────────
+def test_storage_release_is_following_thursday_1030():
+    import datetime as dt
+    from release_calendar import storage_release_ts, ET
+    # week ending Fri 2026-06-26 → released Thu 2026-07-02 10:30 ET
+    r = storage_release_ts(dt.date(2026, 6, 26))
+    assert r == dt.datetime(2026, 7, 2, 10, 30, tzinfo=ET), r
+    assert r.weekday() == 3 and r.hour == 10 and r.minute == 30
+
+
+def test_monthly_release_is_end_of_month_plus_2():
+    import datetime as dt
+    from release_calendar import monthly_release_ts
+    # reference month April 2026 → released ~end of June 2026 (last business day)
+    r = monthly_release_ts(dt.date(2026, 4, 15))
+    assert r.year == 2026 and r.month == 6 and r.weekday() < 5, r
+    assert r >= dt.datetime(2026, 6, 25, tzinfo=r.tzinfo)   # near month-end
+
+
+# ── FiB: EVENT-EXACT no-leak assertion ────────────────────────────────────────
+def test_storage_print_not_visible_before_1030_et():
+    """A decision timestamped 10:29 ET on the release Thursday must NOT see that day's storage number;
+    at 10:30 it may. This is the event-exact gate the minute-reactive engine (FiC) must honor."""
+    import datetime as dt
+    from release_calendar import storage_release_ts, ET
+    rel = storage_release_ts(dt.date(2026, 6, 26))          # Thu 2026-07-02 10:30 ET
+    decide_1029 = dt.datetime(2026, 7, 2, 10, 29, tzinfo=ET)
+    decide_1031 = dt.datetime(2026, 7, 2, 10, 31, tzinfo=ET)
+    assert decide_1029 < rel, "LEAK: storage visible before its 10:30 ET print"
+    assert decide_1031 >= rel, "storage should be visible after 10:30 ET"
+    # and a decision the day BEFORE never sees it
+    assert dt.datetime(2026, 7, 1, 16, 0, tzinfo=ET) < rel
