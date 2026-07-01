@@ -981,6 +981,23 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
     # BOTH sharp crashes (2021-12 → 2022-02) AND slow declines (2023-2026).
     nav_peak = float(initial_cash + initial_shares * (df['UNG'].iloc[0] if len(df) else 1))
 
+    # ── FiC minute-reactive events (param-gated; default OFF = champion byte-identical) ──
+    # When reactive_events is on, on EIA storage-release Thursdays the day's decision is made "as of the
+    # 10:30 ET print" using the intraday event-moment spot (put-call-parity reconstruction) instead of the
+    # 16:00 EOD spot. NO-LEAK: the 10:30 spot is public at 10:30 and is EARLIER than EOD (strictly less
+    # information), so it can never front-run anything. Dates without reliable minute data fall back to the
+    # daily spot (non-reactive). Precomputed once here so the day loop never touches PG.
+    reactive_events = p.get('reactive_events', False)
+    _event_spots = {}
+    if reactive_events:
+        try:
+            import intraday_spot
+            _thu = [pd.Timestamp(df.index[i]).date() for i in range(len(df))
+                    if pd.Timestamp(df.index[i]).weekday() == 3]      # Thursday = storage release day
+            _event_spots = intraday_spot.event_spot_map(_thu)
+        except Exception:
+            _event_spots = {}                                          # any failure → non-reactive, never a leak
+
     _last_i = len(df) - 1
     for i in range(len(df) if live_decision else len(df) - 30):
         idx = df.index[i]
@@ -988,6 +1005,13 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
         spot_u = row.get('UNG', 0)
         if spot_u <= 0:
             continue
+        # FiC: on storage-release Thursdays, decide as of the 10:30 ET print (intraday event spot) when
+        # reactive_events is on and a reliable reconstruction exists. Guarded so the champion (flag off)
+        # is byte-identical; earlier-than-EOD spot → strictly no look-ahead.
+        if reactive_events and _event_spots:
+            _ev = _event_spots.get(pd.Timestamp(idx).date())
+            if _ev is not None and _ev > 0:
+                spot_u = _ev
         # TEST-ONLY (default off): snapshot the start-of-day book so a live-decision run can be
         # seeded with the continuous backtest's own state and proven to reproduce that day's
         # trades (live == backtest equivalence test). Zero impact when _CAPTURE_STATES is False.

@@ -85,3 +85,29 @@ def _connect():
         return psycopg2.connect(**DB_PARAMS, connect_timeout=6)
     except Exception:
         return None
+
+
+def event_spot_map(dates, at_time='10:30', max_rel_std=0.02):
+    """Batch-reconstruct the intraday event-moment spot for many `dates` in ONE connection (so the
+    reactive engine can precompute before its day loop instead of hitting PG per-day).
+
+    Returns {date: spot} containing ONLY dates where the reconstruction succeeded AND is reliable
+    (rel_std <= max_rel_std — strikes agree). Dates without minute data / with scattered strikes are
+    omitted, so the caller cleanly falls back to the daily spot (non-reactive, never a leak). Empty
+    dict when PG is unavailable. Each value is a strict function of `at_time`'s quotes — causal."""
+    if isinstance(at_time, str):
+        h, m = at_time.split(':')[:2]
+        at_time = dt.time(int(h), int(m))
+    conn = _connect()
+    if conn is None:
+        return {}
+    out = {}
+    try:
+        for d in dates:
+            dd = d.date() if isinstance(d, dt.datetime) else d
+            r = reconstruct_spot(dd, at_time, conn)
+            if r and r.get('rel_std') is not None and r['rel_std'] <= max_rel_std:
+                out[dd] = r['spot']
+    finally:
+        conn.close()
+    return out
