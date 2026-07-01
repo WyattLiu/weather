@@ -1873,10 +1873,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 if p.get('tp_by_iv_rank'):
                     _ivr = row.get('iv_rank')
                     if _ivr == _ivr and _ivr is not None:
-                        if _ivr > 0.6:
-                            tp_thresh = 0.5
-                        elif _ivr < 0.4:
-                            tp_thresh = 0.7
+                        if _ivr > p.get('tp_ivr_rich', 0.6):
+                            tp_thresh = p.get('tp_thresh_rich', 0.5)
+                        elif _ivr < p.get('tp_ivr_cheap', 0.4):
+                            tp_thresh = p.get('tp_thresh_cheap', 0.7)
             if tp_thresh is not None and T_left > 1/365:
                 _cv_model = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 cv, _aud = exec_fill(idx, sp['K'], int(T_left*365), 'P', 'buy',
