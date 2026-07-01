@@ -44,6 +44,13 @@ _SLA = {
     'days_supply': 8,
 }
 
+# D4: expected trading-days between VALUE CHANGES (to detect a carried-forward frozen feed).
+_CHANGE_SLA = {
+    'UNG': 1, 'BOXX': 1, 'NG': 1, 'CL': 1, 'VIX': 1, 'eia_hh_spot_daily': 1,
+    'eia_storage_weekly': 5, 'days_supply': 5,
+    'eia_production': 21, 'eia_consumption': 21, 'eia_lng_exports': 21,
+}
+
 
 def check_master():
     path = os.path.join(CACHE, 'master_dataset.csv')
@@ -67,6 +74,19 @@ def check_master():
             note += f' + {gaps} internal NaN'
             if lvl == 'OK':
                 lvl = 'WARN'
+        # D4: last-CHANGE staleness. A carried-forward value makes the last-ROW date look fresh while the
+        # feed is actually FROZEN (this masked the EIA-monthly + would mask a stuck price feed). Flag when
+        # the value hasn't CHANGED within ~2.5x its normal change cadence.
+        chg = df[col].loc[:s.index[-1]].dropna()
+        changed = chg[chg != chg.shift()]
+        if len(changed) > 1:
+            last_chg = changed.index[-1].date()
+            chg_stale = _bizdays(last_chg)
+            csla = _CHANGE_SLA.get(col, sla)
+            if chg_stale > 2.5 * csla:
+                note += f' | ⚠FROZEN? last CHANGE {last_chg} ({chg_stale}bd, cadence ~{csla})'
+                if lvl == 'OK':
+                    lvl = 'WARN'
         _add(lvl, col, note)
 
 
@@ -79,9 +99,9 @@ def check_lookahead():
         import inspect
         code = inspect.getsource(R.precompute_factor_z)
         has_storage_lag = ".shift(5)" in code and 'eia_storage_weekly' in code
-        has_monthly_lag = ".shift(21)" in code and 'eia_production' in code
+        has_monthly_lag = (".shift(42)" in code or ".shift(21)" in code) and 'eia_production' in code
         if has_storage_lag and has_monthly_lag:
-            _add('OK', 'look-ahead', 'EIA storage .shift(5) + monthly .shift(21) release lags PRESENT')
+            _add('OK', 'look-ahead', 'EIA storage .shift(5) + monthly .shift(42) release lags PRESENT')
         else:
             _add('RED', 'look-ahead',
                  f'RELEASE LAG MISSING (storage={has_storage_lag}, monthly={has_monthly_lag}) — signals will front-run prints')
