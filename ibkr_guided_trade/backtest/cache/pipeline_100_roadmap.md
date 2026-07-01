@@ -2,12 +2,12 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 92/100
+CURRENT SCORE: 93/100
   · data-correctness      20/20
   · refresh/monitoring    20/20
   · fill-fidelity         20/20
   · live==backtest parity 17/20
-  · FIDELITY (no-leak + minute accuracy)  15/20   <-- NEW gating criterion (raised the bar; see below)
+  · FIDELITY (no-leak + minute accuracy)  16/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
 - Do ONE `[ ] AUTO` item per fire: implement → validate (safety suite `pytest backtest/test_engine_safety.py
@@ -35,9 +35,19 @@ Rules for the cron worker:
        ts. Standalone + unit-tested (no engine change yet). The backbone the reactive loop gates on. (+1)
 - [x] DONE FiB  Extend test_no_lookahead.py with an EVENT-EXACT assertion: a decision timestamped 10:29 ET
        on a storage-release Thursday must NOT see that day's 10:30 number (uses release_ts). Fails on leak. (+2)
-- [ ] STAGE FiC  Minute-reactive decision path (engine, param-gated `reactive_events`, default OFF = champion
+- [~] STAGE FiC  Minute-reactive decision path (engine, param-gated `reactive_events`, default OFF = champion
        byte-identical): on EIA-release days re-evaluate at the 10:30 print using minute spot + newly-released
-       storage, ts<=T gated via release_ts. Scoped to event windows (tractable). (+3)
+       storage, ts<=T gated via release_ts. Scoped to event windows (tractable). (+3 total; SPLIT below)
+    - [x] DONE FiC-1  Intraday event-moment SPOT source (intraday_spot.reconstruct_spot): PG has NO intraday
+           UNG spot (etf_spot_minute=SPY/QQQ/IWM only; ung_options_history.underlying_price is daily-constant).
+           Recover it from near-ATM put-call parity S=C_mid-P_mid+K*DF, median across strikes. Empirically
+           cross-strike rel_std ~0.1-0.6% (strikes AGREE → real price). test_no_lookahead asserts (1) reliability
+           rel_std<2% and (2) causality: 10:30 value is deterministic & != 16:00 (no EOD leak). (+1) [earned]
+    - [ ] FiC-2  Wire reconstruct_spot into the engine behind param `reactive_events` (default OFF = byte-
+           identical): on storage-release Thursdays substitute the 10:30 event spot + release_ts-gated storage
+           for that day's decision. Prove champion byte-identical with flag OFF. (+1)
+    - [ ] FiC-3  Reactive decision re-eval at the event minute + parity: the reactive backtest reproduces the
+           live same-day 10:30 decision. Extend the determinism/parity test. (+1, and unlocks parity 17->20)
 - [ ] STAGE FiD  Minute-path fills (intraday_exec) as the default WITHIN reactive mode; model fallback
        off-grid. Backtest fills == live fills. (+2)
 - (Parity 17→20 is earned WITH FiC/FiD: the reactive backtest reproduces the live path's same-day decision
