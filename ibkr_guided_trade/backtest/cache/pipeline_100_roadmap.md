@@ -2,8 +2,8 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 83/100
-  · data-correctness      18/20
+CURRENT SCORE: 84/100
+  · data-correctness      19/20
   · refresh/monitoring    18/20
   · fill-fidelity         18/20
   · live==backtest parity 17/20
@@ -50,7 +50,7 @@ Rules for the cron worker:
 ## ============ DATA CORRECTNESS (17 → 20) ============
 - [x] DONE D2  EIA monthly release lag: `.shift(21)` under-lags EIA-914 (~2mo). Fix to ~`.shift(42)` (or
        index by release date). Re-validate champion unchanged. (Overlaps Fi1's monthly assertion.) (+1)
-- [ ] AUTO  D4  Health check: staleness by LAST-CHANGE not last-row (carried-forward EIA masks a freeze). (+1)
+- [x] DONE D4  Health check: staleness by LAST-CHANGE not last-row (carried-forward EIA masks a freeze). (+1)
 - [ ] AUTO  D3  Remove/populate dead columns (ng_ma200/ng_trend all-NaN, iv_*d proxy, dead COT fetch). (+1)
 
 ## ============ REFRESH/MONITORING (18 → 20) ============
