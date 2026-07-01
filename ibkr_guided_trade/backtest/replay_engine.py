@@ -1879,7 +1879,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             fcd = p.get('force_close_dte', 0)
             dte_left = T_left * 365
             if fcd > 0 and 0 < dte_left <= fcd:
-                cv = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(dte_left), 'P'))
+                # F3: gamma force-close routed through exec_fill (real chain / audited) like every other
+                # buyback. Inactive for the champion (force_close_dte unset → this block never runs).
+                cv, _ = exec_fill(idx, sp['K'], int(dte_left), 'P', 'buy', spot_u, p,
+                                  bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(dte_left), 'P')))
                 pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                 s['cash'] += pnl
                 trades.append({'date': idx, 'type': 'PUT_GAMMA_CLOSE',
@@ -2112,7 +2115,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
             fcd_c = p.get('force_close_dte', 0)
             dte_left_c = T_left * 365
             if fcd_c > 0 and 0 < dte_left_c <= fcd_c:
-                cv = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(dte_left_c), 'C'))
+                # F3: call gamma force-close routed through exec_fill (real chain / audited). Inactive for
+                # the champion (force_close_dte unset → never runs).
+                cv, _ = exec_fill(idx, sc['K'], int(dte_left_c), 'C', 'buy', spot_u, p,
+                                  bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(dte_left_c), 'C')))
                 pnl = (sc['entry_prem'] - cv) * 100 * sc['qty'] - sc['qty'] * SPREAD_OPTION * 100
                 s['cash'] += pnl
                 trades.append({'date': idx, 'type': 'CALL_GAMMA_CLOSE',
