@@ -2,10 +2,10 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 84/100
+CURRENT SCORE: 86/100
   · data-correctness      19/20
   · refresh/monitoring    18/20
-  · fill-fidelity         18/20
+  · fill-fidelity         20/20
   · live==backtest parity 17/20
   · FIDELITY (no-leak + minute accuracy)  12/20   <-- NEW gating criterion (raised the bar; see below)
 
@@ -45,7 +45,7 @@ Rules for the cron worker:
 - [x] DONE F1 (D2=A approved) use_real_chain_fills on base regime_wheel_boxx_greeks (default going forward);
        reported headlines drop 20.4→18.4 (intended). Re-run honest_walkforward to confirm. (+2)
 - [x] DONE F2  Remove model-fallback open/close asymmetry (buy-side markup on buyback, mirror fill_factor). (+2)
-- [ ] AUTO  F3  Route CALL_GAMMA_CLOSE through exec_fill; extend reconcile to SELL opens + roll legs. (+2)
+- [x] DONE F3  Route CALL_GAMMA_CLOSE through exec_fill; extend reconcile to SELL opens + roll legs. (+2)
 
 ## ============ DATA CORRECTNESS (17 → 20) ============
 - [x] DONE D2  EIA monthly release lag: `.shift(21)` under-lags EIA-914 (~2mo). Fix to ~`.shift(42)` (or
