@@ -5684,9 +5684,15 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # the continuous window, and the puts+shares blend all FAILED the rolling worst-window — simple wins.
     # cadence 18 (fine-tuned on LAG-CORRECTED data — beats cadence 14 on Sharpe 2.48, worst-12mo 7.4%,
     # AND return 17.9%). The look-ahead bug had biased the optimum to 14 (faster = front-run storage);
-    # on honest data slightly slower wins. cut 0.3 still best glide.
+    # on honest data slightly slower wins.
+    # GLIDE cut_speed 0.3 -> 0.5 (2026-06-30, operator "lean in" decision): a deliberate RETURN TILT, not a
+    # free lunch. Verified across ALL windows (not TEST-selected): return improves TRAIN 14.1->15.0, TEST
+    # 18.1->19.6, FULL 16.0->17.3%/yr, MDD flat ~-17%. HONEST COST: Sharpe dips (FULL 1.41->1.37, TEST
+    # 2.53->1.93) and worst-12mo -6.8->-7.2. Chosen because the book-stress showed deploying faster from
+    # cash beat sitting in cash in every regime; the anti-trap machinery (bearish_cut + falling_knife + TP)
+    # keeps drawdown regime-capped. Revert to 0.3 if you prefer risk-adjusted quality over ~+1.3pp/yr.
     'reaccum_via_puts': True, 'reaccum_put_dte': 30, 'reaccum_put_moneyness': 0.15,
-    'z_target_cadence_days': 18, 'cut_speed': 0.3}
+    'z_target_cadence_days': 18, 'cut_speed': 0.5}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
