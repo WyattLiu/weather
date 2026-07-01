@@ -2,11 +2,11 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 77/100
+CURRENT SCORE: 81/100
   · data-correctness      18/20
   · refresh/monitoring    18/20
-  · fill-fidelity         14/20
-  · live==backtest parity 15/20
+  · fill-fidelity         16/20
+  · live==backtest parity 17/20
   · FIDELITY (no-leak + minute accuracy)  12/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
@@ -37,12 +37,12 @@ Rules for the cron worker:
 
 ## ============ LIVE==BACKTEST PARITY (13 → 20) ============
 - [x] DONE P4  Reconcile = accuracy-only: never `continue`/drop an order; show stale/loss warning inline. (+2)
-- [ ] AUTO  P3  TP hysteresis: latch an emitted TP for the session + epsilon margin (reduces flicker WITHIN
+- [x] DONE P3  TP hysteresis: latch an emitted TP for the session + epsilon margin (reduces flicker WITHIN
        a reactive session; complements Fi2/Fi3). (+2)
 - (P2 "freeze to close" REJECTED per D1=B — replaced by the FIDELITY project above.)
 
 ## ============ FILL FIDELITY (14 → 20) ============
-- [ ] AUTO  F1 (D2=A approved) use_real_chain_fills on base regime_wheel_boxx_greeks (default going forward);
+- [x] DONE F1 (D2=A approved) use_real_chain_fills on base regime_wheel_boxx_greeks (default going forward);
        reported headlines drop 20.4→18.4 (intended). Re-run honest_walkforward to confirm. (+2)
 - [ ] AUTO  F2  Remove model-fallback open/close asymmetry (buy-side markup on buyback, mirror fill_factor). (+2)
 - [ ] AUTO  F3  Route CALL_GAMMA_CLOSE through exec_fill; extend reconcile to SELL opens + roll legs. (+2)
