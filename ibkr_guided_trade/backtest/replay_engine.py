@@ -5716,7 +5716,11 @@ STRATEGIES['regime_wheel_boxx_greeks'] = {**STRATEGIES['regime_wheel_boxx_dh'],
     # notional to ~8.5% of NAV → cap_contracts = 0.085·NAV/(K·100). Proportional to the account
     # (≈10 lots @ $11 on $133k, ≈77 @ $1M) instead of a fixed 10. max_short_per_strike kept as the
     # legacy fallback / floor when pct is unset. Forward-only (grandfathers existing legs).
-    'max_short_pct_nav': 0.085, 'max_short_per_strike': 10}
+    'max_short_pct_nav': 0.085, 'max_short_per_strike': 10,
+    # HONEST FILLS as the DEFAULT for the REPORTED champion (2026-07, F1 / operator D2=A): price options at
+    # the real PG bid/ask, not the optimistic BS model. This makes every walk-forward / reported number
+    # honest (headline 20.4→~18-19%), not just the _live variant. The _live variant inherits this.
+    'use_real_chain_fills': True}
 # NOTE (2026-06-24): gamma_weighted_ladder=[14,30] was promoted then REVERTED. The audit showed the
 # "+0.02 Sharpe" was TEST-SET-SELECTED (I picked the variant by its sealed-test score = invalid), a
 # statistical tie, and gamma-weighting is near-nil at UNG's ~$11 scale (the only real effect was
