@@ -2295,6 +2295,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(body.encode('utf-8'))
+        elif parsed.path == '/api/pipeline_health':
+            # R1: serve the data-pipeline health status (written by the 15-min watchdog) so the operator
+            # SEES a stale/RED feed (e.g. PG down, frozen EIA) on the dashboard, not just in a log.
+            try:
+                import os as _os
+                _sp = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                    'backtest', 'cache', 'pipeline_health_status.json')
+                with open(_sp) as _f:
+                    body = _f.read()
+            except Exception as e:
+                body = json.dumps({'verdict': 'UNKNOWN', 'error': repr(e)[:80]})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body.encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
