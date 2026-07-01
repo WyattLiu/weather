@@ -269,6 +269,11 @@ def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
                 df[c] = iv[c]
             if persist:
                 df.to_csv(path)
+                try:                                 # self-heal BOXX on this write path too (see below)
+                    from backfill_boxx import backfill as _bb
+                    _bb(verbose=False)
+                except Exception:
+                    pass
         return df                                   # already current
     if os.path.exists(marker) and _file_age_hours(marker) * 60 < max_stale_min and last < today:
         # refreshed very recently but still behind (e.g. weekend/holiday) — accept as-is
@@ -329,6 +334,14 @@ def refresh_to_today(df=None, live_spot=None, max_stale_min=20, persist=True):
             df.to_csv(path)
             with open(marker, 'w') as f:
                 f.write(str(today.date()))
+            # SELF-HEAL on EVERY persist: refresh_to_today rewrites BOXX as NaN pre-inception → flat-117
+            # fictional seam crash (this corrupted the champion -4.6pp, caught 2026-07 by pipeline_health).
+            # Re-apply the idempotent BOXX backfill so NO write path can leave the fix un-applied.
+            try:
+                from backfill_boxx import backfill as _bb
+                _bb(verbose=False)
+            except Exception as _be:
+                print(f"  [refresh_to_today] boxx self-heal skipped ({_be!r})")
         return df
     except Exception as e:
         print(f"[refresh_to_today] skipped ({e!r}) — using existing data")
