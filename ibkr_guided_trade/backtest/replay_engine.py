@@ -1904,6 +1904,18 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                             tp_thresh = p.get('tp_thresh_rich', 0.5)
                         elif _ivr < p.get('tp_ivr_cheap', 0.4):
                             tp_thresh = p.get('tp_thresh_cheap', 0.7)
+                # HOLD-OTM-TO-EXPIRY (turnover reduction, 2026-07): if the put is very likely to expire
+                # worthless — N(d2)=P(S_T>K) > threshold — DON'T buy it back for a small profit. Let it
+                # expire, keep 100% of the premium, pay ZERO buyback spread. Only TP the borderline puts
+                # (real reversal risk). Captures the "roll less" benefit at the LIQUID 30-DTE tenor, without
+                # the far-DTE liquidity/coverage problem that inflated the longer-DTE result. Default off.
+                if p.get('hold_otm_to_expiry_prob') and tp_thresh is not None:
+                    _ivp = iv_at(sp['K'], int(T_left * 365), 'P')
+                    if _ivp and _ivp > 0 and T_left > 0:
+                        _d2 = (math.log(spot_u / sp['K']) - 0.5 * _ivp * _ivp * T_left) / (_ivp * math.sqrt(T_left))
+                        _p_otm = 0.5 * (1.0 + math.erf(_d2 / math.sqrt(2.0)))
+                        if _p_otm > p.get('hold_otm_to_expiry_prob'):
+                            tp_thresh = None    # safely OTM → hold to expiry, skip the buyback churn
             if tp_thresh is not None and T_left > 1/365:
                 _cv_model = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 cv, _aud = exec_fill(idx, sp['K'], int(T_left*365), 'P', 'buy',
