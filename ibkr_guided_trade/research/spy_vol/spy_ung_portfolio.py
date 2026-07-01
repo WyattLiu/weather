@@ -39,7 +39,8 @@ def run_ung(fresh=False):
     print("  running UNG champion (regime_wheel_boxx_greeks)… (~10min)", flush=True)
     df = pd.read_csv(os.path.join(BT, 'cache', 'master_dataset.csv'), index_col=0, parse_dates=True)
     df = precompute_factor_z(df).dropna(subset=['UNG']).loc['2021-01-01':]
-    hist, _ = run_strategy_simple(df, STRATEGIES['regime_wheel_boxx_greeks'], 100000, 0)
+    hist, _ = run_strategy_simple(df, {**STRATEGIES['regime_wheel_boxx_greeks'],
+                                       'use_real_chain_fills': True}, 100000, 0)  # HONEST fills (real PG chain)
     hist = hist.set_index('date')
     boxx_px = df['BOXX'].reindex(hist.index).ffill().fillna(117.0)
     out = pd.DataFrame({'nav': hist['nav'], 'boxx_usd': hist['boxx'] * boxx_px})
