@@ -2,11 +2,11 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 75/100
+CURRENT SCORE: 77/100
   · data-correctness      18/20
   · refresh/monitoring    18/20
   · fill-fidelity         14/20
-  · live==backtest parity 13/20
+  · live==backtest parity 15/20
   · FIDELITY (no-leak + minute accuracy)  12/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
@@ -36,7 +36,7 @@ Rules for the cron worker:
        path same-session), preserving ts<=T gating end-to-end. Parity by construction. (+3)
 
 ## ============ LIVE==BACKTEST PARITY (13 → 20) ============
-- [ ] AUTO  P4  Reconcile = accuracy-only: never `continue`/drop an order; show stale/loss warning inline. (+2)
+- [x] DONE P4  Reconcile = accuracy-only: never `continue`/drop an order; show stale/loss warning inline. (+2)
 - [ ] AUTO  P3  TP hysteresis: latch an emitted TP for the session + epsilon margin (reduces flicker WITHIN
        a reactive session; complements Fi2/Fi3). (+2)
 - (P2 "freeze to close" REJECTED per D1=B — replaced by the FIDELITY project above.)

@@ -1940,7 +1940,10 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _cv_model = bs_put(spot_u, sp['K'], T_left, iv_at(sp['K'], int(T_left*365), 'P'))
                 cv, _aud = exec_fill(idx, sp['K'], int(T_left*365), 'P', 'buy',
                                      spot_u, p, _cv_model)
-                if cv < sp['entry_prem'] * tp_thresh:
+                # TP HYSTERESIS (tp_emit_margin, default 0 = byte-identical): only emit when cv is CLEARLY
+                # past the threshold (thr*(1-margin)), so a borderline value that oscillates around the
+                # trigger with a few-cent live spot move doesn't flicker the order on/off between pulls.
+                if cv < sp['entry_prem'] * tp_thresh * (1 - p.get('tp_emit_margin', 0.0)):
                     pnl = (sp['entry_prem'] - cv) * 100 * sp['qty'] - sp['qty'] * SPREAD_OPTION * 100
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'PUT_TP', 'pnl': pnl,
@@ -2120,7 +2123,7 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                 _cv_model = bs_call(spot_u, sc['K'], T_left, iv_at(sc['K'], int(T_left*365), 'C'))
                 cv, _aud = exec_fill(idx, sc['K'], int(T_left*365), 'C', 'buy',
                                      spot_u, p, _cv_model)
-                if cv < sc['entry_prem'] * tp_thresh:
+                if cv < sc['entry_prem'] * tp_thresh * (1 - p.get('tp_emit_margin', 0.0)):
                     pnl = (sc['entry_prem'] - cv) * 100 * sc['qty']
                     s['cash'] += pnl
                     trades.append({'date': idx, 'type': 'CALL_TP', 'pnl': pnl,
@@ -5757,7 +5760,12 @@ STRATEGIES['regime_wheel_boxx_greeks_live'] = {**STRATEGIES['regime_wheel_boxx_g
     # OVERSTATED take-profit P&L and over-triggered TPs. Corrected number: FULL 20.4/1.70 -> 18.4/1.55,
     # TEST 16.4 -> 11.2 (recent low-vol regime relied most on the inflated buybacks). Off-grid (pre-2021 /
     # today's not-yet-ingested bar) falls back to the model; the live reconcile still corrects today's bar.
-    'use_real_chain_fills': True}
+    'use_real_chain_fills': True,
+    # TP HYSTERESIS (2026-07, P3): only emit a take-profit when cv is clearly past the trigger (thr*(1-0.03)),
+    # so a borderline value that oscillates a few cents around the threshold between live pulls doesn't
+    # flicker the order on/off — the operator's "inconsistent suggestions". Near-neutral on the backtest
+    # (19.23→19.28, Sharpe 1.55→1.52); a partial fix — the full stability comes from the minute-reactive project.
+    'tp_emit_margin': 0.03}
 # reaccum_via_puts (accumulate to target via slightly-ITM puts) was trialled here: standalone it is
 # ~parity with shares (+5% ITM 30d ≈ 16-17%) BUT in the live buffer:0 config it backtests ~13% (vs
 # shares 16.7%) — a USD-MODEL ARTIFACT, since the backtest can't represent CAD-financed puts and the
