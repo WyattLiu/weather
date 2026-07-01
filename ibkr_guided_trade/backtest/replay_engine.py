@@ -289,6 +289,7 @@ def precompute_factor_z(df):
         _ivr = pd.read_csv(os.path.join(CACHE_DIR, 'ung_iv_rank_daily.csv'),
                            index_col=0, parse_dates=True)
         df['iv_rank'] = _ivr['iv_rank'].reindex(df.index, method='ffill', limit=10)
+        df['atm_iv'] = _ivr['atm_iv'].reindex(df.index, method='ffill', limit=10)  # real ATM IV for VRP
     except Exception:
         df['iv_rank'] = float('nan')
     # BUGFIX 2026-06-16: the features below were mis-indented INSIDE the except
@@ -1322,6 +1323,14 @@ def run_strategy_simple(df, strategy_params, initial_cash=48000, initial_shares=
                         mult *= 0.8
                     elif _ivr < 0.2:
                         mult *= 1.3
+            # VRP SIZING (2026-07 final shot): harvest the vol-risk-premium — size UP when IMPLIED vol is
+            # rich vs REALIZED (atm_iv/rv_30 > 1 = fat premium, calm realized), size DOWN when IV<=RV
+            # (thin premium / volatile realized). Distinct from iv_rank (IV vs its own history). Clamped; off default.
+            if p.get('vrp_size_scale'):
+                _aiv = row.get('atm_iv'); _rv = row.get('rv_30')
+                if _aiv and _rv and _rv > 0 and _aiv == _aiv:
+                    _vrp = _aiv / _rv
+                    mult *= max(0.5, min(1.6, 1.0 + p.get('vrp_size_scale') * (_vrp - 1.0)))
             # MEAN-REVERSION ACCUM TIMER (2026-07): UNG mean-reverts (momentum LOSES). Time the
             # accumulation to the reversion — boost when price is OVERSOLD vs its 252d mean, trim when
             # overbought. Orthogonal-ish to storage_z (price vs fundamentals). Clamped; default off.
