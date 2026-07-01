@@ -149,6 +149,24 @@ def check_fill_coverage():
         _add('WARN', 'fill-coverage', 'real_chain unavailable → honest fills fall back to BS model (optimistic)')
 
 
+def _write_status(reds, warns):
+    """Machine-readable status for the watchdog cron + dashboard banner."""
+    import json
+    verdict = 'RED' if reds else ('WARN' if warns else 'GREEN')
+    payload = {
+        'ts': dt.datetime.now().isoformat(timespec='seconds'),
+        'verdict': verdict,
+        'n_red': len(reds), 'n_warn': len(warns),
+        'issues': [f'{lvl}:{src}:{msg}' for lvl, src, msg in reds + warns],
+        'all': [f'{lvl}:{src}:{msg}' for lvl, src, msg in _RESULTS],
+    }
+    try:
+        with open(os.path.join(CACHE, 'pipeline_health_status.json'), 'w') as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+
+
 def main():
     quiet = '--quiet' in sys.argv
     check_master()
@@ -159,6 +177,8 @@ def main():
     check_fill_coverage()
     reds = [r for r in _RESULTS if r[0] == 'RED']
     warns = [r for r in _RESULTS if r[0] == 'WARN']
+    if '--status' in sys.argv:
+        _write_status(reds, warns)
     icon = {'OK': '✓', 'WARN': '⚠', 'RED': '✗'}
     if not quiet:
         print(f"\n{'='*66}\nDATA PIPELINE HEALTH — {TODAY}\n{'='*66}")

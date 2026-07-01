@@ -381,7 +381,10 @@ def get_live_recommendation(positions=None, cash=100000.0, spot=None, kernel_key
     # are not a day stale. Defensive — falls back to the on-disk data if the fetch fails.
     try:
         from historical_data_pipeline import refresh_to_today
-        df = refresh_to_today(df, live_spot=spot)
+        # persist=False: the live loop must NOT rewrite master_dataset.csv (the backtest's own truth).
+        # It ran every pull with the intraday spot + a re-fit IV surface, making live-vs-backtest a moving
+        # target. Live uses the in-memory refreshed df only; the daily cron owns the on-disk file.
+        df = refresh_to_today(df, live_spot=spot, persist=False)
     except Exception as _e:
         pass
     df = R.precompute_factor_z(df).dropna(subset=['UNG'])

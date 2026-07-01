@@ -42,7 +42,8 @@ def main():
         refresh_to_today(persist=True)
         print('[master dataset] refreshed to today from ThetaData', flush=True)
     except Exception as e:
-        print(f'[master dataset] refresh skipped ({e!r})', flush=True)
+        print(f'[master dataset] refresh FAILED ({e!r})', flush=True)
+        rc |= 8   # honest exit code: a master-spot failure must not be masked as success
     # 0b) backfill BOXX pre-inception gap (synthesize from BIL T-bill accrual). Idempotent no-op once
     #     complete; guards against a full rebuild re-introducing the flat-117 default + fake seam crash.
     try:
@@ -60,7 +61,8 @@ def main():
         from refresh_iv_rank import refresh as _refresh_iv_rank
         _refresh_iv_rank()
     except Exception as e:
-        print(f'[iv_rank] refresh skipped ({e!r})', flush=True)
+        print(f'[iv_rank] refresh FAILED ({e!r})', flush=True)
+        rc |= 16   # honest exit code: iv_rank is a live signal — a freeze must surface, not exit 0
     # 2) minute quotes (resume from last trade_date → today, 1m)
     rc |= _run('Minute quotes', ['backfill_ung_intraday.py', '--workers', str(a.workers)])
     # 3) open interest (per-contract latest)

@@ -178,6 +178,15 @@ def build_master_dataset(years=5):
     out_path = os.path.join(CACHE_DIR, 'master_dataset.csv')
     df.to_csv(out_path)
     print(f"\nSaved to: {out_path}")
+    # SELF-HEALING: a full rebuild writes BOXX as NaN pre-inception (→ flat-117 fictional seam crash) and
+    # does NOT touch iv_rank. Re-apply both idempotent backfills so a rebuild can NEVER silently regress
+    # the integrity fixes from this session. (Both no-op if already current.)
+    for _mod, _fn in (('backfill_boxx', 'backfill'), ('refresh_iv_rank', 'refresh')):
+        try:
+            import importlib
+            getattr(importlib.import_module(_mod), _fn)()
+        except Exception as _e:
+            print(f"  [rebuild] {_mod}.{_fn} skipped ({_e!r})")
     return df
 
 
