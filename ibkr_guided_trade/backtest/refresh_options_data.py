@@ -43,6 +43,13 @@ def main():
         print('[master dataset] refreshed to today from ThetaData', flush=True)
     except Exception as e:
         print(f'[master dataset] refresh skipped ({e!r})', flush=True)
+    # 0b) backfill BOXX pre-inception gap (synthesize from BIL T-bill accrual). Idempotent no-op once
+    #     complete; guards against a full rebuild re-introducing the flat-117 default + fake seam crash.
+    try:
+        from backfill_boxx import backfill as _backfill_boxx
+        _backfill_boxx()
+    except Exception as e:
+        print(f'[boxx] backfill skipped ({e!r})', flush=True)
     # 1) IV surface (resume from last surface date → today)
     rc |= _run('IV surface', ['backfill_ung_iv_pg.py', '--workers', str(a.workers)])
     # 1b) iv_rank signal (252d percentile of ATM IV) — recompute from the just-refreshed surface.
