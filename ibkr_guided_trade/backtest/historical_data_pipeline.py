@@ -114,26 +114,9 @@ def fetch_eia_historical(years=5):
     return out
 
 
-def fetch_cot_history(years=5):
-    """CFTC Commitment of Traders for NG (NYMEX)."""
-    import urllib.request
-    out_path = os.path.join(CACHE_DIR, 'cot_ng.csv')
-    if os.path.exists(out_path) and _file_age_hours(out_path) < 24 * 7:
-        print(f"  COT: cached ({_file_age_hours(out_path):.0f}h)")
-    else:
-        url = 'https://www.cftc.gov/dea/newcot/deafut.txt'
-        try:
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                content = resp.read().decode('utf-8', errors='ignore')
-            # NG NYMEX market code: 023391
-            ng_rows = [l for l in content.split('\n') if '023391' in l]
-            print(f"  COT: {len(ng_rows)} latest NG rows (need historical too)")
-            # For history, would need to pull deahistfo_archive
-        except Exception as e:
-            print(f"  COT failed: {e}")
-    return None
-
-
+# D3 (2026-07): removed dead fetch_cot_history() — it fetched CFTC COT, printed, and returned None
+# (data discarded), and was never called by build_master_dataset. COT is not a champion factor. If
+# COT is ever wanted as a signal, add it as a real column with the release lag + a no-leak assertion.
 def build_master_dataset(years=5):
     """Combine everything into one daily dataframe."""
     print(f"\n=== Building master dataset ({years} years) ===\n")
