@@ -45,6 +45,15 @@ def main():
         print(f'[master dataset] refresh skipped ({e!r})', flush=True)
     # 1) IV surface (resume from last surface date → today)
     rc |= _run('IV surface', ['backfill_ung_iv_pg.py', '--workers', str(a.workers)])
+    # 1b) iv_rank signal (252d percentile of ATM IV) — recompute from the just-refreshed surface.
+    #     VALIDATED live signal (iv_rank_z_scale); previously had NO refresh path and froze at
+    #     2026-06-12, silently dropping it from live decisions (NaN → neutral) after ffill(limit=10).
+    try:
+        sys.path.insert(0, THIS)
+        from refresh_iv_rank import refresh as _refresh_iv_rank
+        _refresh_iv_rank()
+    except Exception as e:
+        print(f'[iv_rank] refresh skipped ({e!r})', flush=True)
     # 2) minute quotes (resume from last trade_date → today, 1m)
     rc |= _run('Minute quotes', ['backfill_ung_intraday.py', '--workers', str(a.workers)])
     # 3) open interest (per-contract latest)
