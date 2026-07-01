@@ -2,8 +2,8 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 86/100
-  · data-correctness      19/20
+CURRENT SCORE: 87/100
+  · data-correctness      20/20
   · refresh/monitoring    18/20
   · fill-fidelity         20/20
   · live==backtest parity 17/20
@@ -51,7 +51,7 @@ Rules for the cron worker:
 - [x] DONE D2  EIA monthly release lag: `.shift(21)` under-lags EIA-914 (~2mo). Fix to ~`.shift(42)` (or
        index by release date). Re-validate champion unchanged. (Overlaps Fi1's monthly assertion.) (+1)
 - [x] DONE D4  Health check: staleness by LAST-CHANGE not last-row (carried-forward EIA masks a freeze). (+1)
-- [ ] AUTO  D3  Remove/populate dead columns (ng_ma200/ng_trend all-NaN, iv_*d proxy, dead COT fetch). (+1)
+- [x] DONE D3  Remove/populate dead columns (ng_ma200/ng_trend all-NaN, iv_*d proxy, dead COT fetch). (+1)
 
 ## ============ REFRESH/MONITORING (18 → 20) ============
 - [ ] AUTO  R1  Surface pipeline_health_status.json as a red/yellow/green banner in kernel_dashboard.py. (+2)
