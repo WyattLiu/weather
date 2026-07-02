@@ -169,6 +169,43 @@ def test_reconstructed_spot_matches_master_scale_pre_split():
         conn.close()
 
 
+def test_reactive_thursday_parity_reproduces_live_seed():
+    """FiC-3b PARITY: on a storage-release Thursday, the reactive backtest's decision is reproduced
+    BIT-FOR-BIT by seeding the live mechanism (full state) and running one live_decision on the trailing
+    window — both sides call reconstruct_spot(D) on the same tape, so live == reactive-backtest by
+    construction. Compact single-window check for CI; the full 8/8 sweep lives in the manual harness.
+    Skips offline."""
+    import copy
+    import intraday_spot as I
+    from test_live_equals_backtest import sig
+    if I._connect() is None:
+        import pytest
+        pytest.skip("PG unavailable — reactive path not testable offline")
+    import replay_engine as R
+    raw = pd.read_csv(os.path.join(CACHE, 'master_dataset.csv'), index_col=0, parse_dates=True)
+    df = R.precompute_factor_z(raw).dropna(subset=['UNG']).loc['2022-01-01':'2022-06-30']
+    params = copy.deepcopy(R.STRATEGIES['regime_wheel_boxx_greeks_live'])
+    params['reactive_events'] = True
+    R._CAPTURE_STATES = True
+    R._STATE_SNAPSHOTS = {}
+    _, trades = R.run_strategy_simple(df, params, initial_cash=100000, initial_shares=0)
+    R._CAPTURE_STATES = False
+    snaps = dict(R._STATE_SNAPSHOTS)
+    trades['d'] = pd.to_datetime(trades['date']).dt.strftime('%Y-%m-%d')
+    thu = [d for d in sorted(trades['d'].unique()) if d in snaps and pd.Timestamp(d).weekday() == 3]
+    if not thu:
+        import pytest
+        pytest.skip("no traded reactive Thursday in window")
+    tested = 0
+    for d in thu[:2]:
+        cont = sig(trades[trades['d'] == d])
+        pos = df.index.get_loc(pd.Timestamp(d))
+        _, o = R.run_strategy_simple(df.iloc[:pos + 1], params, seed_state=snaps[d], live_decision=True)
+        assert sig(o) == cont, f"reactive Thursday {d} NOT reproduced by live seed — parity broken"
+        tested += 1
+    assert tested >= 1, "parity test exercised no reactive Thursday"
+
+
 def test_reactive_events_off_is_byte_identical():
     """FiC-2 guard: the minute-reactive path is param-gated and MUST NOT touch the champion. Running the
     champion with reactive_events absent vs explicitly False must produce a bit-identical trade stream.
