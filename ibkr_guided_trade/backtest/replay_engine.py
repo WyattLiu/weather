@@ -906,6 +906,20 @@ def exec_fill(idx, K, dte, right, side, spot, p, model_price):
     EOD-real fill model is RETIRED — priority is intraday (real minute path + microstructure
     timing) → BS model (only as a gap fallback when a contract lacks minute data)."""
     eod_str = (idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10])
+    # FiC-3: in reactive mode, fills on storage-release Thursdays execute at a REAL post-print minute
+    # (consistent with the 10:30 decision — decided at the print, executed once it settled), NOT at EOD.
+    # This closes the decide-10:30/fill-16:00 gap. NO-LEAK: avoid_print=True excludes pre-11:00 bars, so the
+    # fill minute is >= 11:00 (after the 10:30 decision) and strictly same-day. Gated on reactive_events →
+    # byte-identical when off. Falls through to the normal path when no intraday quote exists (off-grid).
+    if p.get('reactive_events') and hasattr(idx, 'weekday') and idx.weekday() == 3:
+        try:
+            from intraday_fill import execute_audit
+            a = execute_audit(idx, K, dte, right, side, exec_window=11, avoid_print=True)
+            if a:
+                a['source'] = f"reactive:{a.get('how', 'intraday')}"
+                return a['price'], a
+        except Exception:
+            pass
     if p.get('intraday_exec'):
         try:
             from intraday_fill import execute_audit

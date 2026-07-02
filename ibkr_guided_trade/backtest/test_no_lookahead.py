@@ -161,3 +161,34 @@ def test_reactive_events_off_is_byte_identical():
     absent = fp(base)                                   # reactive_events not present at all
     off = copy.deepcopy(base); off['reactive_events'] = False
     assert fp(off) == absent, "reactive_events=False changed the champion — the gate leaks into the base path"
+
+
+def test_reactive_thursday_fill_is_post_print_same_day():
+    """FiC-3 no-leak: a reactive-mode fill on a storage-release Thursday must execute AFTER the 10:30 ET
+    print (never front-run it) and on the SAME day (never borrow a later day's tape). The engine routes
+    those fills through execute_audit(exec_window=11, avoid_print=True); this asserts the returned exec_time
+    is >= 11:00 on the same Thursday. Skips offline."""
+    import datetime as dt
+    import pandas as pd
+    try:
+        import intraday_fill
+    except Exception:
+        import pytest
+        pytest.skip("intraday_fill import failed")
+    if intraday_fill._conn() is None:
+        import pytest
+        pytest.skip("PG unavailable — intraday fill path not testable offline")
+    day = dt.date(2024, 6, 20)                           # storage-release Thursday, full minute coverage
+    got = None
+    for K in (19.0, 18.0, 20.0, 19.5, 18.5):            # try a few near-ATM strikes for a resolvable fill
+        a = intraday_fill.execute_audit(day, K, 1, 'C', 'sell', exec_window=11, avoid_print=True)
+        if a:
+            got = a
+            break
+    if got is None:
+        import pytest
+        pytest.skip("no resolvable intraday fill for the sample day")
+    et = pd.Timestamp(got['exec_time'])
+    assert et.date() == day, f"reactive fill exec_time {et} is not on the decision day {day} (cross-day leak)"
+    assert (et.hour, et.minute) >= (10, 30), f"reactive fill at {et.time()} FRONT-RUNS the 10:30 print (leak)"
+    assert et.hour >= 11, f"reactive fill at {et.time()} is inside the 10:30 print window (avoid_print failed)"
