@@ -169,19 +169,24 @@ def execute_audit(date, K_adj, dte, right, side, exec_window=15,
     post_mid = (win[0][1] + win[0][2]) / 2.0       # resting limit = first-bar mid
     arr_spread = (win[0][2] - win[0][1]) / post_mid if post_mid > 0 else 1.0
     fill = None
-    # STATE-DEPENDENT (from exec_policy_study): when the arrival spread is already TIGHT,
-    # crossing at the tightest minute is cheap+certain (study: ~0¢, even beats mid); only
-    # for WIDE arrival spreads does resting at mid pay (the wide spread tightens intraday).
+    # CAUSAL execution — NO look-ahead. A real operator cannot pick the tightest FUTURE minute; the old
+    # `min(win, key=spread)` selection did exactly that, fabricating ~half a spread of unachievable
+    # "improvement" (found 2026-07-02 via execution_policy_compare: it showed a fake SELL +6.95% vs
+    # cross-now that vanishes once the choice is causal). Honest policy:
+    #   - tight arrival spread -> cross IMMEDIATELY at the arrival bar (win[0]) — 'tight_take'
+    #   - wide arrival spread   -> rest a limit at the arrival mid; fill at mid if the tape trades THROUGH
+    #     it ('passive_mid', causal — the market came to your resting order); if patience expires unfilled,
+    #     cross at the LAST observed minute (win[-1]) — 'crossed_touch'. Every branch uses only past/present.
     if arr_spread <= TIGHT_SPREAD:
-        t, b, a = min(win, key=lambda x: (x[2] - x[1]) / ((x[1] + x[2]) / 2))
+        t, b, a = win[0]
         fill = (b if side == 'sell' else a, t, b, a, 'tight_take')
-    for (t, b, a) in (win if fill is None else []):  # WIDE: did the path trade through mid?
+    for (t, b, a) in (win if fill is None else []):  # WIDE: did the path trade through the resting mid?
         if side == 'sell' and b >= post_mid:
             fill = (post_mid, t, b, a, 'passive_mid'); break
         if side == 'buy' and a <= post_mid:
             fill = (post_mid, t, b, a, 'passive_mid'); break
-    if fill is None:                                 # cross at the tightest real minute
-        t, b, a = min(win, key=lambda x: (x[2] - x[1]) / ((x[1] + x[2]) / 2))
+    if fill is None:                                 # patience expired -> cross at the LAST observed minute
+        t, b, a = win[-1]
         fill = (b if side == 'sell' else a, t, b, a, 'crossed_touch')
     px, t, bid, ask, how = fill
     mid = (bid + ask) / 2

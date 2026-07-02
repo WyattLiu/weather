@@ -169,6 +169,32 @@ def test_reconstructed_spot_matches_master_scale_pre_split():
         conn.close()
 
 
+def test_execute_audit_cross_is_causal():
+    """NO-LEAK (fill model): execute_audit's cross must NOT pick the tightest FUTURE minute. Synthetic tape
+    with a very tight minute in the MIDDLE (the look-ahead trap) but wide arrival + wide end, and asks that
+    never reach the resting mid (no passive fill). A causal policy crosses at the LAST minute; a look-ahead
+    one would jump to the middle tight minute. Assert the fill is at the last bar."""
+    import intraday_fill as IF
+    base = pd.Timestamp('2024-06-20 11:00')                 # post both splits → sf=1
+    bars = []
+    for k in range(30):
+        t = base + pd.Timedelta(minutes=k)
+        if k == 15:
+            bars.append((t, 1.40, 1.42))                    # tight spread, but ask 1.42 >> resting mid (trap)
+        else:
+            bars.append((t, 1.20 + 0.001 * k, 1.55 + 0.001 * k))  # wide; arrival win[0] wide too
+    orig_bars, orig_exp = IF._bars, IF._expiries_on
+    try:
+        IF._bars = lambda *a, **k: bars
+        IF._expiries_on = lambda ds: [pd.Timestamp('2024-06-21').date()]
+        a = IF.execute_audit('2024-06-20', 19.0, 1, 'C', 'buy', exec_window=0, avoid_print=False)
+    finally:
+        IF._bars, IF._expiries_on = orig_bars, orig_exp
+    assert a is not None and a['how'] == 'crossed_touch', a
+    assert pd.Timestamp(a['exec_time']) == bars[-1][0], \
+        f"cross filled at {a['exec_time']} not the last minute {bars[-1][0]} — LOOK-AHEAD (picked a future minute)"
+
+
 def test_reactive_thursday_parity_reproduces_live_seed():
     """FiC-3b PARITY: on a storage-release Thursday, the reactive backtest's decision is reproduced
     BIT-FOR-BIT by seeding the live mechanism (full state) and running one live_decision on the trailing
