@@ -143,6 +143,32 @@ def test_intraday_event_spot_is_reliable_and_causal():
         conn.close()
 
 
+def test_reconstructed_spot_matches_master_scale_pre_split():
+    """SCALE GUARD (bug found 2026-07-01): master_dataset['UNG'] is back-adjusted (~4x pre-2024 reverse
+    split); ung_options_history is RAW. reconstruct_spot must return the ADJUSTED scale or the reactive
+    engine gets a ~4x-too-small spot on every pre-split day. Assert a PRE-split Thursday's reconstruction
+    is within a few percent of master['UNG'] that day (they should agree once split-adjusted). Skips offline."""
+    import datetime as dt
+    import intraday_spot as I
+    conn = I._connect()
+    if conn is None:
+        import pytest
+        pytest.skip("PG unavailable")
+    try:
+        day = dt.date(2023, 11, 16)                     # PRE-split (factor 4); master ~25.5, raw ~6.4
+        r = I.reconstruct_spot(day, dt.time(10, 30), conn)
+        if r is None:
+            import pytest
+            pytest.skip("no minute quotes for the sample day")
+        raw = pd.read_csv(os.path.join(CACHE, 'master_dataset.csv'), index_col=0, parse_dates=True)
+        master = float(raw['UNG'].asof(pd.Timestamp(day)))
+        rel = abs(r['spot'] - master) / master
+        assert rel < 0.05, (f"reconstructed spot {r['spot']:.2f} vs master {master:.2f} (rel {rel:.1%}) — "
+                            "SCALE MISMATCH (split adjustment wrong); reactive engine would be corrupted")
+    finally:
+        conn.close()
+
+
 def test_reactive_events_off_is_byte_identical():
     """FiC-2 guard: the minute-reactive path is param-gated and MUST NOT touch the champion. Running the
     champion with reactive_events absent vs explicitly False must produce a bit-identical trade stream.

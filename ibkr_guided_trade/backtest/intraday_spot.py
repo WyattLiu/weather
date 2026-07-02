@@ -18,6 +18,26 @@ import math
 
 R_RATE = 0.045          # matches replay_engine bs_put/bs_call/exec_fill discounting
 
+# UNG reverse splits. ung_options_history stores RAW (as-traded) prices/strikes; master_dataset['UNG']
+# (and therefore the engine's spot_u) is BACK-ADJUSTED. A reconstruction from raw option quotes must be
+# scaled UP by the split factor for pre-split dates or it feeds the engine a ~4x-too-small spot (found
+# 2026-07-01: pre-2024 reactive spot was $12 raw vs $47 adjusted — corrupted every pre-split decision).
+# Kept in sync with real_chain._SPLITS / intraday_fill._SPLITS.
+try:
+    from real_chain import _SPLITS as _SPLITS
+except Exception:
+    _SPLITS = [('2018-01-05', 4.0), ('2024-01-24', 4.0)]
+
+
+def _raw_to_adjusted_factor(trade_date):
+    """Multiplier converting a RAW options-scale price on `trade_date` to the back-adjusted master scale."""
+    import pandas as pd
+    f = 1.0
+    for sd, fac in _SPLITS:
+        if pd.Timestamp(trade_date) < pd.Timestamp(sd):
+            f *= fac
+    return f
+
 
 def _median(xs):
     s = sorted(xs)
@@ -72,8 +92,12 @@ def reconstruct_spot(trade_date, at_time, conn, r=R_RATE, min_strikes=3):
     spot = _median(spots)
     mean = sum(spots) / len(spots)
     std = (sum((x - mean) ** 2 for x in spots) / len(spots)) ** 0.5
+    # RAW → back-adjusted (master) scale: without this the engine gets a ~4x-too-small pre-split spot.
+    factor = _raw_to_adjusted_factor(trade_date)
+    spot *= factor
+    std *= factor
     return {'spot': spot, 'n': len(spots), 'std': std,
-            'rel_std': (std / spot) if spot else None,
+            'rel_std': (std / spot) if spot else None,   # scale-invariant (unchanged by factor)
             'expiration': exp, 'dte': (exp - trade_date).days}
 
 
