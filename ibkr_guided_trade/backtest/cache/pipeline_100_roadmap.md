@@ -2,12 +2,12 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 94/100
+CURRENT SCORE: 95/100
   · data-correctness      20/20
   · refresh/monitoring    20/20
   · fill-fidelity         20/20
   · live==backtest parity 17/20
-  · FIDELITY (no-leak + minute accuracy)  17/20   <-- NEW gating criterion (raised the bar; see below)
+  · FIDELITY (no-leak + minute accuracy)  18/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
 - Do ONE `[ ] AUTO` item per fire: implement → validate (safety suite `pytest backtest/test_engine_safety.py
@@ -52,9 +52,14 @@ Rules for the cron worker:
            CAVEAT: NAV delta (876k->1099k) is NOT validated alpha — decision uses 10:30 spot but fills/marks
            are still EOD (decide-10:30/fill-16:00 inconsistency). FiC-3/FiD must make fills+marks consistent
            and audit before any performance claim. [earned: wiring only]
-    - [ ] FiC-3  Reactive decision re-eval at the event minute + parity: consistent 10:30 fills/marks (kill the
-           decide-10:30/fill-16:00 gap), leak audit, and the reactive backtest reproduces the live same-day
-           10:30 decision. Extend the determinism/parity test. (+1, and unlocks parity 17->20)
+    - [x] DONE FiC-3a  Consistent reactive fills + fill leak-audit: reactive-mode fills on storage-release
+           Thursdays route through execute_audit(exec_window=11, avoid_print=True) → a REAL post-print minute
+           quote (decided at the 10:30 print, executed once settled), killing the decide-10:30/fill-16:00 gap.
+           test_no_lookahead asserts the fill exec_time is >=11:00 & same-day (never front-runs the print, never
+           borrows a later day). Byte-identical off (guard in exec_fill). Full safety green (9+97). (+1)
+    - [ ] FiC-3b  PARITY: extend the determinism test so the reactive backtest reproduces the live path's
+           same-day 10:30 decision by construction. Unlocks parity 17->20 (+3). (Also: honest reactive
+           performance re-measure with consistent fills — quantify how much of the FiC-2 +25% was fill timing.)
 - [ ] STAGE FiD  Minute-path fills (intraday_exec) as the default WITHIN reactive mode; model fallback
        off-grid. Backtest fills == live fills. (+2)
 - (Parity 17→20 is earned WITH FiC/FiD: the reactive backtest reproduces the live path's same-day decision
