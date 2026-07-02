@@ -141,3 +141,23 @@ def test_intraday_event_spot_is_reliable_and_causal():
                 "10:30 and 16:00 reconstructions are identical — reconstruction is not minute-specific (leak risk)"
     finally:
         conn.close()
+
+
+def test_reactive_events_off_is_byte_identical():
+    """FiC-2 guard: the minute-reactive path is param-gated and MUST NOT touch the champion. Running the
+    champion with reactive_events absent vs explicitly False must produce a bit-identical trade stream.
+    (Uses a slice so the safety suite stays fast; the code path — not data length — is what's under test.)"""
+    import copy
+    import hashlib
+    import replay_engine as R
+    raw = pd.read_csv(os.path.join(CACHE, 'master_dataset.csv'), index_col=0, parse_dates=True)
+    df = R.precompute_factor_z(raw).iloc[:500]
+    base = copy.deepcopy(R.STRATEGIES['regime_wheel_boxx_greeks_live'])
+
+    def fp(params):
+        _, trades = R.run_strategy_simple(df, params)
+        return hashlib.md5(pd.util.hash_pandas_object(trades, index=False).values.tobytes()).hexdigest()
+
+    absent = fp(base)                                   # reactive_events not present at all
+    off = copy.deepcopy(base); off['reactive_events'] = False
+    assert fp(off) == absent, "reactive_events=False changed the champion — the gate leaks into the base path"
