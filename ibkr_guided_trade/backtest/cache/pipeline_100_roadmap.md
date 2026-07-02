@@ -2,12 +2,12 @@
 
 ## SCORECARD (5 dimensions × 20 = 100). 100/100 is GATED: it is UNREACHABLE unless the
 ## FIDELITY dimension's no-leak test PASSES and EIA events are placed at their exact release instant.
-CURRENT SCORE: 93/100
+CURRENT SCORE: 94/100
   · data-correctness      20/20
   · refresh/monitoring    20/20
   · fill-fidelity         20/20
   · live==backtest parity 17/20
-  · FIDELITY (no-leak + minute accuracy)  16/20   <-- NEW gating criterion (raised the bar; see below)
+  · FIDELITY (no-leak + minute accuracy)  17/20   <-- NEW gating criterion (raised the bar; see below)
 
 Rules for the cron worker:
 - Do ONE `[ ] AUTO` item per fire: implement → validate (safety suite `pytest backtest/test_engine_safety.py
@@ -43,11 +43,18 @@ Rules for the cron worker:
            Recover it from near-ATM put-call parity S=C_mid-P_mid+K*DF, median across strikes. Empirically
            cross-strike rel_std ~0.1-0.6% (strikes AGREE → real price). test_no_lookahead asserts (1) reliability
            rel_std<2% and (2) causality: 10:30 value is deterministic & != 16:00 (no EOD leak). (+1) [earned]
-    - [ ] FiC-2  Wire reconstruct_spot into the engine behind param `reactive_events` (default OFF = byte-
-           identical): on storage-release Thursdays substitute the 10:30 event spot + release_ts-gated storage
-           for that day's decision. Prove champion byte-identical with flag OFF. (+1)
-    - [ ] FiC-3  Reactive decision re-eval at the event minute + parity: the reactive backtest reproduces the
-           live same-day 10:30 decision. Extend the determinism/parity test. (+1, and unlocks parity 17->20)
+    - [x] DONE FiC-2  Wire reconstruct_spot into the engine behind param `reactive_events` (default OFF).
+           On storage-release Thursdays the day's decision uses the 10:30 event spot (propagates through strike
+           select / greeks / NAV / TP). Batch-precomputed before the loop (event_spot_map, one PG pass).
+           PROVEN byte-identical: champion default==reactive_events=False bit-for-bit (md5 5dbe629a, 4116
+           trades); reactive_events=True differs (4667 trades) = wired. test_no_lookahead asserts the byte-
+           identical guard. NO-LEAK: 10:30 spot is public at 10:30 & EARLIER than EOD (strictly less info). (+1)
+           CAVEAT: NAV delta (876k->1099k) is NOT validated alpha — decision uses 10:30 spot but fills/marks
+           are still EOD (decide-10:30/fill-16:00 inconsistency). FiC-3/FiD must make fills+marks consistent
+           and audit before any performance claim. [earned: wiring only]
+    - [ ] FiC-3  Reactive decision re-eval at the event minute + parity: consistent 10:30 fills/marks (kill the
+           decide-10:30/fill-16:00 gap), leak audit, and the reactive backtest reproduces the live same-day
+           10:30 decision. Extend the determinism/parity test. (+1, and unlocks parity 17->20)
 - [ ] STAGE FiD  Minute-path fills (intraday_exec) as the default WITHIN reactive mode; model fallback
        off-grid. Backtest fills == live fills. (+2)
 - (Parity 17→20 is earned WITH FiC/FiD: the reactive backtest reproduces the live path's same-day decision
